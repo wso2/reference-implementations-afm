@@ -15,3 +15,5 @@ Config.toml
 
 # Temp
 wd/
+
+.DS_Store

@@ -1,0 +1,16 @@
+docker run -e TEST_ACCESS_TOKEN \
+  -v ./wd/test-math-tutor-function.afm.md:/agent.afm.md \
+  afm-interpreter /agent.afm.md '{"user_prompt": "What is 1 + 2"}'
+
+docker run -p 8085:8085 \
+  -e TEST_ACCESS_TOKEN \
+  -v ./wd/test-math-tutor.afm.md:/agent.afm.md \
+  afm-interpreter /agent.afm.md
+
+curl -X POST http://localhost:8085/math-tutor \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_prompt": "Solve the equation 2x + 5 = 15"
+  }'
+
+

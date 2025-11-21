@@ -50,9 +50,8 @@ type A2AConnections record {|
     A2APeer[] peers?;
 |};
 
-type Connections record {|
+type Tools record {|
     MCPConnections mcp?;
-    A2AConnections a2a?;
 |};
 
 type Parameter record {|
@@ -125,7 +124,7 @@ type AgentMetadata record {|
     Provider provider?;
     string license?;
     Interface interface = <FunctionInterface>{};
-    Connections connections?;
+    Tools tools?;
 |};
 
 type AFMRecord record {|

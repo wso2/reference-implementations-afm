@@ -171,7 +171,7 @@ function extractAgentConfiguration(AFMRecord afmRecord) returns AgentConfigurati
     map<json> & readonly outputSchema = transformToJsonObjectSchema(signature.output);
 
     ai:McpToolKit[] mcpToolkits = [];
-    MCPConnections? mcpConnections = metadata?.connections?.mcp;
+    MCPConnections? mcpConnections = metadata?.tools?.mcp;
     if mcpConnections is MCPConnections {
         foreach MCPServer mcpConn in mcpConnections.servers {
             Transport transport = mcpConn.transport;
