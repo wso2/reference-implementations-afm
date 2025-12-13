@@ -123,6 +123,7 @@ type ConsoleChatInterface record {|
 
 type WebhookInterface record {|
     WEBHOOK 'type = WEBHOOK;
+    string prompt?;
     Signature signature = {};
     Exposure exposure = {http: {path: "/webhook"}};
     Subscription subscription;
@@ -150,4 +151,25 @@ type AFMRecord record {|
     AgentMetadata metadata;
     string role;
     string instructions;
+|};
+
+type LiteralSegment readonly & record {|
+    "literal" kind;
+    string text;
+|};
+
+type PayloadVariable readonly & record {|
+    "payload" kind;
+    string path;  // Empty string means entire payload
+|};
+
+type HeaderVariable readonly & record {|
+    "header" kind;
+    string name;
+|};
+
+type TemplateSegment LiteralSegment|PayloadVariable|HeaderVariable;
+
+type CompiledTemplate readonly & record {|
+    TemplateSegment[] segments;
 |};

@@ -29,8 +29,6 @@ type InputError distinct error;
 type AgentError distinct error;
 
 public function main(string filePath) returns error? {
-    log:printInfo(string `Starting AFM agent from file: ${filePath}`);
-
     string content = check io:fileReadString(filePath);
 
     AFMRecord afm = check parseAfm(content);

@@ -69,11 +69,16 @@ function parseAfm(string content) returns AFMRecord|error {
         }
     }
     
-    return {
+    AFMRecord afmRecord = {
         metadata: check metadata.ensureType(),
         role: role.trim(),
         instructions: instructions.trim()
     };
+
+    // Validate that http: variables only appear in webhook prompts
+    check validateHttpVariables(afmRecord);
+
+    return afmRecord;
 }
 
 function resolveVariables(string content) returns string|error {
@@ -119,7 +124,13 @@ function resolveVariables(string content) returns string|error {
             varName = varExpr.substring(colonPos + 1);
         }
 
-        // Resolve based on prefix
+        if prefix == "http" {
+            // Skip http: variables - they will be handled by webhook template compilation
+            // and validated later to ensure they only appear in webhook prompts
+            startPos = closeBracePos + 1;
+            continue;
+        }
+
         string resolvedValue;
         if prefix == "" || prefix == "env" {
             // No prefix or env: prefix -> environment variable
@@ -129,11 +140,9 @@ function resolveVariables(string content) returns string|error {
             }
             resolvedValue = envValue;
         } else {
-            // Unsupported prefix - return error
-            return error(string `Unsupported variable prefix '${prefix}:' in '${varExpr}'. Only 'env:' is supported.`);
+            return error(string `Unsupported variable prefix '${prefix}:' in '${varExpr}'. Only 'env:' and 'http:' are supported.`);
         }
 
-        // Replace the variable with its value
         string before = result.substring(0, dollarPos);
         string after = result.substring(closeBracePos + 1);
         result = before + resolvedValue + after;
@@ -143,10 +152,224 @@ function resolveVariables(string content) returns string|error {
     return result;
 }
 
+function validateHttpVariables(AFMRecord afmRecord) returns error? {
+    if containsHttpVariable(afmRecord.role) {
+        return error("http: variables are only supported in webhook prompt fields, found in role section");
+    }
+
+    if containsHttpVariable(afmRecord.instructions) {
+        return error("http: variables are only supported in webhook prompt fields, found in instructions section");
+    }
+
+    AgentMetadata {authors, provider, model, interfaces, tools, max_iterations: _, ...rest} = afmRecord.metadata;
+
+    string[] erroredKeys = [];
+
+    foreach [string, string] [k, v] in rest.entries() {
+        if containsHttpVariable(<string> v) {
+            erroredKeys.push(k);
+        }
+    }
+
+    if authors is string[] {
+        foreach string author in authors {
+            if containsHttpVariable(author) {
+                erroredKeys.push("authors");
+                break;
+            }
+        }
+    }
+
+    if provider is Provider {
+        foreach [string, string] [k, v] in provider.entries() {
+            if containsHttpVariable(v) {
+                erroredKeys.push("provider." + k);
+            }
+        }
+    }
+
+    if model is Model {
+        Model {authentication, ...modelRest} = model;
+        foreach [string, string] [k, v] in modelRest.entries() {
+            if containsHttpVariable(<string> v) {
+                erroredKeys.push("model." + k); 
+            }
+        }
+
+        if authenticationContainsHttpVariable(authentication) {
+            erroredKeys.push("model.authentication");
+        }
+    }
+
+    if interfaces is Interface[] {
+        foreach Interface interface in interfaces {
+            if interface is ConsoleChatInterface {
+                if signatureContainsHttpVariable(interface.signature) {
+                    erroredKeys.push("interfaces.consolechat.signature");
+                }
+                continue;
+            }
+
+            if interface is WebChatInterface {
+                if signatureContainsHttpVariable(interface.signature) {
+                    erroredKeys.push("interfaces.webchat.signature");
+                }
+
+                if exposureContainsHttpVariable(interface.exposure) {
+                    erroredKeys.push("interfaces.webchat.exposure");
+                }
+
+                continue;
+            }
+
+            if signatureContainsHttpVariable(interface.signature) {
+                erroredKeys.push("interfaces.webhook.signature");
+            }
+
+            if exposureContainsHttpVariable(interface.exposure) {
+                erroredKeys.push("interfaces.webhook.exposure");
+            }
+
+            if subscriptionContainsHttpVariable(interface.subscription) {
+                erroredKeys.push("interfaces.webhook.subscription");
+            }
+        }
+    }
+
+    if tools !is () {
+        MCPServer[]? mcp = tools.mcp;
+
+        if mcp is MCPServer[] {
+            foreach MCPServer server in mcp {
+                if containsHttpVariable(server.name) {
+                    erroredKeys.push("tools.mcp.name");
+                }
+
+                Transport transport = server.transport;
+                if containsHttpVariable(transport.url) {
+                    erroredKeys.push("tools.mcp.transport.url");
+                }
+
+                if authenticationContainsHttpVariable(transport.authentication) {
+                    erroredKeys.push("tools.mcp.transport.authentication");
+                }
+
+                if toolFilterContainsHttpVariable(server.tool_filter) {
+                    erroredKeys.push("tools.mcp.filter");
+                }
+            }
+        }
+    }
+
+    if erroredKeys.length() > 0 {
+        return error(string `http: variables are only supported in webhook prompt fields, found in metadata fields: ${string:'join(", ", ...erroredKeys)}`);
+    }
+}
+
+function containsHttpVariable(string content) returns boolean =>
+    content.indexOf("${http:") != ();
+
+function authenticationContainsHttpVariable(ClientAuthentication? authentication) returns boolean {
+    if authentication is () {
+        return false;
+    }
+
+    foreach anydata value in authentication {
+        if value is string && containsHttpVariable(value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function signatureContainsHttpVariable(Signature signature) returns boolean =>
+    jsonSchemaContainsHttpVariable(signature.input) || jsonSchemaContainsHttpVariable(signature.output);
+
+function jsonSchemaContainsHttpVariable(JSONSchema schema) returns boolean {
+    if containsHttpVariable(schema.'type) {
+        return true;
+    }
+
+    map<JSONSchema>? properties = schema?.properties;
+    if properties is map<JSONSchema> {
+        foreach JSONSchema propSchema in properties {
+            if jsonSchemaContainsHttpVariable(propSchema) {
+                return true;
+            }
+        }
+    }
+
+    string[]? required = schema?.required;
+    if required is string[] {
+        foreach string reqField in required {
+            if containsHttpVariable(reqField) {
+                return true;
+            }
+        }
+    }
+
+    JSONSchema? items = schema?.items;
+    if items is JSONSchema {
+        if jsonSchemaContainsHttpVariable(items) {
+            return true;
+        }
+    }
+
+    string? description = schema?.description;
+    if description is string {
+        if containsHttpVariable(description) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function exposureContainsHttpVariable(Exposure exposure) returns boolean =>
+    let HTTPExposure? httpExposure = exposure.http in
+        httpExposure is HTTPExposure && 
+            containsHttpVariable(httpExposure.path);
+
+function subscriptionContainsHttpVariable(Subscription subscription) returns boolean {
+    if containsHttpVariable(subscription.protocol) || 
+            containsHttpVariable(subscription.hub) || 
+            containsHttpVariable(subscription.topic) {
+        return true;
+    }
+
+    string? callback = subscription.callback;
+    if callback is string && containsHttpVariable(callback) {
+        return true;
+    }
+
+    string? secret = subscription.secret;
+    if secret is string && containsHttpVariable(secret) {
+        return true;
+    }
+
+    if authenticationContainsHttpVariable(subscription.authentication) {
+        return true;
+    }
+
+    return false;
+}
+
+function toolFilterContainsHttpVariable(ToolFilter? filter) returns boolean {
+    if filter is () {
+        return false;
+    }
+
+    foreach string value in [...filter.allow ?: [], ...filter.deny ?: []] {
+        if containsHttpVariable(value) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function splitLines(string content) returns string[] {
     string[] result = [];
     string remaining = content;
-    
+
     while true {
         int? idx = remaining.indexOf("\n");
         if idx is int {
@@ -159,6 +382,6 @@ function splitLines(string content) returns string[] {
             break;
         }
     }
-    
+
     return result;
 }
