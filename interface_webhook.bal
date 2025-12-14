@@ -98,6 +98,7 @@ function compileTemplate(string template) returns CompiledTemplate|error {
         if colonPos !is int || varExpr.substring(0, colonPos) != "http" {
             // Not an http: variable, keep as literal (may be static variable)
             segments.push({kind: "literal", text: template.substring(dollarPos, closeBracePos + 1)});
+            startPos = closeBracePos + 1;
             continue;
         }
 
@@ -115,10 +116,14 @@ function compileTemplate(string template) returns CompiledTemplate|error {
             } else {
                 // Unknown subprefix, treat as literal
                 segments.push({kind: "literal", text: template.substring(dollarPos, closeBracePos + 1)});
+                startPos = closeBracePos + 1;
+                continue;
             }
         } else {
             // Invalid format, treat as literal
             segments.push({kind: "literal", text: template.substring(dollarPos, closeBracePos + 1)});
+            startPos = closeBracePos + 1;
+            continue;
         }
 
         
