@@ -155,8 +155,7 @@ function runAgent(ai:Agent agent, json payload, map<json>? inputSchema = (), map
         string `The final response MUST conform to the following JSON schema: ${
             effectiveOutputSchema.toJsonString()}` : ""}
 
-        Respond only with the value enclosed between ${"```json"} and ${"```"}.
-        `, sessionId);
+        Respond only with the value enclosed between ${"```json"} and ${"```"}.`, sessionId);
 
     if run is ai:Error {
         log:printError("Agent run failed", 'error = run);

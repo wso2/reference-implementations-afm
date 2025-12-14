@@ -697,16 +697,22 @@ function testCompileTemplateUnknownPrefix() returns error? {
 
 @test:Config
 function testCompileTemplateInvalidFormat() returns error? {
-    // ${http:payload} without the required subprefix (should be http:payload.field or http:header.name)
-    string template = "Value: ${http:payload}";
+    // ${http:header} without the required subprefix (should be http:header.name)
+    string template = "Value: ${http:header}";
     CompiledTemplate compiled = check compileTemplate(template);
 
-    // This should be treated as having an empty path for payload
     test:assertEquals(compiled.segments.length(), 2);
+    TemplateSegment seg0 = compiled.segments[0];
+    if seg0 !is LiteralSegment {
+        test:assertFail("Expected LiteralSegment at index 0");
+    }
+    test:assertEquals(seg0.text, "Value: ");
+
     TemplateSegment seg1 = compiled.segments[1];
     if seg1 !is LiteralSegment {
         test:assertFail("Expected LiteralSegment for invalid format");
     }
+    test:assertEquals(seg1.text, "${http:header}");
 }
 
 @test:Config
@@ -730,8 +736,7 @@ function testCompileTemplateConsecutiveVariables() returns error? {
 
 @test:Config
 function testCompileTemplateWholePayload() returns error? {
-    // Empty path after http:payload. means entire payload
-    string template = "Payload: ${http:payload.}";
+    string template = "Payload: ${http:payload}";
     CompiledTemplate compiled = check compileTemplate(template);
 
     test:assertEquals(compiled.segments.length(), 2);
@@ -740,6 +745,19 @@ function testCompileTemplateWholePayload() returns error? {
         test:assertFail("Expected PayloadVariable");
     }
     test:assertEquals(seg1.path, "");
+}
+
+@test:Config
+function testIncompletePayloadAccess() returns error? {
+    string template = "Payload: ${http:payload.}";
+    CompiledTemplate compiled = check compileTemplate(template);
+
+    test:assertEquals(compiled.segments.length(), 2);
+    TemplateSegment seg1 = compiled.segments[1];
+    if seg1 !is LiteralSegment {
+        test:assertFail("Expected LiteralSegment for incomplete payload access");
+    }
+    test:assertEquals(seg1.text, "${http:payload.}");
 }
 
 // ============================================
@@ -877,7 +895,7 @@ function testAccessJsonFieldBracketMissingCloseBrace() {
     json|error result = accessJsonField(payload, "[field");
 
     if result is json {
-        test:assertFail("Expected error for missing close bracket");
+        test:assertFail("Expected error for missing close brace");
     }
     test:assertEquals(result.message(), "Invalid bracket notation in path: [field");
 }

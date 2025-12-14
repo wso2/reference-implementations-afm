@@ -51,18 +51,24 @@ function attachWebhookService(websub:Listener websubListener, ai:Agent agent, We
                     returns websub:Acknowledgement|error {
                 json payload = msg.content.toJson();
 
-                json agentInput = compiledPrompt is CompiledTemplate ?
-                    check evaluateTemplate(<CompiledTemplate> compiledPrompt, payload, msg.headers) :
-                    payload;
+                json result = check getResult(compiledPrompt, payload, msg, agent);
 
-                // TODO: revisit the result handling
-                json result = check runAgent(agent, agentInput);
                 log:printInfo("Webhook payload handled: " + result.toJsonString());
                 return websub:ACKNOWLEDGEMENT;
             }
         };
 
     return websubListener.attach(webhookService, httpExposure.path);
+}
+
+function getResult(readonly & CompiledTemplate? compiledPrompt,
+                   json payload,
+                   readonly & websub:ContentDistributionMessage msg,
+                   ai:Agent agent) returns json|error {
+    json agentInput = compiledPrompt is CompiledTemplate ?
+        check evaluateTemplate(compiledPrompt, payload, msg.headers) :
+        payload;
+    return runAgent(agent, agentInput);
 }
 
 function compileTemplate(string template) returns CompiledTemplate|error {
@@ -110,6 +116,12 @@ function compileTemplate(string template) returns CompiledTemplate|error {
             string subPath = path.substring(subColonPos + 1);
 
             if subPrefix == "payload" {
+                if subPath == "" {
+                    // Empty subpath for payload is invalid, treat as literal
+                    segments.push({kind: "literal", text: template.substring(dollarPos, closeBracePos + 1)});
+                    startPos = closeBracePos + 1;
+                    continue;
+                }
                 segments.push({kind: "payload", path: subPath});
             } else if subPrefix == "header" {
                 segments.push({kind: "header", name: subPath});
@@ -119,14 +131,15 @@ function compileTemplate(string template) returns CompiledTemplate|error {
                 startPos = closeBracePos + 1;
                 continue;
             }
+        } else if path == "payload" {
+            segments.push({kind: "payload", path: ""});
         } else {
             // Invalid format, treat as literal
             segments.push({kind: "literal", text: template.substring(dollarPos, closeBracePos + 1)});
             startPos = closeBracePos + 1;
             continue;
         }
-
-        
+    
         startPos = closeBracePos + 1;
     }
 
@@ -175,7 +188,6 @@ function evaluateTemplate(CompiledTemplate compiled, json payload, map<string|st
             parts.push(string:'join(", ", ...headerValue));
         }
     }
-
     return string:'join("", ...parts);
 }
 

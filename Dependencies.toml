@@ -432,6 +432,28 @@ modules = [
 
 [[package]]
 org = "ballerina"
+name = "websubhub"
+version = "1.15.1"
+scope = "testOnly"
+dependencies = [
+	{org = "ballerina", name = "crypto"},
+	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "jwt"},
+	{org = "ballerina", name = "lang.runtime"},
+	{org = "ballerina", name = "lang.string"},
+	{org = "ballerina", name = "log"},
+	{org = "ballerina", name = "mime"},
+	{org = "ballerina", name = "url"},
+	{org = "ballerina", name = "uuid"}
+]
+modules = [
+	{org = "ballerina", packageName = "websubhub", moduleName = "websubhub"}
+]
+
+[[package]]
+org = "ballerina"
 name = "yaml"
 version = "0.8.0"
 dependencies = [
@@ -529,6 +551,7 @@ dependencies = [
 	{org = "ballerina", name = "os"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "websub"},
+	{org = "ballerina", name = "websubhub"},
 	{org = "ballerinai", name = "observe"},
 	{org = "ballerinax", name = "ai.anthropic"},
 	{org = "ballerinax", name = "ai.openai"}
