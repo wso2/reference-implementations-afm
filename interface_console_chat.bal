@@ -17,6 +17,11 @@
 import ballerina/ai;
 import ballerina/io;
 
+// Wrapper function for io:readln to enable mocking in tests
+function readUserInput() returns string {
+    return io:readln();
+}
+
 function runInteractiveChat(ai:Agent agent) returns error? {
     printWelcomeBanner();
 
@@ -24,7 +29,7 @@ function runInteractiveChat(ai:Agent agent) returns error? {
     while true {
         // Read user input with enhanced prompt
         io:print("\n> ");
-        string userInput = io:readln();
+        string userInput = readUserInput();
 
         // Check for special commands
         string trimmedInput = userInput.trim();
