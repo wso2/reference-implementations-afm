@@ -18,7 +18,8 @@ import ballerina/http;
 import ballerina/io;
 
 function attachWebChatUIService(http:Listener httpListener, string chatPath, AgentMetadata metadata) returns error? {
-    http:Service webUIService = check new WebUIService(chatPath, metadata);
+    string absoluteChatPath = chatPath.startsWith("/") ? chatPath : "/" + chatPath;
+    http:Service webUIService = check new WebUIService(absoluteChatPath, metadata);
     return httpListener.attach(webUIService, "/chat/ui");
 }
 
