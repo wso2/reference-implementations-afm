@@ -245,12 +245,12 @@ function testWebhookEndToEnd() returns error? {
         
         
 
-        Respond only with the value enclosed between ${"```"}json and ${"```"}.`;
+        Respond only with the value enclosed between ${"```"} and ${"```"}.`;
     string expectedPrompt2 = string `"[payment.confirmed] Process the following order event: {\"event\":\"payment.confirmed\", \"orderId\":\"12345\", \"amount\":99.99}"
         
         
 
-        Respond only with the value enclosed between ${"```"}json and ${"```"}.`;
+        Respond only with the value enclosed between ${"```"} and ${"```"}.`;
 
     test:assertEquals(capturedPrompts[0], expectedPrompt1,
         "First prompt should match expected template evaluation");
