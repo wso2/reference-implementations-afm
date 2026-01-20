@@ -1,0 +1,117 @@
+name: Re-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      implementation:
+        description: 'Implementation'
+        required: true
+        type: choice
+        options:
+          - ballerina-interpreter
+      version:
+        description: 'Version to re-release (e.g., 0.3.0)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to release from'
+        required: false
+        default: 'main'
+        type: string
+      confirm:
+        description: 'Type "RE-RELEASE" to confirm'
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.implementation }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Validate inputs before checkout
+        env:
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ inputs.branch }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          # Validate version format (must be X.Y.Z)
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be in format X.Y.Z, got: $VERSION"
+            exit 1
+          fi
+
+          # Validate branch format (alphanumeric, dash, underscore, dot, slash)
+          if [[ ! "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "::error::Invalid branch name: $BRANCH"
+            exit 1
+          fi
+
+          # Validate confirmation
+          if [[ "$CONFIRM" != "RE-RELEASE" ]]; then
+            echo "::error::You must type RE-RELEASE to confirm"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Check authorization from CODEOWNERS
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          CODEOWNERS_FILE=".github/CODEOWNERS"
+          if [ ! -f "$CODEOWNERS_FILE" ]; then
+            echo "::error::CODEOWNERS file not found"
+            exit 1
+          fi
+
+          # Extract all @usernames from CODEOWNERS
+          OWNERS=$(grep -oE '@[a-zA-Z0-9_-]+' "$CODEOWNERS_FILE" | tr -d '@' | sort -u)
+
+          # Check if actor is in the list
+          if ! echo "$OWNERS" | grep -qx "$ACTOR"; then
+            echo "::error::Only code owners can re-release. You ($ACTOR) are not listed in CODEOWNERS."
+            exit 1
+          fi
+
+          echo "Authorized: $ACTOR is a code owner"
+
+      - name: Delete existing tag
+        env:
+          TAG: ${{ inputs.implementation }}-v${{ inputs.version }}
+        run: |
+          git push --delete origin "$TAG" || echo "Tag not found (OK)"
+
+      - name: Delete existing release branch
+        env:
+          RELEASE_BRANCH: release-${{ inputs.implementation }}-${{ inputs.version }}
+        run: |
+          git push --delete origin "$RELEASE_BRANCH" || echo "Release branch not found (OK)"
+
+      - name: Delete existing GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.implementation }}-v${{ inputs.version }}
+        run: |
+          gh release delete "$TAG" --yes || echo "GitHub release not found (OK)"
+
+  release:
+    needs: validate-and-cleanup
+    uses: ./.github/workflows/release-common.yml
+    with:
+      implementation: ${{ inputs.implementation }}
+      version: ${{ inputs.version }}
+      branch: ${{ inputs.branch }}
+      update_latest: ${{ inputs.branch == 'main' || inputs.branch == 'dev' }}
+      is_rerelease: true
+    permissions:
+      contents: write
+      packages: write
