@@ -59,13 +59,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Determine image name
-        id: image
+        id: meta
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
           # GHCR requires lowercase repository names
           OWNER_LOWER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          echo "name=ghcr.io/$OWNER_LOWER/afm-ballerina-interpreter" >> $GITHUB_OUTPUT
+          echo "image_name=ghcr.io/$OWNER_LOWER/afm-ballerina-interpreter" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -74,5 +74,13 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ steps.image.outputs.name }}:latest
-            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.meta.outputs.image_name }}:latest
+            ${{ steps.meta.outputs.image_name }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=AFM Ballerina Interpreter
+            org.opencontainers.image.licenses=Apache-2.0
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=Apache-2.0

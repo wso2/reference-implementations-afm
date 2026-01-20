@@ -12,6 +12,13 @@ To use the default WSO2 provider, set the `WSO2_MODEL_PROVIDER_TOKEN` environmen
 
 ## Example Usage
 
+```bash
+docker run -p 8085:8085 \
+  -e WSO2_MODEL_PROVIDER_TOKEN=<your-token> \
+  -v ./friendly_assistant.afm.md:/agent.afm.md \
+  ghcr.io/__OWNER__/afm-ballerina-interpreter:latest /agent.afm.md
+```
+
 ### Run a [simple webchat agent](https://wso2.github.io/agent-flavored-markdown/examples/friendly_assistant.afm/)
 
 Create `friendly_assistant.afm.md`:

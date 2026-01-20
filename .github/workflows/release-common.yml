@@ -150,9 +150,11 @@ jobs:
             org.opencontainers.image.version=${{ inputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.title=AFM ${{ inputs.implementation }}
-            org.opencontainers.image.description=Reference implementation of Agent-Flavored Markdown
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/${{ inputs.branch }}/${{ inputs.implementation }}/DOCKER.md
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=Apache-2.0
 
       - name: Create tag and push release branch
         env:
