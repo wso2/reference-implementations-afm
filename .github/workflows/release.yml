@@ -49,21 +49,20 @@ jobs:
         env:
           IMPLEMENTATION: ${{ inputs.implementation }}
         run: |
-          SNAPSHOT_VERSION=$(cat "$IMPLEMENTATION/VERSION" | tr -d '\n')
+          # Read version from Ballerina.toml
+          RELEASE_VERSION=$(grep '^version = ' "$IMPLEMENTATION/Ballerina.toml" | sed 's/version = "\(.*\)"/\1/')
 
-          # Validate SNAPSHOT suffix
-          if [[ ! "$SNAPSHOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT$ ]]; then
-            echo "::error::VERSION must be in format X.Y.Z-SNAPSHOT, got: $SNAPSHOT_VERSION"
+          # Validate version format
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version in Ballerina.toml must be in format X.Y.Z, got: $RELEASE_VERSION"
             exit 1
           fi
-
-          RELEASE_VERSION=${SNAPSHOT_VERSION%-SNAPSHOT}
 
           # Parse for next patch bump
           MAJOR=$(echo "$RELEASE_VERSION" | cut -d. -f1)
           MINOR=$(echo "$RELEASE_VERSION" | cut -d. -f2)
           PATCH=$(echo "$RELEASE_VERSION" | cut -d. -f3)
-          NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))-SNAPSHOT"
+          NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
 
           echo "RELEASE_VERSION=$RELEASE_VERSION" >> $GITHUB_OUTPUT
           echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_OUTPUT
@@ -112,7 +111,7 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
 
-      - name: Bump version to next snapshot
+      - name: Bump version to next
         env:
           BRANCH: ${{ inputs.branch }}
           IMPLEMENTATION: ${{ inputs.implementation }}
@@ -121,7 +120,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull origin "$BRANCH" --rebase
-          echo "$NEXT_VERSION" > "$IMPLEMENTATION/VERSION"
-          git add "$IMPLEMENTATION/VERSION"
+          sed -i "s/^version = \".*\"/version = \"$NEXT_VERSION\"/" "$IMPLEMENTATION/Ballerina.toml"
+          git add "$IMPLEMENTATION/Ballerina.toml"
           git commit -m "Bump $IMPLEMENTATION version to $NEXT_VERSION"
           git push origin "$BRANCH"
