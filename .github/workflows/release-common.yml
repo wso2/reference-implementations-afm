@@ -36,6 +36,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      security-events: write
 
     steps:
       - name: Validate inputs
@@ -155,6 +156,21 @@ jobs:
           annotations: |
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Scan Docker image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.docker-tags.outputs.IMAGE_NAME }}:v${{ inputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
 
       - name: Create tag and push release branch
         env:

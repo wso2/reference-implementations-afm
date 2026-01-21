@@ -99,6 +99,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      security-events: write
 
   bump-version:
     needs: [validate, release]
