@@ -302,3 +302,22 @@ function testGetModelUnsupportedProvider() returns error? {
     test:assertTrue(result is error);
     test:assertTrue((<error>result).message().includes("not yet supported"));
 }
+
+function extractJsonFromCodeBlockDataProvider() returns [string, string, string][] {
+    return [
+        ["json marker", "Here is the result:\n```json\n{\"name\": \"Alice\"}\n```\nDone.", "{\"name\": \"Alice\"}"],
+        ["generic marker", "Here is the result:\n```\n{\"name\": \"Bob\"}\n```\nDone.", "{\"name\": \"Bob\"}"],
+        ["no marker", "{\"name\": \"Charlie\"}", "{\"name\": \"Charlie\"}"],
+        // Might not be the ideal answer, but we'll leave as is since unexpected.
+        ["prioritizes json over other blocks", "Code:\n```python\nprint('hello')\n```\nJSON:\n```json\n{\"value\": 42}\n```", "{\"value\": 42}"],
+        ["multiple generic blocks extracts first", "First:\n```\n{\"first\": true}\n```\nSecond:\n```\n{\"second\": true}\n```", "{\"first\": true}"]
+    ];
+}
+
+@test:Config {
+    dataProvider: extractJsonFromCodeBlockDataProvider
+}
+function testExtractJsonFromCodeBlock(string description, string response, string expected) {
+    string result = extractJsonFromCodeBlock(response);
+    test:assertEquals(result, expected);
+}

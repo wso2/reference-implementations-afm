@@ -163,13 +163,7 @@ function runAgent(ai:Agent agent, json payload, map<json>? inputSchema = (), map
         return error AgentError("Agent run failed", run);
     }
 
-    string responseJsonStr = run;
-    
-    int? tripleBacktickStart = run.indexOf("```");
-    int? tripleBacktickEnd = run.lastIndexOf("```");
-    if tripleBacktickStart is int && tripleBacktickEnd is int && tripleBacktickEnd > tripleBacktickStart {
-        responseJsonStr = run.substring(tripleBacktickStart + 3, tripleBacktickEnd).trim();
-    }
+    string responseJsonStr = extractJsonFromCodeBlock(run);
 
     json|error responseJson = responseJsonStr.toJsonString().fromJsonString();
 
@@ -184,6 +178,26 @@ function runAgent(ai:Agent agent, json payload, map<json>? inputSchema = (), map
         return error AgentError("Agent response does not conform to output schema", validateOutputSchemaResult);
     }
     return isUpdatedSchema ? (<map<json>> responseJson).get("value") : responseJson;
+}
+
+function extractJsonFromCodeBlock(string response) returns string {
+    // Prioritize ```json block, fall back to generic ```
+    int? jsonBlockStart = response.indexOf("```json");
+    int? contentStart = jsonBlockStart is int ? jsonBlockStart + 7 : ();
+
+    if contentStart is () {
+        int? genericStart = response.indexOf("```");
+        contentStart = genericStart is int ? genericStart + 3 : ();
+    }
+
+    if contentStart is int {
+        int? blockEnd = response.indexOf("```", contentStart);
+        if blockEnd is int {
+            return response.substring(contentStart, blockEnd).trim();
+        }
+    }
+
+    return response;
 }
 
 function getFilteredTools(ToolFilter? toolFilter) returns string[]? {
