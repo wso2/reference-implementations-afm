@@ -76,7 +76,3 @@ ballerina-interpreter/
 ├── Ballerina.toml              # Project configuration
 └── Dockerfile                  # Container build
 ```
-
-## License
-
-Apache License 2.0

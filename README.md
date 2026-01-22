@@ -1,6 +1,6 @@
 # AFM Reference Implementations
 
-Reference implementations for [Agent-Flavored Markdown (AFM)](https://github.com/wso2/agent-flavored-markdown).
+Reference implementations for [Agent-Flavored Markdown (AFM)](https://wso2.github.io/agent-flavored-markdown/).
 
 ## Implementations
 
@@ -21,10 +21,6 @@ reference-implementations-afm/
 
 Each implementation has its own README with setup and usage instructions. See the implementation directories for details.
 
-## AFM Specification
-
-See the [AFM Specification](https://github.com/wso2/agent-flavored-markdown).
-
 ## Contributing
 
 Contributions are welcome! When adding a new implementation:
@@ -32,8 +28,8 @@ Contributions are welcome! When adding a new implementation:
 1. Create a new directory: `{language/framework}-{type}/` (e.g., `langchain-interpreter/`)
 2. Add a path-filtered workflow in `.github/workflows/`
 3. Include a README with setup and usage instructions
-4. Follow the AFM specification for compatibility
+4. Follow the [AFM Specification](https://wso2.github.io/agent-flavored-markdown/specification/) for compatibility
 
 ## License
 
-See individual implementation directories for license information.
+Apache License 2.0
