@@ -1,0 +1,62 @@
+[package]
+org = "wso2"
+name = "afm_ballerina"
+version = "0.1.0"
+distribution = "2201.12.10"
+
+[build-options]
+observabilityIncluded = true
+
+# Lightweight JSON Schema validator (Apache 2.0 license)
+[[platform.java21.dependency]]
+groupId = "com.github.erosb"
+artifactId = "everit-json-schema"
+version = "1.14.4"
+
+# transitive dependency of com.github.erosb:everit-json-schema:1.14.4
+[[platform.java21.dependency]]
+groupId = "org.json"
+artifactId = "json"
+version = "20231013"
+
+# transitive dependency of com.github.erosb:everit-json-schema:1.14.4
+[[platform.java21.dependency]]
+groupId = "commons-validator"
+artifactId = "commons-validator"
+version = "1.7"
+
+# transitive dependency of commons-validator:commons-validator:1.7
+[[platform.java21.dependency]]
+groupId = "commons-digester"
+artifactId = "commons-digester"
+version = "2.1"
+
+# transitive dependency of commons-validator:commons-validator:1.7
+[[platform.java21.dependency]]
+groupId = "commons-logging"
+artifactId = "commons-logging"
+version = "1.2"
+
+# transitive dependency of commons-validator:commons-validator:1.7
+[[platform.java21.dependency]]
+groupId = "commons-collections"
+artifactId = "commons-collections"
+version = "3.2.2"
+
+# transitive dependency of com.github.erosb:everit-json-schema:1.14.4
+[[platform.java21.dependency]]
+groupId = "com.damnhandy"
+artifactId = "handy-uri-templates"
+version = "2.1.8"
+
+# transitive dependency of com.damnhandy:handy-uri-templates:2.1.8
+[[platform.java21.dependency]]
+groupId = "joda-time"
+artifactId = "joda-time"
+version = "2.10.2"
+
+# transitive dependency of com.github.erosb:everit-json-schema:1.14.4
+[[platform.java21.dependency]]
+groupId = "com.google.re2j"
+artifactId = "re2j"
+version = "1.6"

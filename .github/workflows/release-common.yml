@@ -1,0 +1,213 @@
+name: Release Common
+
+on:
+  workflow_call:
+    inputs:
+      implementation:
+        description: 'Implementation to release'
+        required: true
+        type: string
+      version:
+        description: 'Version to release (e.g., 0.3.0)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to release from'
+        required: true
+        type: string
+      update_latest:
+        description: 'Whether to update :latest Docker tag'
+        required: false
+        default: false
+        type: boolean
+      is_rerelease:
+        description: 'Whether this is a re-release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  # Allowed implementations - update this list when adding new implementations
+  ALLOWED_IMPLEMENTATIONS: ballerina-interpreter
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      security-events: write
+
+    steps:
+      - name: Validate inputs
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          # Validate implementation is in allowed list
+          if [[ ! " $ALLOWED_IMPLEMENTATIONS " =~ " $IMPLEMENTATION " ]]; then
+            echo "::error::Unknown implementation: $IMPLEMENTATION. Allowed: $ALLOWED_IMPLEMENTATIONS"
+            exit 1
+          fi
+
+          # Validate version format
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be in format X.Y.Z, got: $VERSION"
+            exit 1
+          fi
+
+          # Validate branch format
+          if [[ ! "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "::error::Invalid branch name: $BRANCH"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Set up Ballerina
+        if: inputs.implementation == 'ballerina-interpreter'
+        uses: ballerina-platform/setup-ballerina@v1.1.3
+        with:
+          version: 2201.12.10
+
+      - name: Build and test (Ballerina)
+        if: inputs.implementation == 'ballerina-interpreter'
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+        working-directory: ${{ inputs.implementation }}
+        run: |
+          bal build
+          bal test
+
+      - name: Create release branch
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release-$IMPLEMENTATION-$VERSION"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Docker tags
+        id: docker-tags
+        env:
+          OWNER: ${{ github.repository_owner }}
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          VERSION: ${{ inputs.version }}
+          UPDATE_LATEST: ${{ inputs.update_latest }}
+        run: |
+          # GHCR requires lowercase repository names
+          OWNER_LOWER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="ghcr.io/$OWNER_LOWER/afm-$IMPLEMENTATION"
+          TAGS="$IMAGE_NAME:v$VERSION"
+          if [ "$UPDATE_LATEST" = "true" ]; then
+            TAGS="$TAGS,$IMAGE_NAME:latest"
+          fi
+          echo "TAGS=$TAGS" >> $GITHUB_OUTPUT
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.implementation }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.docker-tags.outputs.TAGS }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=AFM ${{ inputs.implementation }}
+            org.opencontainers.image.licenses=Apache-2.0
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Scan Docker image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.docker-tags.outputs.IMAGE_NAME }}:v${{ inputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          limit-severities-for-sarif: true
+          exit-code: '1'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Create tag and push release branch
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          git tag "$IMPLEMENTATION-v$VERSION"
+          git push origin "release-$IMPLEMENTATION-$VERSION"
+          git push origin "$IMPLEMENTATION-v$VERSION"
+
+      - name: Generate release notes
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          VERSION: ${{ inputs.version }}
+          IS_RERELEASE: ${{ inputs.is_rerelease }}
+        run: |
+          # Find previous tag for this implementation (exclude current version since tag was just created)
+          PREV_TAG=$(git tag -l "$IMPLEMENTATION-v*" --sort=-v:refname | grep -v "^$IMPLEMENTATION-v$VERSION$" | head -1)
+
+          # Generate notes from commits that touched this implementation
+          if [ -n "$PREV_TAG" ]; then
+            echo "Generating notes since $PREV_TAG"
+            COMMITS=$(git log "$PREV_TAG..HEAD" --oneline -- "$IMPLEMENTATION/" | head -50)
+          else
+            echo "No previous tag found, using recent commits"
+            COMMITS=$(git log --oneline -50 -- "$IMPLEMENTATION/")
+          fi
+
+          # Format notes
+          RERELEASE_NOTE=""
+          if [ "$IS_RERELEASE" = "true" ]; then
+            RERELEASE_NOTE="
+
+          _Re-released version_"
+          fi
+
+          if [ -n "$COMMITS" ]; then
+            NOTES="## Changes in $IMPLEMENTATION
+
+          $COMMITS$RERELEASE_NOTE"
+          else
+            NOTES="## Changes in $IMPLEMENTATION
+
+          No changes detected in this implementation directory.$RERELEASE_NOTE"
+          fi
+
+          echo "$NOTES" > release_notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.implementation }}-v${{ inputs.version }}
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --title "$IMPLEMENTATION v$VERSION" \
+            --notes-file release_notes.md

@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      implementation:
+        description: 'Implementation to release'
+        required: true
+        type: choice
+        options:
+          - ballerina-interpreter
+      branch:
+        description: 'Branch to release from'
+        required: false
+        default: 'main'
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.implementation }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_version: ${{ steps.version.outputs.RELEASE_VERSION }}
+      next_version: ${{ steps.version.outputs.NEXT_VERSION }}
+    steps:
+      - name: Validate branch format
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          # Validate branch format (alphanumeric, dash, underscore, dot, slash)
+          if [[ ! "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "::error::Invalid branch name: $BRANCH"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Read and validate version
+        id: version
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+        run: |
+          # Read version from Ballerina.toml (first match is package version)
+          RELEASE_VERSION=$(grep '^version = ' "$IMPLEMENTATION/Ballerina.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+          # Validate version format
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version in Ballerina.toml must be in format X.Y.Z, got: $RELEASE_VERSION"
+            exit 1
+          fi
+
+          # Parse for next patch bump
+          MAJOR=$(echo "$RELEASE_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$RELEASE_VERSION" | cut -d. -f2)
+          PATCH=$(echo "$RELEASE_VERSION" | cut -d. -f3)
+          NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> $GITHUB_OUTPUT
+          echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing $RELEASE_VERSION, next will be $NEXT_VERSION"
+
+      - name: Check tag doesn't already exist
+        env:
+          TAG: ${{ inputs.implementation }}-v${{ steps.version.outputs.RELEASE_VERSION }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Use re-release workflow to overwrite."
+            exit 1
+          fi
+
+      - name: Check release branch doesn't already exist
+        env:
+          RELEASE_BRANCH: release-${{ inputs.implementation }}-${{ steps.version.outputs.RELEASE_VERSION }}
+        run: |
+          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+            echo "::error::Release branch $RELEASE_BRANCH already exists. Use re-release workflow to overwrite."
+            exit 1
+          fi
+
+  release:
+    needs: validate
+    uses: ./.github/workflows/release-common.yml
+    with:
+      implementation: ${{ inputs.implementation }}
+      version: ${{ needs.validate.outputs.release_version }}
+      branch: ${{ inputs.branch }}
+      update_latest: ${{ inputs.branch == 'main' || inputs.branch == 'dev' }}
+      is_rerelease: false
+    permissions:
+      contents: write
+      packages: write
+      security-events: write
+
+  bump-version:
+    needs: [validate, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Bump version to next
+        env:
+          BRANCH: ${{ inputs.branch }}
+          IMPLEMENTATION: ${{ inputs.implementation }}
+          NEXT_VERSION: ${{ needs.validate.outputs.next_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull origin "$BRANCH" --rebase
+          sed -i "s/^version = \".*\"/version = \"$NEXT_VERSION\"/" "$IMPLEMENTATION/Ballerina.toml"
+          git add "$IMPLEMENTATION/Ballerina.toml"
+          git commit -m "Bump $IMPLEMENTATION version to $NEXT_VERSION"
+          git push origin "$BRANCH"

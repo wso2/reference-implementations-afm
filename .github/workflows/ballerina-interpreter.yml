@@ -1,0 +1,86 @@
+name: Ballerina Interpreter CI
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'ballerina-interpreter/**'
+      - '.github/workflows/ballerina-interpreter.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'ballerina-interpreter/**'
+      - '.github/workflows/ballerina-interpreter.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ballerina-interpreter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Ballerina
+        uses: ballerina-platform/setup-ballerina@v1.1.3
+        with:
+          version: 2201.12.10
+
+      - name: Build
+        run: bal build
+
+      - name: Run tests
+        run: bal test
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+    defaults:
+      run:
+        working-directory: ballerina-interpreter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image name
+        id: meta
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # GHCR requires lowercase repository names
+          OWNER_LOWER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=ghcr.io/$OWNER_LOWER/afm-ballerina-interpreter" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ballerina-interpreter
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.image_name }}:latest
+            ${{ steps.meta.outputs.image_name }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=AFM Ballerina Interpreter
+            org.opencontainers.image.licenses=Apache-2.0
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=Apache-2.0
