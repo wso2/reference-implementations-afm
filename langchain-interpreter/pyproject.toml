@@ -1,0 +1,32 @@
+[project]
+name = "langchain-interpreter"
+version = "0.1.0"
+description = "AFM (Agent-Flavored Markdown) interpreter using LangChain"
+readme = "README.md"
+authors = [
+    { name = "Radith Samarakoon", email = "jjeli1234@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.2.8",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+langchain-interpreter = "langchain_interpreter:main"
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
