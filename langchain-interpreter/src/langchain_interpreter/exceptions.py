@@ -65,3 +65,45 @@ class JSONAccessError(AFMError):
     def __init__(self, message: str, path: str | None = None):
         self.path = path
         super().__init__(message)
+
+
+class AgentError(AFMError):
+    """Base exception for agent execution errors."""
+
+    pass
+
+
+class AgentConfigError(AgentError):
+    """Raised when agent configuration is invalid."""
+
+    def __init__(self, message: str, config_key: str | None = None):
+        self.config_key = config_key
+        if config_key is not None:
+            message = f"Configuration '{config_key}': {message}"
+        super().__init__(message)
+
+
+class ProviderError(AgentError):
+    """Raised when LLM provider configuration or connection fails."""
+
+    def __init__(self, message: str, provider: str | None = None):
+        self.provider = provider
+        if provider is not None:
+            message = f"Provider '{provider}': {message}"
+        super().__init__(message)
+
+
+class InputValidationError(AFMValidationError):
+    """Raised when input data doesn't match the interface signature schema."""
+
+    def __init__(self, message: str, schema_path: str | None = None):
+        self.schema_path = schema_path
+        super().__init__(message, field="input")
+
+
+class OutputValidationError(AFMValidationError):
+    """Raised when output data doesn't match the interface signature schema."""
+
+    def __init__(self, message: str, schema_path: str | None = None):
+        self.schema_path = schema_path
+        super().__init__(message, field="output")

@@ -7,8 +7,6 @@ Parses AFM files containing YAML frontmatter and Markdown body with
 Role and Instructions sections.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import yaml

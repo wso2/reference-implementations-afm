@@ -156,12 +156,13 @@ def evaluate_template(
     parts: list[str] = []
 
     for segment in compiled.segments:
-        if segment.kind == "literal":
-            parts.append(segment.text)
-        elif segment.kind == "payload":
-            _handle_payload_variable(payload, parts, segment)
-        elif segment.kind == "header":
-            _handle_header_variable(headers, parts, segment)
+        match segment:
+            case LiteralSegment(text=text):
+                parts.append(text)
+            case PayloadVariable():
+                _handle_payload_variable(payload, parts, segment)
+            case HeaderVariable():
+                _handle_header_variable(headers, parts, segment)
 
     return "".join(parts)
 

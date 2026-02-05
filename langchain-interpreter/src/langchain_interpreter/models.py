@@ -325,7 +325,9 @@ class HeaderVariable(BaseModel):
 
 
 # Type alias for template segments
-TemplateSegment = LiteralSegment | PayloadVariable | HeaderVariable
+TemplateSegment = Annotated[
+    LiteralSegment | PayloadVariable | HeaderVariable, Field(discriminator="kind")
+]
 
 
 class CompiledTemplate(BaseModel):
