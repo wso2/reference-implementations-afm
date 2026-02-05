@@ -34,7 +34,7 @@ class TestCreateModelProvider:
         """Test that None model defaults to OpenAI."""
         mock_chat_openai.return_value = MagicMock()
 
-        result = create_model_provider(None)
+        create_model_provider(None)
 
         mock_chat_openai.assert_called_once()
         call_kwargs = mock_chat_openai.call_args[1]
@@ -48,7 +48,7 @@ class TestCreateModelProvider:
         mock_chat_openai.return_value = MagicMock()
         model = Model(provider="openai", name="gpt-4-turbo")
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         mock_chat_openai.assert_called_once()
         call_kwargs = mock_chat_openai.call_args[1]
@@ -61,7 +61,7 @@ class TestCreateModelProvider:
         mock_chat_anthropic.return_value = MagicMock()
         model = Model(provider="anthropic", name="claude-3-opus-20240229")
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         mock_chat_anthropic.assert_called_once()
         call_kwargs = mock_chat_anthropic.call_args[1]
@@ -75,7 +75,7 @@ class TestCreateModelProvider:
         mock_chat_anthropic.return_value = MagicMock()
         model = Model(provider="anthropic")
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         call_kwargs = mock_chat_anthropic.call_args[1]
         assert call_kwargs["model"] == DEFAULT_ANTHROPIC_MODEL
@@ -91,7 +91,7 @@ class TestCreateModelProvider:
             url="https://custom-api.example.com/v1",
         )
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         call_kwargs = mock_chat_openai.call_args[1]
         assert call_kwargs["base_url"] == "https://custom-api.example.com/v1"
@@ -106,7 +106,7 @@ class TestCreateModelProvider:
             authentication=ClientAuthentication(type="bearer", token="bearer-token"),
         )
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         call_kwargs = mock_chat_openai.call_args[1]
         assert call_kwargs["api_key"] == "bearer-token"
@@ -123,7 +123,7 @@ class TestCreateModelProvider:
             ),
         )
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         call_kwargs = mock_chat_openai.call_args[1]
         assert call_kwargs["api_key"] == "explicit-api-key"
@@ -156,7 +156,7 @@ class TestCreateModelProvider:
         mock_chat_openai.return_value = MagicMock()
         model = Model(provider="OpenAI")  # Mixed case
 
-        result = create_model_provider(model)
+        create_model_provider(model)
 
         mock_chat_openai.assert_called_once()
 

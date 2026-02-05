@@ -499,7 +499,7 @@ class TestModelProviderIntegration:
             instructions="Test",
         )
 
-        agent = Agent(afm)
+        Agent(afm)
 
         mock_create_provider.assert_called_once_with(afm.metadata.model)
 
@@ -510,5 +510,5 @@ class TestModelProviderIntegration:
     ) -> None:
         """Test that provided model is used instead of creating one."""
         with patch("langchain_interpreter.agent.create_model_provider") as mock_create:
-            agent = Agent(simple_afm, model=mock_chat_model)
+            Agent(simple_afm, model=mock_chat_model)
             mock_create.assert_not_called()

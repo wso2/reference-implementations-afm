@@ -17,6 +17,9 @@ from jsonschema import ValidationError as JsonSchemaValidationError
 from .exceptions import InputValidationError, OutputValidationError
 from .models import JSONSchema
 
+JSON_BLOCK_PATTERN = re.compile(r"```json\s*([\s\S]*?)\s*```")
+GENERIC_BLOCK_PATTERN = re.compile(r"```\s*([\s\S]*?)\s*```")
+
 
 def json_schema_to_dict(schema: JSONSchema) -> dict[str, Any]:
     """Convert a Pydantic JSONSchema model to a dict for jsonschema library.
@@ -43,7 +46,6 @@ def json_schema_to_dict(schema: JSONSchema) -> dict[str, Any]:
     if schema.description is not None:
         result["description"] = schema.description
 
-    # Include any extra fields from the model (JSON Schema allows additional properties)
     extra_fields = schema.model_dump(
         exclude={"type", "properties", "required", "items", "description"}
     )
@@ -103,19 +105,14 @@ def extract_json_from_response(response: str) -> str:
     Returns:
         The extracted JSON string.
     """
-    # Try to find ```json ... ``` block first
-    json_block_pattern = r"```json\s*([\s\S]*?)\s*```"
-    match = re.search(json_block_pattern, response)
+    match = JSON_BLOCK_PATTERN.search(response)
     if match:
         return match.group(1).strip()
 
-    # Try generic ``` ... ``` block
-    generic_block_pattern = r"```\s*([\s\S]*?)\s*```"
-    match = re.search(generic_block_pattern, response)
+    match = GENERIC_BLOCK_PATTERN.search(response)
     if match:
         return match.group(1).strip()
 
-    # Return as-is
     return response.strip()
 
 
@@ -155,9 +152,8 @@ def coerce_output_to_schema(
             schema_path=None,
         ) from e
 
-    # Handle non-object schema types (wrap for validation like Ballerina does)
+    # Handle non-object schema types
     if schema.type != "object":
-        # For primitive types, the parsed data should be the value directly
         validate_output(data, schema)
         return data
 
