@@ -10,14 +10,20 @@ using FastAPI.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .base import get_http_path, get_webchat_interface, InterfaceNotFoundError
+
+CHAT_UI_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent.parent / "resources" / "chat-ui.html"
+)
+CHAT_UI_TEMPLATE = CHAT_UI_TEMPLATE_PATH.read_text(encoding="utf-8")
 
 if TYPE_CHECKING:
     from ..agent import Agent
@@ -82,6 +88,21 @@ def create_webchat_router(
         An APIRouter with the webchat endpoints.
     """
     router = APIRouter()
+    ui_path = f"{path}/ui"
+    icon_url = agent.afm.metadata.icon_url or ""
+    icon_style = "" if icon_url else "display:none;"
+    ui_html = (
+        CHAT_UI_TEMPLATE.replace("{{AGENT_NAME}}", agent.name)
+        .replace("{{AGENT_DESCRIPTION}}", agent.description or "")
+        .replace("{{AGENT_ICON_URL}}", icon_url)
+        .replace("{{AGENT_ICON_STYLE}}", icon_style)
+        .replace("{{CHAT_PATH}}", path)
+    )
+
+    @router.get(ui_path, response_class=HTMLResponse)
+    async def chat_ui() -> HTMLResponse:
+        """Render the web chat UI."""
+        return HTMLResponse(content=ui_html)
 
     # Determine if we need simple string I/O or complex schema
     input_is_string = signature.input.type == "string"

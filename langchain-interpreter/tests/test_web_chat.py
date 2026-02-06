@@ -28,6 +28,7 @@ def mock_agent() -> MagicMock:
     agent.afm = MagicMock()
     agent.afm.metadata = MagicMock()
     agent.afm.metadata.version = "1.0.0"
+    agent.afm.metadata.icon_url = None
     agent.afm.metadata.interfaces = None
 
     # Default string signature
@@ -53,6 +54,7 @@ def mock_agent_with_object_output() -> MagicMock:
     agent.afm = MagicMock()
     agent.afm.metadata = MagicMock()
     agent.afm.metadata.version = "1.0.0"
+    agent.afm.metadata.icon_url = None
     agent.afm.metadata.interfaces = None
 
     # Object output signature
@@ -84,6 +86,7 @@ def mock_agent_with_webchat_interface() -> MagicMock:
     agent.afm = MagicMock()
     agent.afm.metadata = MagicMock()
     agent.afm.metadata.version = "2.0.0"
+    agent.afm.metadata.icon_url = None
 
     # Configure webchat interface with custom path
     from langchain_interpreter.models import Exposure, HTTPExposure
@@ -430,3 +433,41 @@ class TestAgentInfoEndpoint:
 
         assert response.status_code == 200
         assert response.json()["version"] is None
+
+
+class TestChatUI:
+    """Tests for the web chat UI endpoint."""
+
+    def test_ui_endpoint_exists(self, mock_agent: MagicMock) -> None:
+        """Test that GET /chat/ui returns the UI HTML."""
+        app = create_webchat_app(mock_agent)
+        client = TestClient(app)
+
+        response = client.get("/chat/ui")
+
+        assert response.status_code == 200
+        assert "<!DOCTYPE html>" in response.text
+        assert "Test Agent" in response.text
+        assert "A test agent for unit testing" in response.text
+        assert "const chatPath = '/chat';" in response.text
+
+    def test_ui_includes_icon_url(self, mock_agent: MagicMock) -> None:
+        """Test that icon URL is rendered when present."""
+        mock_agent.afm.metadata.icon_url = "https://example.com/icon.png"
+        app = create_webchat_app(mock_agent)
+        client = TestClient(app)
+
+        response = client.get("/chat/ui")
+
+        assert response.status_code == 200
+        assert "https://example.com/icon.png" in response.text
+
+    def test_ui_uses_custom_path(self, mock_agent: MagicMock) -> None:
+        """Test that UI uses the custom chat path."""
+        app = create_webchat_app(mock_agent, path="/custom/endpoint")
+        client = TestClient(app)
+
+        response = client.get("/custom/endpoint/ui")
+
+        assert response.status_code == 200
+        assert "const chatPath = '/custom/endpoint';" in response.text

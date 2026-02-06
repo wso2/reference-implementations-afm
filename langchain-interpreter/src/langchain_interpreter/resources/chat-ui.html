@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AFM Web Chat</title>
+    <style>
+        * {margin: 0;padding: 0;box-sizing: border-box;}
+        body {font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);height: 100vh;display: flex;justify-content: center;align-items: center;padding: 20px;}
+        .chat-container {width: 100%;max-width: 900px;height: 90vh;max-height: 800px;background: white;border-radius: 16px;box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);display: flex;flex-direction: column;overflow: hidden;}
+        .chat-header {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);color: white;padding: 24px;text-align: center;}
+        .agent-icon {width: 56px;height: 56px;border-radius: 12px;object-fit: cover;margin-bottom: 10px;box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);}
+        .chat-header h1 {font-size: 28px;font-weight: 700;margin-bottom: 4px;}
+        .subtitle {font-size: 14px;opacity: 0.9;}
+        .chat-messages {flex: 1;overflow-y: auto;padding: 24px;background: #f8f9fa;}
+        .message {margin-bottom: 20px;display: flex;gap: 12px;animation: slideIn 0.3s ease-out;}
+        @keyframes slideIn {from {opacity: 0;transform: translateY(10px);}to {opacity: 1;transform: translateY(0);}}
+        .message.user {flex-direction: row-reverse;}
+        .message-wrapper {max-width: 75%;}
+        .message-label {font-size: 11px;color: #6c757d;margin-bottom: 6px;font-weight: 600;text-transform: uppercase;letter-spacing: 0.5px;}
+        .message.user .message-label {text-align: right;}
+        .message-content {padding: 14px 18px;border-radius: 14px;word-wrap: break-word;line-height: 1.5;font-size: 15px;}
+        .message.user .message-content {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);color: white;border-bottom-right-radius: 4px;}
+        .message.agent .message-content {background: white;color: #212529;border: 1px solid #dee2e6;border-bottom-left-radius: 4px;}
+        .chat-input-container {padding: 20px;background: white;border-top: 1px solid #dee2e6;}
+        .chat-input-form {display: flex;gap: 12px;align-items: center;}
+        .chat-input {flex: 1;padding: 14px 20px;border: 2px solid #dee2e6;border-radius: 28px;font-size: 15px;outline: none;transition: all 0.3s ease;font-family: inherit;}
+        .chat-input:focus {border-color: #667eea;box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);}
+        .chat-input:disabled {background-color: #f8f9fa;cursor: not-allowed;}
+        .chat-send-btn {padding: 14px 32px;background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);color: white;border: none;border-radius: 28px;cursor: pointer;font-weight: 600;font-size: 15px;transition: all 0.3s ease;display: flex;align-items: center;gap: 8px;box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);}
+        .chat-send-btn:hover:not(:disabled) {transform: translateY(-2px);box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);}
+        .chat-send-btn:active:not(:disabled) {transform: translateY(0);}
+        .chat-send-btn:disabled {opacity: 0.6;cursor: not-allowed;transform: none;}
+        .btn-icon {font-size: 16px;}
+        .typing-indicator {display: none;padding: 14px 18px;background: white;border: 1px solid #dee2e6;border-radius: 14px;border-bottom-left-radius: 4px;width: 70px;}
+        .typing-indicator.show {display: inline-block;}
+        .typing-indicator span {height: 8px;width: 8px;background: #6c757d;border-radius: 50%;display: inline-block;margin: 0 3px;animation: typing 1.4s infinite ease-in-out;}
+        .typing-indicator span:nth-child(1) {animation-delay: 0s;}
+        .typing-indicator span:nth-child(2) {animation-delay: 0.2s;}
+        .typing-indicator span:nth-child(3) {animation-delay: 0.4s;}
+        @keyframes typing {0%, 60%, 100% {transform: translateY(0);opacity: 0.5;}30% {transform: translateY(-12px);opacity: 1;}}
+        .error-message {background: #f8d7da;border: 1px solid #f5c2c7;color: #842029;padding: 14px 18px;border-radius: 10px;margin-bottom: 20px;font-size: 14px;}
+        .chat-messages::-webkit-scrollbar {width: 10px;}
+        .chat-messages::-webkit-scrollbar-track {background: #e9ecef;}
+        .chat-messages::-webkit-scrollbar-thumb {background: #adb5bd;border-radius: 5px;}
+        .chat-messages::-webkit-scrollbar-thumb:hover {background: #6c757d;}
+        @media (max-width: 768px) {body {padding: 10px;}.chat-container {height: 95vh;border-radius: 12px;}.chat-header h1 {font-size: 24px;}.message-wrapper {max-width: 85%;}}
+        @media (max-width: 480px) {.btn-text {display: none;}.chat-send-btn {padding: 12px 20px;}}
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <img class="agent-icon" src="{{AGENT_ICON_URL}}" alt="Agent icon" style="{{AGENT_ICON_STYLE}}" onerror="this.style.display='none';">
+            <h1>{{AGENT_NAME}}</h1>
+            <p class="subtitle">{{AGENT_DESCRIPTION}}</p>
+            <p class="subtitle" style="font-size: 12px; margin-top: 4px;">Powered by LangChain</p>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="message agent">
+                <div class="message-wrapper">
+                    <div class="message-label">Agent</div>
+                    <div class="message-content">Hello! How can I help you today?</div>
+                </div>
+            </div>
+        </div>
+        <div class="chat-input-container">
+            <form class="chat-input-form" id="chatForm" action="#" autocomplete="off">
+                <input type="text" class="chat-input" id="messageInput" placeholder="Type your message here..." autocomplete="off" required>
+                <button type="submit" class="chat-send-btn" id="sendBtn"><span class="btn-text">Send</span><span class="btn-icon">➤</span></button>
+            </form>
+        </div>
+    </div>
+    <script>
+document.addEventListener('DOMContentLoaded', () => {
+    const chatMessages = document.getElementById('chatMessages');
+    const chatForm = document.getElementById('chatForm');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const chatPath = '{{CHAT_PATH}}';
+
+    if (!chatForm || !messageInput || !sendBtn || !chatMessages) {
+        return;
+    }
+
+    const sessionId = (() => {
+        let sid = null;
+        try {
+            sid = sessionStorage.getItem('chatSessionId');
+        } catch (e) {
+            sid = null;
+        }
+        if (!sid) {
+            if (window.crypto && typeof crypto.randomUUID === 'function') {
+                sid = crypto.randomUUID();
+            } else {
+                sid = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            }
+            try {
+                sessionStorage.setItem('chatSessionId', sid);
+            } catch (e) {
+                return sid;
+            }
+        }
+        return sid;
+    })();
+
+    function escapeHtml(t) {
+        const d = document.createElement('div');
+        d.textContent = t;
+        return d.innerHTML;
+    }
+
+    function parseMarkdown(md) {
+        let html = escapeHtml(md);
+        html = html.replace(/```([\s\S]*?)```/g, (m, code) => '<pre style="background:#f5f5f5;padding:12px;border-radius:6px;overflow-x:auto;margin:8px 0;"><code>' + code.trim() + '</code></pre>');
+        html = html.replace(/`([^`]+)`/g, '<code style="background:#f5f5f5;padding:2px 6px;border-radius:3px;font-family:monospace;">$1</code>');
+        html = html.replace(/^### (.*$)/gm, '<h3 style="font-size:16px;font-weight:600;margin:12px 0 6px 0;">$1</h3>');
+        html = html.replace(/^## (.*$)/gm, '<h2 style="font-size:18px;font-weight:600;margin:12px 0 6px 0;">$1</h2>');
+        html = html.replace(/^# (.*$)/gm, '<h1 style="font-size:20px;font-weight:600;margin:12px 0 6px 0;">$1</h1>');
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        html = html.replace(/^- (.+)$/gm, '<li style="margin-left:20px;">$1</li>');
+        html = html.replace(/^(\d+)\. (.+)$/gm, '<li style="margin-left:20px;list-style-type:decimal;">$2</li>');
+        html = html.replace(/\n/g, '<br>');
+        return html;
+    }
+
+    function formatResponse(r) {
+        if (typeof r === 'string') return parseMarkdown(r);
+        if (typeof r === 'object') {
+            try {
+                return '<pre style="background:#f5f5f5;padding:12px;border-radius:6px;overflow-x:auto;margin:8px 0;"><code>' + escapeHtml(JSON.stringify(r, null, 2)) + '</code></pre>';
+            } catch (e) {
+                return escapeHtml(String(r));
+            }
+        }
+        return escapeHtml(String(r));
+    }
+
+    function addMessage(content, isUser) {
+        const div = document.createElement('div');
+        div.className = 'message ' + (isUser ? 'user' : 'agent');
+        const formatted = isUser ? escapeHtml(content) : formatResponse(content);
+        div.innerHTML = '<div class="message-wrapper"><div class="message-label">' + (isUser ? 'You' : 'Agent') + '</div><div class="message-content">' + formatted + '</div></div>';
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function showTypingIndicator() {
+        const div = document.createElement('div');
+        div.className = 'message agent';
+        div.id = 'typingIndicator';
+        div.innerHTML = '<div class="message-wrapper"><div class="message-label">Agent</div><div class="typing-indicator show"><span></span><span></span><span></span></div></div>';
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function hideTypingIndicator() {
+        const t = document.getElementById('typingIndicator');
+        if (t) t.remove();
+    }
+
+    function showError(m) {
+        const div = document.createElement('div');
+        div.className = 'error-message';
+        div.textContent = 'Error: ' + m;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function sendMessage(m) {
+        try {
+            const headers = { 'Content-Type': 'text/plain', 'X-Session-Id': sessionId };
+            const r = await fetch(chatPath, { method: 'POST', headers, body: m });
+            if (!r.ok) {
+                if (r.status === 400) {
+                    throw new Error('Invalid message format. Please try again.');
+                } else if (r.status === 401 || r.status === 403) {
+                    throw new Error('Authentication required.');
+                } else if (r.status === 429) {
+                    throw new Error('Too many requests. Please wait a moment.');
+                } else if (r.status >= 500) {
+                    throw new Error('Service temporarily unavailable. Please try again later.');
+                }
+                throw new Error('Unable to send message. Please try again.');
+            }
+            const ct = r.headers.get('content-type');
+            if (ct && ct.includes('application/json')) {
+                const respData = await r.json();
+                return respData.message || respData;
+            }
+            return await r.text();
+        } catch (error) {
+            if (error instanceof Error) {
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    throw new Error('Unable to connect to the chat service. Please check your connection.');
+                }
+                if (error.message.startsWith('Invalid') || error.message.startsWith('Authentication') || error.message.startsWith('Too many') || error.message.startsWith('Service') || error.message.startsWith('Unable')) {
+                    throw error;
+                }
+            }
+            throw new Error('An unexpected error occurred. Please try again.');
+        }
+    }
+
+    function setInputEnabled(enabled) {
+        messageInput.disabled = !enabled;
+        sendBtn.disabled = !enabled;
+        if (enabled) messageInput.focus();
+    }
+
+    async function handleSubmit(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const m = messageInput.value.trim();
+        if (!m) return;
+        addMessage(m, true);
+        messageInput.value = '';
+        setInputEnabled(false);
+        showTypingIndicator();
+        try {
+            const r = await sendMessage(m);
+            hideTypingIndicator();
+            addMessage(r, false);
+        } catch (error) {
+            hideTypingIndicator();
+            if (error instanceof Error) {
+                showError(error.message);
+            } else {
+                showError('An unexpected error occurred. Please try again.');
+            }
+        } finally {
+            setInputEnabled(true);
+        }
+    }
+
+    chatForm.addEventListener('submit', handleSubmit);
+
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSubmit(e);
+        }
+    });
+
+    window.addEventListener('load', () => { messageInput.focus(); });
+});
+    </script>
+</body>
+</html>
