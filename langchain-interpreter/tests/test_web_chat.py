@@ -449,7 +449,7 @@ class TestChatUI:
         assert "<!DOCTYPE html>" in response.text
         assert "Test Agent" in response.text
         assert "A test agent for unit testing" in response.text
-        assert "const chatPath = '/chat';" in response.text
+        assert 'const chatPath = "/chat";' in response.text
 
     def test_ui_includes_icon_url(self, mock_agent: MagicMock) -> None:
         """Test that icon URL is rendered when present."""
@@ -470,4 +470,4 @@ class TestChatUI:
         response = client.get("/custom/endpoint/ui")
 
         assert response.status_code == 200
-        assert "const chatPath = '/custom/endpoint';" in response.text
+        assert 'const chatPath = "/custom/endpoint";' in response.text

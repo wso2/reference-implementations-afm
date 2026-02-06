@@ -122,13 +122,14 @@ def create_webchat_router(
     agent_description = (
         "" if agent.description is None else html.escape(str(agent.description))
     )
+    chat_path_json = json.dumps(path)
     ui_html = (
         get_chat_ui_template()
         .replace("{{AGENT_NAME}}", agent_name)
         .replace("{{AGENT_DESCRIPTION}}", agent_description)
         .replace("{{AGENT_ICON_URL}}", icon_url)
         .replace("{{AGENT_ICON_STYLE}}", icon_style)
-        .replace("{{CHAT_PATH}}", path)
+        .replace("{{CHAT_PATH}}", chat_path_json)
     )
 
     @router.get(ui_path, response_class=HTMLResponse)
