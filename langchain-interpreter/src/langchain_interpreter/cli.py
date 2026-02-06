@@ -285,7 +285,6 @@ def extract_interfaces(
 # =============================================================================
 
 
-# TODO: Check if afm spec mentions port/host for HTTP interfaces
 @click.command()
 @click.argument("file", type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -348,6 +347,9 @@ def main(
         level=log_level,
         format="%(levelname)s: %(message)s",
     )
+    if not verbose:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     # Parse AFM file
     click.echo(f"Loading: {file}")
