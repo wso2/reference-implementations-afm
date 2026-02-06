@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 # Default model names when not specified
 DEFAULT_OPENAI_MODEL = "gpt-4o"
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4"
 
 # Default API URLs
 DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
