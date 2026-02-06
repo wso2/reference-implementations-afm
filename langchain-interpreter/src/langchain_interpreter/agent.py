@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
-from .exceptions import AgentError, InputValidationError
+from .exceptions import AgentError, InputValidationError, OutputValidationError
 from .models import (
     AFMRecord,
     Interface,
@@ -469,6 +469,8 @@ class Agent:
 
         except InputValidationError:
             raise
+        except OutputValidationError:
+            raise
         except Exception as e:
             if isinstance(e, AgentError):
                 raise
@@ -571,6 +573,8 @@ class Agent:
             return result
 
         except InputValidationError:
+            raise
+        except OutputValidationError:
             raise
         except Exception as e:
             if isinstance(e, AgentError):

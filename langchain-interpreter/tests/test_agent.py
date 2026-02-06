@@ -24,7 +24,6 @@ from langchain_interpreter.models import (
     WebChatInterface,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -301,18 +300,15 @@ class TestAgentRun:
         afm_with_object_output: AFMRecord,
         mock_chat_model: MagicMock,
     ) -> None:
-        """Test that invalid output raises AgentError wrapping OutputValidationError."""
+        """Test that invalid output raises OutputValidationError."""
         mock_chat_model.invoke.return_value = AIMessage(
             content='{"wrong_field": "value"}'  # Missing required 'answer'
         )
 
         agent = Agent(afm_with_object_output, model=mock_chat_model)
 
-        with pytest.raises(AgentError) as exc_info:
+        with pytest.raises(OutputValidationError):
             agent.run("Test")
-
-        # Verify it's wrapping an OutputValidationError
-        assert isinstance(exc_info.value.__cause__, OutputValidationError)
 
     def test_run_model_error_raises_agent_error(
         self,
