@@ -148,12 +148,13 @@ class TestStringChat:
         app = create_webchat_app(mock_agent)
         client = TestClient(app)
 
-        response = client.post("/chat", json={"message": "Hello!"})
+        response = client.post(
+            "/chat",
+            json="Hello!",
+        )
 
         assert response.status_code == 200
-        data = response.json()
-        assert "response" in data
-        assert data["response"] == "Response to: Hello!"
+        assert response.text == "Response to: Hello!"
 
     def test_chat_uses_session_id_header(self, mock_agent: MagicMock) -> None:
         """Test that X-Session-Id header is passed to agent."""
@@ -170,29 +171,37 @@ class TestStringChat:
         mock_agent.arun = tracking_arun
 
         # First request without session
-        client.post("/chat", json={"message": "msg1"})
+        client.post(
+            "/chat",
+            content="msg1",
+            headers={"Content-Type": "text/plain"},
+        )
 
         # Second request with session
         client.post(
             "/chat",
-            json={"message": "msg2"},
+            content="msg2",
             headers={"X-Session-Id": "my-session-123"},
         )
 
         assert sessions_used[0] == "default"
         assert sessions_used[1] == "my-session-123"
 
-    def test_chat_missing_message_returns_422(self, mock_agent: MagicMock) -> None:
-        """Test that missing message field returns 422."""
+    def test_chat_empty_message_returns_400(self, mock_agent: MagicMock) -> None:
+        """Test that empty message returns 400."""
         app = create_webchat_app(mock_agent)
         client = TestClient(app)
 
-        response = client.post("/chat", json={})
+        response = client.post(
+            "/chat",
+            content="   ",
+            headers={"Content-Type": "text/plain"},
+        )
 
-        assert response.status_code == 422
+        assert response.status_code == 400
 
-    def test_chat_invalid_json_returns_422(self, mock_agent: MagicMock) -> None:
-        """Test that invalid JSON returns 422."""
+    def test_chat_invalid_json_returns_400(self, mock_agent: MagicMock) -> None:
+        """Test that invalid JSON returns 400."""
         app = create_webchat_app(mock_agent)
         client = TestClient(app)
 
@@ -202,7 +211,32 @@ class TestStringChat:
             headers={"Content-Type": "application/json"},
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 400
+
+    def test_chat_json_string_accepted(self, mock_agent: MagicMock) -> None:
+        """Test that JSON string body is accepted for string input."""
+        app = create_webchat_app(mock_agent)
+        client = TestClient(app)
+
+        response = client.post(
+            "/chat",
+            json="Hello!",
+        )
+
+        assert response.status_code == 200
+        assert response.text == "Response to: Hello!"
+
+    def test_chat_json_object_rejected(self, mock_agent: MagicMock) -> None:
+        """Test that JSON object is rejected for string input."""
+        app = create_webchat_app(mock_agent)
+        client = TestClient(app)
+
+        response = client.post(
+            "/chat",
+            json={"message": "Hello!"},
+        )
+
+        assert response.status_code == 400
 
     def test_chat_agent_error_returns_500(self, mock_agent: MagicMock) -> None:
         """Test that agent errors return 500."""
@@ -214,7 +248,10 @@ class TestStringChat:
 
         mock_agent.arun = failing_arun
 
-        response = client.post("/chat", json={"message": "Hello!"})
+        response = client.post(
+            "/chat",
+            json="Hello!",
+        )
 
         assert response.status_code == 500
         data = response.json()
@@ -231,12 +268,36 @@ class TestObjectOutputChat:
         app = create_webchat_app(mock_agent_with_object_output)
         client = TestClient(app)
 
-        response = client.post("/chat", json={"message": "Hello!"})
+        response = client.post(
+            "/chat",
+            json="Hello!",
+        )
 
         assert response.status_code == 200
         data = response.json()
         assert data["response"] == "Response to: Hello!"
         assert data["confidence"] == 0.95
+
+
+class TestObjectInputChat:
+    """Tests for object-input chat endpoint content types."""
+
+    def test_object_input_rejects_text_plain(self, mock_agent: MagicMock) -> None:
+        """Test that object input rejects text/plain content type."""
+        mock_agent._signature = Signature(
+            input=JSONSchema(type="object"),
+            output=JSONSchema(type="string"),
+        )
+        app = create_webchat_app(mock_agent)
+        client = TestClient(app)
+
+        response = client.post(
+            "/chat",
+            content="Hello!",
+            headers={"Content-Type": "text/plain"},
+        )
+
+        assert response.status_code == 400
 
 
 class TestCustomPath:
@@ -250,11 +311,19 @@ class TestCustomPath:
         client = TestClient(app)
 
         # Default path should not work
-        response = client.post("/chat", json={"message": "Hello!"})
+        response = client.post(
+            "/chat",
+            content="Hello!",
+            headers={"Content-Type": "text/plain"},
+        )
         assert response.status_code == 404
 
         # Custom path should work
-        response = client.post("/api/chat", json={"message": "Hello!"})
+        response = client.post(
+            "/api/chat",
+            content="Hello!",
+            headers={"Content-Type": "text/plain"},
+        )
         assert response.status_code == 200
 
     def test_custom_path_override(self, mock_agent: MagicMock) -> None:
@@ -263,11 +332,19 @@ class TestCustomPath:
         client = TestClient(app)
 
         # Default path should not work
-        response = client.post("/chat", json={"message": "Hello!"})
+        response = client.post(
+            "/chat",
+            content="Hello!",
+            headers={"Content-Type": "text/plain"},
+        )
         assert response.status_code == 404
 
         # Custom path should work
-        response = client.post("/custom/endpoint", json={"message": "Hello!"})
+        response = client.post(
+            "/custom/endpoint",
+            content="Hello!",
+            headers={"Content-Type": "text/plain"},
+        )
         assert response.status_code == 200
 
 

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from .base import get_http_path, get_webchat_interface, InterfaceNotFoundError
@@ -27,18 +27,6 @@ if TYPE_CHECKING:
 # =============================================================================
 # Request/Response Models
 # =============================================================================
-
-
-class StringChatRequest(BaseModel):
-    """Request model for simple string-based chat."""
-
-    message: str = Field(..., description="The user's chat message")
-
-
-class StringChatResponse(BaseModel):
-    """Response model for simple string-based chat."""
-
-    response: str = Field(..., description="The agent's response")
 
 
 class ObjectChatResponse(BaseModel):
@@ -104,28 +92,58 @@ def create_webchat_router(
         # Simple string-to-string chat
         @router.post(
             path,
-            response_model=StringChatResponse,
+            response_class=PlainTextResponse,
             responses={
                 400: {"model": ErrorResponse},
                 500: {"model": ErrorResponse},
             },
         )
         async def chat_string(
-            request: StringChatRequest,
+            request: Request,
             x_session_id: str | None = Header(None, alias="X-Session-Id"),
-        ) -> StringChatResponse:
+        ) -> PlainTextResponse:
             """Chat with the agent using simple string messages."""
             session_id = x_session_id or "default"
 
             try:
-                response = await agent.arun(request.message, session_id=session_id)
+                content_type = request.headers.get("content-type", "").lower()
+                if content_type.startswith("text/plain") or not content_type:
+                    body = await request.body()
+                    message = body.decode("utf-8")
+                elif content_type.startswith("application/json"):
+                    body = await request.json()
+                    if not isinstance(body, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Expected JSON string for string input",
+                        )
+                    message = body
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Unsupported Content-Type for string input",
+                    )
 
-                # Ensure response is string
+                if not isinstance(message, str) or not message.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Message body must be a non-empty string",
+                    )
+
+                response = await agent.arun(message, session_id=session_id)
+
                 if not isinstance(response, str):
                     response = json.dumps(response)
 
-                return StringChatResponse(response=response)
+                return PlainTextResponse(content=response)
 
+            except HTTPException:
+                raise
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid JSON in request body",
+                )
             except Exception as e:
                 raise HTTPException(
                     status_code=500,
@@ -149,6 +167,12 @@ def create_webchat_router(
             session_id = x_session_id or "default"
 
             try:
+                content_type = request.headers.get("content-type", "").lower()
+                if not content_type.startswith("application/json"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Content-Type must be application/json",
+                    )
                 # Parse request body
                 body = await request.json()
 
@@ -156,12 +180,10 @@ def create_webchat_router(
                 if input_is_string:
                     if isinstance(body, str):
                         input_data: str | dict[str, Any] = body
-                    elif isinstance(body, dict) and "message" in body:
-                        input_data = body["message"]
                     else:
                         raise HTTPException(
                             status_code=400,
-                            detail="Expected string input or {message: string}",
+                            detail="Expected JSON string for string input",
                         )
                 else:
                     input_data = body
