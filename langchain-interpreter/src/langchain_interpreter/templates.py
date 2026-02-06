@@ -309,11 +309,11 @@ def _handle_bracket_access(current: Any, remaining: str) -> tuple[Any, str]:
         # Array index
         try:
             index = int(bracket_content)
-        except ValueError:
+        except ValueError as err:
             raise JSONAccessError(
                 f"Invalid array index: {bracket_content}",
                 path=remaining,
-            )
+            ) from err
 
         if not isinstance(current, list):
             raise JSONAccessError(
