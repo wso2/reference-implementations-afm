@@ -264,6 +264,11 @@ class Agent:
         """Check if the agent has MCP servers configured."""
         return self._mcp_manager is not None
 
+    @property
+    def signature(self) -> Signature:
+        """The agent's input/output signature for validation."""
+        return self._signature
+
     def _get_primary_interface(self) -> Interface | None:
         """Get the primary interface from metadata.
 

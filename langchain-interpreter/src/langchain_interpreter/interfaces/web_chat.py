@@ -327,7 +327,7 @@ def create_webchat_app(
     except InterfaceNotFoundError:
         # No webchat interface defined - use defaults
         chat_path = path or "/chat"
-        signature = agent._signature  # Use agent's default signature
+        signature = agent.signature  # Use agent's default signature
 
     # Create the FastAPI app
     app = FastAPI(

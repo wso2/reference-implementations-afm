@@ -32,7 +32,7 @@ def mock_agent() -> MagicMock:
     agent.afm.metadata.interfaces = None
 
     # Default string signature
-    agent._signature = Signature(
+    agent.signature = Signature(
         input=JSONSchema(type="string"),
         output=JSONSchema(type="string"),
     )
@@ -58,7 +58,7 @@ def mock_agent_with_object_output() -> MagicMock:
     agent.afm.metadata.interfaces = None
 
     # Object output signature
-    agent._signature = Signature(
+    agent.signature = Signature(
         input=JSONSchema(type="string"),
         output=JSONSchema(
             type="object",
@@ -287,7 +287,7 @@ class TestObjectInputChat:
 
     def test_object_input_rejects_text_plain(self, mock_agent: MagicMock) -> None:
         """Test that object input rejects text/plain content type."""
-        mock_agent._signature = Signature(
+        mock_agent.signature = Signature(
             input=JSONSchema(type="object"),
             output=JSONSchema(type="string"),
         )
