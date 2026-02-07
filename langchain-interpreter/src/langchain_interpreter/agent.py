@@ -17,7 +17,6 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
 
 from .exceptions import AgentError, InputValidationError, OutputValidationError
 from .models import (
@@ -140,52 +139,10 @@ class Agent:
         # Bind tools to model if any are available
         all_tools = self._get_all_tools()
         if all_tools:
-            # Fix tool schemas for OpenAI compatibility
-            fixed_tools = self._fix_tools_for_openai(all_tools)
-            self._model = self._base_model.bind_tools(fixed_tools)
-            logger.info(f"Bound {len(fixed_tools)} tools to model")
+            self._model = self._base_model.bind_tools(all_tools)
+            logger.info(f"Bound {len(all_tools)} tools to model")
 
         self._connected = True
-
-    # TODO: Look more into why this is needed and whether it can be avoided
-    def _fix_tools_for_openai(self, tools: list[BaseTool]) -> list[BaseTool]:
-        """Ensure tool schemas are compatible with OpenAI requirements.
-
-        OpenAI requires that 'object' type parameters have a 'properties' field,
-        even if it's empty. Some MCP tools may have missing properties.
-        """
-        fixed_tools = []
-        for tool in tools:
-            # Safely get args_schema, handling tools that may not have it
-            args_schema = getattr(tool, "args_schema", None)
-
-            # Handle StructuredTool where args_schema might be a dict
-            if isinstance(args_schema, dict):
-                if (
-                    args_schema.get("type") == "object"
-                    and "properties" not in args_schema
-                ):
-                    # We need to add an empty properties dict
-                    # Since it might be shared or immutable, we try to update it
-                    try:
-                        args_schema["properties"] = {}
-                    except Exception:
-                        pass
-            # Also handle tools with no args_schema
-            elif args_schema is None:
-
-                class EmptySchema(BaseModel):
-                    """Empty schema for tools with no arguments."""
-
-                    pass
-
-                try:
-                    tool.args_schema = EmptySchema
-                except Exception:
-                    pass
-            # For Pydantic model schemas (class or instance), no fix needed
-            fixed_tools.append(tool)
-        return fixed_tools
 
     async def disconnect(self) -> None:
         """Disconnect from MCP servers and clear tools.
