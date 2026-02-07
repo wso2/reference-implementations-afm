@@ -112,6 +112,42 @@ def _print_goodbye(output: TextIO) -> None:
     output.flush()
 
 
+async def _async_input(prompt: str, output: TextIO) -> str:
+    """Read a line from stdin without blocking the event loop.
+
+    Args:
+        prompt: The prompt string to display.
+        output: The output stream to write the prompt to.
+
+    Returns:
+        The line entered by the user (without trailing newline).
+
+    Raises:
+        EOFError: When stdin reaches end-of-file (e.g. Ctrl-D).
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[None] = loop.create_future()
+
+    fd = sys.stdin.fileno()
+
+    def _on_readable() -> None:
+        if not future.done():
+            future.set_result(None)
+
+    output.write(prompt)
+    output.flush()
+
+    loop.add_reader(fd, _on_readable)
+    try:
+        await future
+        line = sys.stdin.readline()
+        if not line:
+            raise EOFError
+        return line.rstrip("\n")
+    finally:
+        loop.remove_reader(fd)
+
+
 def run_console_chat(
     agent: Agent,
     *,
@@ -232,8 +268,14 @@ async def async_run_console_chat(
     """Async version of run_console_chat.
 
     This function uses the agent's async run method (arun) for executing
-    queries. User input is read via run_in_executor to avoid blocking the
-    event loop, making this function safe to use alongside other async tasks.
+    queries. When using the default ``input()`` function, stdin is read via
+    the event loop's fd-readiness API (``add_reader``) so that the task is
+    immediately cancellable — for example when the HTTP server dies and the
+    CLI needs to exit without waiting for the user to press Enter.
+
+    When a custom *input_fn* is supplied (e.g. in tests), it is executed in
+    a thread via ``run_in_executor`` to stay compatible with synchronous
+    callables.
 
     Args:
         agent: The AFM agent to chat with.
@@ -255,6 +297,11 @@ async def async_run_console_chat(
     # Set up defaults
     if session_id is None:
         session_id = str(uuid.uuid4())
+
+    # When no custom input_fn is given we use _async_input which is
+    # cancellable (event-loop driven).  A custom input_fn is run in a
+    # thread executor for backwards-compatibility with tests.
+    use_async_input = input_fn is None
     if input_fn is None:
         input_fn = input
     if output is None:
@@ -269,8 +316,12 @@ async def async_run_console_chat(
     # Main chat loop
     while True:
         try:
-            # Read user input in executor to avoid blocking the event loop
-            user_input = await loop.run_in_executor(None, input_fn, user_prompt)
+            # Read user input — either via the cancellable async reader
+            # (default) or via a thread executor (custom input_fn).
+            if use_async_input:
+                user_input = await _async_input(user_prompt, output)
+            else:
+                user_input = await loop.run_in_executor(None, input_fn, user_prompt)
 
             # Handle empty input
             if not user_input.strip():

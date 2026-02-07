@@ -453,14 +453,55 @@ async def _run_http_and_console(
     server_task = asyncio.create_task(server.serve())
 
     try:
-        # Wait for server startup to complete and agent to be connected
-        await startup_event.wait()
-        # Run console chat in foreground
-        await async_run_console_chat(agent)
+        # Wait for EITHER server startup to complete OR server to fail.
+        # Without this race, a port-in-use error (or any startup failure)
+        # leaves startup_event unset and we block forever.
+        startup_waiter = asyncio.create_task(startup_event.wait())
+        done, _pending = await asyncio.wait(
+            [server_task, startup_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if server_task in done:
+            # Server exited before startup completed — propagate the error
+            startup_waiter.cancel()
+            server_task.result()  # raises the underlying exception
+            return  # unreachable if result() raised
+
+        # Server started successfully — run console chat, but also watch
+        # for the server dying mid-run so we don't hang.
+        console_task = asyncio.create_task(async_run_console_chat(agent))
+        done, pending = await asyncio.wait(
+            [server_task, console_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, SystemExit):
+                pass
+
+        # If the server exited (e.g. port in use), inform the user
+        if server_task in done:
+            click.echo(
+                "\nHTTP server stopped unexpectedly. Exiting.",
+                err=True,
+            )
+
+        # Propagate any real exception from whichever task finished first
+        for task in done:
+            exc = task.exception()
+            if exc is not None and not isinstance(exc, SystemExit):
+                raise exc
     finally:
-        # Shutdown HTTP server when console exits
+        # Ensure the HTTP server shuts down cleanly
         server.should_exit = True
-        await server_task
+        try:
+            await server_task
+        except (asyncio.CancelledError, SystemExit):
+            pass
 
 
 def _run_http_only(
