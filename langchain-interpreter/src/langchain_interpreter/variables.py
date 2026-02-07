@@ -257,28 +257,28 @@ def _signature_contains_http_variable(signature: Signature) -> bool:
 
 
 def _json_schema_contains_http_variable(schema: JSONSchema) -> bool:
-    """Check if JSON schema contains http: variables."""
-    if contains_http_variable(schema.type):
-        return True
+    """Check if JSON schema contains http: variables.
 
-    if schema.properties:
-        for prop_schema in schema.properties.values():
-            if _json_schema_contains_http_variable(prop_schema):
-                return True
+    Checks all fields including extra fields (JSONSchema uses extra="allow").
+    """
+    # Dump all fields and recursively check them
+    schema_dict = schema.model_dump()
 
-    if schema.required:
-        for req_field in schema.required:
-            if contains_http_variable(req_field):
-                return True
+    def _check_value(value: Any) -> bool:
+        """Recursively check a value for http: variables."""
+        if isinstance(value, str):
+            return contains_http_variable(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                if _check_value(v):
+                    return True
+        elif isinstance(value, list):
+            for item in value:
+                if _check_value(item):
+                    return True
+        return False
 
-    if schema.items:
-        if _json_schema_contains_http_variable(schema.items):
-            return True
-
-    if schema.description and contains_http_variable(schema.description):
-        return True
-
-    return False
+    return _check_value(schema_dict)
 
 
 def _exposure_contains_http_variable(exposure: Exposure) -> bool:

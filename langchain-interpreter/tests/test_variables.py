@@ -201,3 +201,58 @@ Valid instructions.
         assert isinstance(webhook, WebhookInterface)
         assert webhook.prompt is not None
         assert "${http:payload.event}" in webhook.prompt
+
+    def test_http_in_schema_extra_fields_fails(self):
+        """Test that http: variables in JSONSchema extra fields are rejected."""
+        # Test with 'default' extra field
+        content = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webchat
+    signature:
+      input:
+        type: object
+        properties:
+          status:
+            type: string
+            default: "${http:payload.status}"
+---
+
+# Role
+Valid role.
+
+# Instructions
+Valid instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+        assert "http: variables are only supported in webhook prompt fields" in str(
+            exc_info.value
+        )
+        assert "interfaces.webchat.signature" in str(exc_info.value)
+
+        # Test with 'enum' extra field
+        content2 = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webchat
+    signature:
+      output:
+        type: object
+        properties:
+          category:
+            type: string
+            enum:
+              - "${http:payload.category}"
+              - "other"
+---
+
+# Role
+Valid role.
+
+# Instructions
+Valid instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content2)
+        assert "interfaces.webchat.signature" in str(exc_info.value)
