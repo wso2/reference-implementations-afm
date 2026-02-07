@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +20,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from .base import get_http_path, get_webchat_interface, InterfaceNotFoundError
+from .base import InterfaceNotFoundError, get_http_path, get_webchat_interface
+
+logger = logging.getLogger(__name__)
 
 CHAT_UI_TEMPLATE_PATH = (
     Path(__file__).resolve().parent.parent / "resources" / "chat-ui.html"
@@ -199,9 +202,10 @@ def create_webchat_router(
                     detail="Invalid JSON in request body",
                 )
             except Exception as e:
+                logger.exception(f"Error in chat_string for session {session_id}: {e}")
                 raise HTTPException(
                     status_code=500,
-                    detail=str(e),
+                    detail="Internal server error",
                 )
 
     else:
@@ -271,9 +275,10 @@ def create_webchat_router(
                     detail="Invalid JSON in request body",
                 )
             except Exception as e:
+                logger.exception(f"Error in chat_object for session {session_id}: {e}")
                 raise HTTPException(
                     status_code=500,
-                    detail=str(e),
+                    detail="Internal server error",
                 )
 
     return router

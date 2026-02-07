@@ -242,7 +242,7 @@ class TestStringChat:
         assert response.status_code == 400
 
     def test_chat_agent_error_returns_500(self, mock_agent: MagicMock) -> None:
-        """Test that agent errors return 500."""
+        """Test that agent errors return 500 with generic error message."""
         app = create_webchat_app(mock_agent)
         client = TestClient(app)
 
@@ -258,7 +258,7 @@ class TestStringChat:
 
         assert response.status_code == 500
         data = response.json()
-        assert "Agent failed" in data["detail"]
+        assert data["detail"] == "Internal server error"
 
 
 class TestObjectOutputChat:
