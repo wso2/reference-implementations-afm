@@ -17,6 +17,7 @@ from langchain_interpreter import (
     compile_template,
     evaluate_template,
 )
+from langchain_interpreter.templates import _handle_dot_notation
 
 
 class TestCompileTemplate:
@@ -409,3 +410,17 @@ class TestAccessJsonField:
         }
         result = access_json_field(payload, "['data'].items[1].name")
         assert result == "second"
+
+    def test_double_dot_empty_field_name(self) -> None:
+        """Test double dot raises error for empty field name."""
+        payload = {"user": {"name": "Alice"}}
+        with pytest.raises(JSONAccessError) as exc_info:
+            _handle_dot_notation(payload, "..name")
+        assert "Empty field name" in str(exc_info.value)
+
+    def test_dot_bracket_empty_field_name(self) -> None:
+        """Test dot followed by bracket raises error for empty field name."""
+        payload = {"user": {"name": "Alice"}}
+        with pytest.raises(JSONAccessError) as exc_info:
+            _handle_dot_notation(payload, ".[0]")
+        assert "Empty field name" in str(exc_info.value)

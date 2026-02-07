@@ -376,7 +376,10 @@ def _handle_dot_notation(current: Any, remaining: str) -> tuple[Any, str]:
 
     if not field_name:
         # Empty field name (e.g., from ".." or ".[")
-        return current, new_remaining
+        raise JSONAccessError(
+            f"Empty field name in path: {remaining}",
+            path=remaining,
+        )
 
     if not isinstance(current, dict):
         raise JSONAccessError(
