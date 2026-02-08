@@ -335,6 +335,12 @@ def extract_interfaces(
     is_flag=True,
     help="Enable verbose/debug logging",
 )
+@click.option(
+    "--log-file",
+    "-l",
+    type=click.Path(path_type=Path),
+    help="Redirect logs to a file",
+)
 @click.version_option(version=__cli_version__, prog_name="afm")
 def main(
     file: Path,
@@ -343,6 +349,7 @@ def main(
     dry_run: bool,
     no_console: bool,
     verbose: bool,
+    log_file: Path | None,
 ) -> None:
     """Run an AFM agent from FILE.
 
@@ -350,18 +357,7 @@ def main(
     HTTP interfaces (webchat, webhook) run on the specified port.
     Console chat runs interactively in the terminal.
     """
-    # Configure logging
-    log_level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(levelname)s: %(message)s",
-    )
-    if not verbose:
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
-
     # Parse AFM file
-    click.echo(f"Loading: {file}")
     try:
         afm = parse_afm_file(str(file))
     except AFMError as e:
@@ -369,17 +365,49 @@ def main(
     except Exception as e:
         raise click.ClickException(f"Unexpected error parsing AFM file: {e}")
 
-    # Dry-run mode: validate and exit
-    if dry_run:
-        click.echo(format_validation_output(afm))
-        return
-
     # Extract interfaces
     consolechat, webchat, webhook = extract_interfaces(afm)
 
     # Check if we have anything to run
     has_http = webchat is not None or webhook is not None
-    has_console = consolechat is not None and not no_console
+    has_console = (consolechat is not None or not has_http) and not no_console
+
+    # Configure logging
+    log_level = logging.DEBUG if verbose else logging.INFO
+    log_handlers: list[logging.Handler] = []
+
+    if has_console:
+        # Scenario: Console Chat is active
+        if log_file:
+            # Route all logs to the specified file, silence terminal
+            log_handlers.append(logging.FileHandler(log_file))
+        else:
+            # Silence all logs (no handlers)
+            log_handlers.append(logging.NullHandler())
+    else:
+        # Scenario: Non-Console mode
+        log_handlers.append(logging.StreamHandler())
+        if log_file:
+            # Route logs to file AND terminal
+            log_handlers.append(logging.FileHandler(log_file))
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(levelname)s: %(message)s",
+        handlers=log_handlers,
+        force=True,  # Override any existing configuration
+    )
+
+    if not verbose:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    click.echo(f"Loading: {file}")
+
+    # Dry-run mode: validate and exit
+    if dry_run:
+        click.echo(format_validation_output(afm))
+        return
 
     if not has_http and not has_console:
         click.echo("No interfaces to run (consolechat skipped with --no-console)")
@@ -401,10 +429,6 @@ def main(
         webchat_path = get_http_path(webchat)
         click.echo(f"  - webchat at http://{host}:{port}{webchat_path}")
 
-    if webhook:
-        webhook_path = get_http_path(webhook)
-        click.echo(f"  - webhook at http://{host}:{port}{webhook_path}")
-
     if has_console:
         click.echo("  - consolechat (interactive)")
 
@@ -413,10 +437,14 @@ def main(
     # Run the appropriate configuration
     if has_http and has_console:
         # Both HTTP and console: run HTTP in background, console in foreground
-        asyncio.run(_run_http_and_console(agent, webchat, webhook, host, port, verbose))
+        asyncio.run(
+            _run_http_and_console(
+                agent, webchat, webhook, host, port, verbose, has_console, log_file
+            )
+        )
     elif has_http:
         # HTTP only: run uvicorn blocking
-        _run_http_only(agent, webchat, webhook, host, port, verbose)
+        _run_http_only(agent, webchat, webhook, host, port, verbose, log_file)
     else:
         # Console only: run console blocking
         asyncio.run(_run_console_only(agent))
@@ -429,6 +457,8 @@ async def _run_http_and_console(
     host: str,
     port: int,
     verbose: bool,
+    has_console: bool = False,
+    log_file: Path | None = None,
 ) -> None:
     """Run HTTP server in background and console chat in foreground."""
     # Event to signal when server startup is complete and agent is connected
@@ -444,12 +474,19 @@ async def _run_http_and_console(
         port=port,
     )
 
+    # Configure uvicorn logging level
+    # If console is active and no log file, silence uvicorn by setting to warning/error
+    if has_console and not log_file:
+        uvicorn_log_level = "warning"
+    else:
+        uvicorn_log_level = "debug" if verbose else "info"
+
     # Configure uvicorn
     config = uvicorn.Config(
         app,
         host=host,
         port=port,
-        log_level="debug" if verbose else "info",
+        log_level=uvicorn_log_level,
     )
     server = uvicorn.Server(config)
 
@@ -515,6 +552,7 @@ def _run_http_only(
     host: str,
     port: int,
     verbose: bool,
+    log_file: Path | None = None,
 ) -> None:
     """Run HTTP server only (blocking)."""
     # Create unified app (lifespan handles MCP connections)
