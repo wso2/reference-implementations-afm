@@ -7,13 +7,14 @@ Reference implementations for [Agent-Flavored Markdown (AFM)](https://wso2.githu
 | Implementation | Language/Framework | Status |
 |----------------|-------------------|--------|
 | [ballerina-interpreter](./ballerina-interpreter) | Ballerina | Active |
-| langchain-interpreter | Python/LangChain | Planned |
+| [langchain-interpreter](./langchain-interpreter) | Python/LangChain | Active |
 
 ## Repository Structure
 
 ```
 reference-implementations-afm/
 ├── ballerina-interpreter/   # Ballerina-based AFM interpreter
+├── langchain-interpreter/   # LangChain-based AFM interpreter
 └── .github/workflows/       # CI/CD (path-filtered per implementation)
 ```
 

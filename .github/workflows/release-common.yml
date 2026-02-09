@@ -28,7 +28,7 @@ on:
 
 env:
   # Allowed implementations - update this list when adding new implementations
-  ALLOWED_IMPLEMENTATIONS: ballerina-interpreter
+  ALLOWED_IMPLEMENTATIONS: ballerina-interpreter langchain-interpreter
 
 jobs:
   release:
@@ -83,6 +83,21 @@ jobs:
         run: |
           bal build
           bal test
+
+      - name: Install uv
+        if: inputs.implementation == 'langchain-interpreter'
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build and test (Python)
+        if: inputs.implementation == 'langchain-interpreter'
+        env:
+          IMPLEMENTATION: ${{ inputs.implementation }}
+        working-directory: ${{ inputs.implementation }}
+        run: |
+          uv sync --dev
+          uv run pytest
 
       - name: Create release branch
         env:
