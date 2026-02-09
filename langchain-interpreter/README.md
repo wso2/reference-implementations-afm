@@ -16,22 +16,7 @@ A LangChain-based reference implementation of an interpreter for [Agent-Flavored
 
 - [Python](https://www.python.org/) 3.12 or later.
 - [uv](https://docs.astral.sh/uv/) for dependency management.
-
-## Installation
-
-### Using pipx (Recommended)
-
-To run `afm` as a standalone command-line tool:
-
-```bash
-pipx install afm-cli
-```
-
-### Using pip
-
-```bash
-pip install afm-cli
-```
+- [Docker](https://www.docker.com/) (optional, for running via containers).
 
 ## Quick Start
 
@@ -39,8 +24,8 @@ pip install afm-cli
 # Set your API Key
 export OPENAI_API_KEY="your-api-key-here"
 
-# Run with an AFM file
-afm path/to/agent.afm.md
+# Run with an AFM file using uv
+uv run afm path/to/agent.afm.md
 ```
 
 ## Configuration
