@@ -21,6 +21,7 @@ from afm_cli import (
     MCPServer,
     ToolFilter,
     Tools,
+    Transport,
     filter_tools,
 )
 from afm_cli.tools.mcp import (
