@@ -2,7 +2,7 @@
 FROM python:3.11-slim-bookworm AS builder
 
 # Install uv for fast dependency management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /bin/
 
 # Set environment variables for uv and optimization
 ENV UV_COMPILE_BYTECODE=1
