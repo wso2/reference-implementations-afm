@@ -406,6 +406,8 @@ def create_webhook_app(
     verify_signatures: bool = True,
     auto_subscribe: bool = True,
     path: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
 ) -> FastAPI:
     """Create a FastAPI application for webhook handling.
 
@@ -428,6 +430,10 @@ def create_webhook_app(
         path: Optional custom path for the webhook endpoint.
               If not provided, uses the path from the interface configuration
               or defaults to "/webhook".
+        host: Optional host to use for WebSub callback URL construction.
+              Used when subscription.callback is not configured.
+        port: Optional port to use for WebSub callback URL construction.
+              Used when subscription.callback is not configured.
 
     Returns:
         A FastAPI application instance.
@@ -458,7 +464,23 @@ def create_webhook_app(
     # Set up WebSub subscriber if configured
     websub_subscriber: WebSubSubscriber | None = None
     if auto_subscribe and subscription.hub and subscription.topic:
-        callback_url = subscription.callback or f"http://localhost:8000{webhook_path}"
+        if subscription.callback:
+            callback_url = subscription.callback
+        else:
+            # Construct fallback callback URL from host/port
+            # Use localhost for 0.0.0.0 since it's not externally routable
+            if host and host != "0.0.0.0":
+                effective_host = host
+            else:
+                effective_host = "localhost"
+
+            effective_port = port if port else 8000
+            
+            callback_url = f"http://{effective_host}:{effective_port}{webhook_path}"
+            logger.warning(
+                f"Using auto-generated WebSub callback URL: {callback_url}. "
+                "For production use, set subscription.callback explicitly in the AFM file."
+            )
         websub_subscriber = WebSubSubscriber(
             hub=subscription.hub,
             topic=subscription.topic,
@@ -604,5 +626,7 @@ def run_webhook_server(
         verify_signatures=verify_signatures,
         auto_subscribe=auto_subscribe,
         path=path,
+        host=host,
+        port=port,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level)
