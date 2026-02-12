@@ -21,7 +21,7 @@ from ..templates import compile_template, evaluate_template
 from .base import InterfaceNotFoundError, get_http_path, get_webhook_interface
 
 if TYPE_CHECKING:
-    from ..agent import Agent
+    from ..runner import AgentRunner
     from ..models import CompiledTemplate, WebhookInterface
 
 logger = logging.getLogger(__name__)
@@ -191,7 +191,7 @@ def verify_webhook_signature(
 
 
 def create_webhook_router(
-    agent: Agent,
+    agent: AgentRunner,
     interface: WebhookInterface,
     path: str = "/webhook",
     *,
@@ -327,7 +327,7 @@ def create_webhook_router(
 
 
 def create_webhook_app(
-    agent: Agent,
+    agent: AgentRunner,
     *,
     verify_signatures: bool = True,
     auto_subscribe: bool = True,

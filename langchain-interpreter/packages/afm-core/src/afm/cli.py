@@ -17,7 +17,6 @@ from fastapi.middleware.cors import CORSMiddleware
 # Version is defined here to avoid circular import
 __cli_version__ = "0.1.0"
 
-from .agent import Agent
 from .exceptions import AFMError
 from .interfaces.base import get_http_path, get_interfaces
 from .interfaces.console_chat import async_run_console_chat
@@ -34,6 +33,7 @@ from .models import (
     WebhookInterface,
 )
 from .parser import parse_afm_file
+from .runner import AgentRunner, discover_runners, load_runner
 
 if TYPE_CHECKING:
     from .models import AFMRecord
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_unified_app(
-    agent: Agent,
+    agent: AgentRunner,
     *,
     webchat_interface: WebChatInterface | None = None,
     webhook_interface: WebhookInterface | None = None,
@@ -278,8 +278,44 @@ def extract_interfaces(
     return consolechat, webchat, webhook
 
 
-@click.command()
+# ---------------------------------------------------------------------------
+# CLI entry point: Click Group with subcommands
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+@click.version_option(version=__cli_version__, prog_name="afm")
+def cli() -> None:
+    """AFM Agent CLI — parse, validate, and run Agent-Flavored Markdown files."""
+
+
+@cli.command()
 @click.argument("file", type=click.Path(exists=True, path_type=Path))
+def validate(file: Path) -> None:
+    """Validate an AFM file without running the agent.
+
+    Parses FILE and displays agent metadata, interfaces, and tools.
+    Does NOT require a backend (e.g. langchain) to be installed.
+    """
+    try:
+        afm = parse_afm_file(str(file))
+    except AFMError as e:
+        raise click.ClickException(f"Failed to parse AFM file: {e}") from e
+    except Exception as e:
+        raise click.ClickException(f"Unexpected error parsing AFM file: {e}") from e
+
+    click.echo(f"Loading: {file}")
+    click.echo(format_validation_output(afm))
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--framework",
+    "-f",
+    default=None,
+    help="Runner backend to use (e.g. 'langchain'). Auto-detected if omitted.",
+)
 @click.option(
     "--port",
     "-p",
@@ -315,9 +351,9 @@ def extract_interfaces(
     type=click.Path(path_type=Path),
     help="Redirect logs to a file",
 )
-@click.version_option(version=__cli_version__, prog_name="afm")
-def main(
+def run(
     file: Path,
+    framework: str | None,
     port: int,
     host: str,
     dry_run: bool,
@@ -386,8 +422,14 @@ def main(
         click.echo("No interfaces to run (consolechat skipped with --no-console)")
         return
 
+    # Load runner backend via entry points
+    try:
+        runner_cls = load_runner(framework)
+    except RuntimeError as e:
+        raise click.ClickException(str(e)) from e
+
     # Create agent
-    agent = Agent(afm)
+    agent = runner_cls(afm)
 
     # Print startup info
     click.echo("")
@@ -423,8 +465,37 @@ def main(
         asyncio.run(_run_console_only(agent))
 
 
+@cli.group()
+def framework() -> None:
+    """Manage runner frameworks (backends)."""
+
+
+@framework.command(name="list")
+def framework_list() -> None:
+    """List discovered runner backends."""
+    runners = discover_runners()
+
+    if not runners:
+        click.echo("No runner backends found.")
+        click.echo("")
+        click.echo("Install a backend package such as 'afm-langchain':")
+        click.echo("  uv add afm-langchain")
+        return
+
+    click.echo("Discovered runner backends:")
+    click.echo("")
+    for name, ep in runners.items():
+        click.echo(f"  - {name} ({ep.value})")
+    click.echo("")
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
 async def _run_http_and_console(
-    agent: Agent,
+    agent: AgentRunner,
     webchat: WebChatInterface | None,
     webhook: WebhookInterface | None,
     host: str,
@@ -516,7 +587,7 @@ async def _run_http_and_console(
 
 
 def _run_http_only(
-    agent: Agent,
+    agent: AgentRunner,
     webchat: WebChatInterface | None,
     webhook: WebhookInterface | None,
     host: str,
@@ -542,10 +613,10 @@ def _run_http_only(
     )
 
 
-async def _run_console_only(agent: Agent) -> None:
+async def _run_console_only(agent: AgentRunner) -> None:
     async with agent:
         await async_run_console_chat(agent)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

@@ -8,14 +8,14 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from afm.agent import Agent
+from afm.runner import AgentRunner
 from afm.interfaces.web_chat import create_webchat_app
 from afm.models import JSONSchema, Signature
 
 
 @pytest.fixture
 def mock_agent() -> MagicMock:
-    agent = MagicMock(spec=Agent)
+    agent = MagicMock(spec=AgentRunner)
     agent.name = "Test Agent"
     agent.description = "A test agent for unit testing"
     agent.afm = MagicMock()
@@ -40,7 +40,7 @@ def mock_agent() -> MagicMock:
 
 @pytest.fixture
 def mock_agent_with_object_output() -> MagicMock:
-    agent = MagicMock(spec=Agent)
+    agent = MagicMock(spec=AgentRunner)
     agent.name = "Object Output Agent"
     agent.description = "Returns structured data"
     agent.afm = MagicMock()

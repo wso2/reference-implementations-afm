@@ -1,0 +1,30 @@
+[project]
+name = "afm-cli"
+version = "0.1.3"
+description = "AFM CLI metapackage: installs afm-core and afm-langchain"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+]
+license = "Apache-2.0"
+requires-python = ">=3.11"
+urls = { Repository = "https://github.com/wso2/reference-implementations-afm" }
+dependencies = [
+    "afm-core",
+    "afm-langchain",
+]
+
+[project.scripts]
+afm = "afm.cli:cli"
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "afm_cli"
+
+[tool.uv.sources]
+afm-core = { workspace = true }
+afm-langchain = { workspace = true }

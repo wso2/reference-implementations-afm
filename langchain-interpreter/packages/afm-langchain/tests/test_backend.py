@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from afm.agent import Agent
+from afm_langchain.backend import LangChainRunner
 from afm.models import (
     AFMRecord,
     AgentMetadata,
@@ -44,7 +44,7 @@ class TestAgentCreation:
         simple_afm: AFMRecord,
         mock_chat_model: MagicMock,
     ) -> None:
-        agent = Agent(simple_afm, model=mock_chat_model)
+        agent = LangChainRunner(simple_afm, model=mock_chat_model)
         assert agent.name == "Test Agent"
         assert agent.description == "A test agent"
 
@@ -57,7 +57,7 @@ class TestAgentCreation:
             role="Test role",
             instructions="Test instructions",
         )
-        agent = Agent(afm, model=mock_chat_model)
+        agent = LangChainRunner(afm, model=mock_chat_model)
         assert agent.name == "AFM Agent"
 
     def test_agent_description_can_be_none(
@@ -69,7 +69,7 @@ class TestAgentCreation:
             role="Test role",
             instructions="Test instructions",
         )
-        agent = Agent(afm, model=mock_chat_model)
+        agent = LangChainRunner(afm, model=mock_chat_model)
         assert agent.description is None
 
     def test_agent_stores_afm(
@@ -77,7 +77,7 @@ class TestAgentCreation:
         simple_afm: AFMRecord,
         mock_chat_model: MagicMock,
     ) -> None:
-        agent = Agent(simple_afm, model=mock_chat_model)
+        agent = LangChainRunner(simple_afm, model=mock_chat_model)
         assert agent.afm is simple_afm
 
     def test_agent_max_iterations(
@@ -89,7 +89,7 @@ class TestAgentCreation:
             role="Test role",
             instructions="Test instructions",
         )
-        agent = Agent(afm, model=mock_chat_model)
+        agent = LangChainRunner(afm, model=mock_chat_model)
         assert agent.max_iterations == 50
 
 
@@ -99,7 +99,7 @@ class TestSystemPrompt:
         simple_afm: AFMRecord,
         mock_chat_model: MagicMock,
     ) -> None:
-        agent = Agent(simple_afm, model=mock_chat_model)
+        agent = LangChainRunner(simple_afm, model=mock_chat_model)
         prompt = agent.system_prompt
         assert "# Role" in prompt
         assert "You are a helpful assistant." in prompt
@@ -108,7 +108,7 @@ class TestSystemPrompt:
 
 
 class TestModelProviderIntegration:
-    @patch("afm.agent.create_model_provider")
+    @patch("afm_langchain.backend.create_model_provider")
     def test_creates_model_from_afm_config(
         self,
         mock_create_provider: MagicMock,
@@ -124,7 +124,7 @@ class TestModelProviderIntegration:
             instructions="Test",
         )
 
-        Agent(afm)
+        LangChainRunner(afm)
 
         mock_create_provider.assert_called_once_with(afm.metadata.model)
 
@@ -133,6 +133,6 @@ class TestModelProviderIntegration:
         simple_afm: AFMRecord,
         mock_chat_model: MagicMock,
     ) -> None:
-        with patch("afm.agent.create_model_provider") as mock_create:
-            Agent(simple_afm, model=mock_chat_model)
+        with patch("afm_langchain.backend.create_model_provider") as mock_create:
+            LangChainRunner(simple_afm, model=mock_chat_model)
             mock_create.assert_not_called()

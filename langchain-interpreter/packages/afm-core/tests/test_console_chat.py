@@ -9,13 +9,13 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Input, Static
 
-from afm.agent import Agent
+from afm.runner import AgentRunner
 from afm.interfaces.console_chat import ChatApp
 
 
 @pytest.fixture
 def mock_agent() -> MagicMock:
-    agent = MagicMock(spec=Agent)
+    agent = MagicMock(spec=AgentRunner)
     agent.name = "Test Agent"
     agent.description = "A test agent for unit testing"
     # Mock arun to yield control back to the event loop

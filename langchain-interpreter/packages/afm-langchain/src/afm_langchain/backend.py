@@ -12,24 +12,25 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
-from .exceptions import AgentError, InputValidationError, OutputValidationError
-from .models import (
+from afm.exceptions import AgentError, InputValidationError, OutputValidationError
+from afm.models import (
     AFMRecord,
     Interface,
     Signature,
 )
-from .providers import create_model_provider
-from .schema_validator import (
+from afm.schema_validator import (
     build_output_schema_instruction,
     coerce_output_to_schema,
     validate_input,
 )
+
+from .providers import create_model_provider
 from .tools.mcp import MCPManager
 
 logger = logging.getLogger(__name__)
 
 
-class Agent:
+class LangChainRunner:
     def __init__(
         self,
         afm: AFMRecord,
@@ -52,7 +53,7 @@ class Agent:
         self._interface = self._get_primary_interface()
         self._signature = self._get_signature()
 
-    async def __aenter__(self) -> "Agent":
+    async def __aenter__(self) -> "LangChainRunner":
         await self.connect()
         return self
 

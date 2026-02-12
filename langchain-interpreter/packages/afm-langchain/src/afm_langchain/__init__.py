@@ -1,0 +1,8 @@
+# Copyright (c) 2025
+# Licensed under the Apache License, Version 2.0
+
+"""AFM LangChain execution backend."""
+
+from .backend import LangChainRunner
+
+__all__ = ["LangChainRunner"]

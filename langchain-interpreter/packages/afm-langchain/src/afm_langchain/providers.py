@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 from langchain_core.language_models import BaseChatModel
 
-from .exceptions import ProviderError
-from .models import ClientAuthentication, Model
+from afm.exceptions import ProviderError
+from afm.models import ClientAuthentication, Model
 
 if TYPE_CHECKING:
     from langchain_anthropic import ChatAnthropic

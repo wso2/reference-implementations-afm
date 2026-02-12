@@ -10,12 +10,12 @@ from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 
-from ..exceptions import (
+from afm.exceptions import (
     MCPAuthenticationError,
     MCPConnectionError,
     MCPError,
 )
-from ..models import (
+from afm.models import (
     AFMRecord,
     ClientAuthentication,
     MCPServer,

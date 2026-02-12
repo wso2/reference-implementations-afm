@@ -17,7 +17,7 @@ from afm.models import (
     Tools,
     Transport,
 )
-from afm.tools.mcp import (
+from afm_langchain.tools.mcp import (
     ApiKeyAuth,
     BearerAuth,
     MCPClient,
@@ -195,7 +195,7 @@ class TestMCPClient:
 
         mock_tools = [make_mock_tool("tool1"), make_mock_tool("tool2")]
 
-        with patch("afm.tools.mcp.MultiServerMCPClient") as MockClient:
+        with patch("afm_langchain.tools.mcp.MultiServerMCPClient") as MockClient:
             mock_instance = AsyncMock()
             mock_instance.get_tools.return_value = mock_tools
             MockClient.return_value = mock_instance
@@ -216,7 +216,7 @@ class TestMCPClient:
 
         mock_tools = [make_mock_tool("tool1"), make_mock_tool("tool2")]
 
-        with patch("afm.tools.mcp.MultiServerMCPClient") as MockClient:
+        with patch("afm_langchain.tools.mcp.MultiServerMCPClient") as MockClient:
             mock_instance = AsyncMock()
             mock_instance.get_tools.return_value = mock_tools
             MockClient.return_value = mock_instance
@@ -233,7 +233,7 @@ class TestMCPClient:
             url="http://localhost:8080/mcp",
         )
 
-        with patch("afm.tools.mcp.MultiServerMCPClient") as MockClient:
+        with patch("afm_langchain.tools.mcp.MultiServerMCPClient") as MockClient:
             mock_instance = AsyncMock()
             mock_instance.get_tools.side_effect = Exception("Connection refused")
             MockClient.return_value = mock_instance

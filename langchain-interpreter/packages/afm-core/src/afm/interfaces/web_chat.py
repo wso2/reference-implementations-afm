@@ -40,7 +40,7 @@ def get_chat_ui_template() -> str:
 
 
 if TYPE_CHECKING:
-    from ..agent import Agent
+    from ..runner import AgentRunner
     from ..models import Signature
 
 
@@ -65,7 +65,7 @@ class ErrorResponse(BaseModel):
 
 
 def create_webchat_router(
-    agent: Agent,
+    agent: AgentRunner,
     signature: Signature,
     path: str = "/chat",
 ) -> APIRouter:
@@ -243,7 +243,7 @@ def create_webchat_router(
 
 
 def create_webchat_app(
-    agent: Agent,
+    agent: AgentRunner,
     *,
     cors_origins: list[str] | None = None,
     path: str | None = None,

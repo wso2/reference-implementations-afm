@@ -14,7 +14,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Footer, Header, Input, LoadingIndicator, Static
 
 if TYPE_CHECKING:
-    from ..agent import Agent
+    from ..runner import AgentRunner
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class ChatApp(App):
 
     def __init__(
         self,
-        agent: Agent,
+        agent: AgentRunner,
         session_id: str | None = None,
     ):
         super().__init__()
@@ -171,7 +171,7 @@ class ChatApp(App):
 
 
 async def async_run_console_chat(
-    agent: Agent,
+    agent: AgentRunner,
     *,
     session_id: str | None = None,
 ) -> None:

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from afm.agent import Agent
+from afm.runner import AgentRunner
 from afm.interfaces.webhook import (
     WebSubSubscriber,
     create_webhook_app,
@@ -29,7 +29,7 @@ from afm.models import (
 
 @pytest.fixture
 def mock_webhook_agent() -> MagicMock:
-    agent = MagicMock(spec=Agent)
+    agent = MagicMock(spec=AgentRunner)
     agent.name = "Webhook Test Agent"
     agent.description = "A test agent for webhook testing"
     agent.afm = MagicMock()
@@ -64,7 +64,7 @@ def mock_webhook_agent() -> MagicMock:
 
 @pytest.fixture
 def mock_webhook_agent_no_template() -> MagicMock:
-    agent = MagicMock(spec=Agent)
+    agent = MagicMock(spec=AgentRunner)
     agent.name = "No Template Agent"
     agent.description = "Agent without prompt template"
     agent.afm = MagicMock()
@@ -95,7 +95,7 @@ def mock_webhook_agent_no_template() -> MagicMock:
 
 @pytest.fixture
 def mock_webhook_agent_no_secret() -> MagicMock:
-    agent = MagicMock(spec=Agent)
+    agent = MagicMock(spec=AgentRunner)
     agent.name = "No Secret Agent"
     agent.description = "Agent without webhook secret"
     agent.afm = MagicMock()
