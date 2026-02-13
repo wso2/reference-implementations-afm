@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator
 
@@ -13,9 +14,6 @@ import click
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# Version is defined here to avoid circular import
-__cli_version__ = "0.1.0"
 
 from .exceptions import AFMError
 from .interfaces.base import get_http_path, get_interfaces
@@ -283,8 +281,20 @@ def extract_interfaces(
 # ---------------------------------------------------------------------------
 
 
+def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    core_version = version("afm-core")
+    try:
+        cli_version = version("afm-cli")
+        click.echo(f"afm-cli {cli_version} (afm-core {core_version})")
+    except Exception:
+        click.echo(f"afm-core {core_version}")
+    ctx.exit()
+
+
 @click.group()
-@click.version_option(version=__cli_version__, prog_name="afm")
+@click.option("--version", is_flag=True, callback=_version_callback, expose_value=False, is_eager=True, help="Show version information.")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """AFM Agent CLI — parse, validate, and run Agent-Flavored Markdown files."""

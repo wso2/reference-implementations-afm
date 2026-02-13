@@ -1,6 +1,7 @@
 # Copyright (c) 2025
 # Licensed under the Apache License, Version 2.0
 
+from importlib.metadata import version as meta_version
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +9,6 @@ import pytest
 from click.testing import CliRunner
 
 from afm.cli import (
-    __cli_version__,
     cli,
     create_unified_app,
 )
@@ -41,7 +41,8 @@ class TestCLIBasics:
     def test_version(self, runner: CliRunner):
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert __cli_version__ in result.output
+        assert meta_version("afm-core") in result.output
+        assert meta_version("afm-cli") in result.output
 
     def test_help(self, runner: CliRunner):
         result = runner.invoke(cli, ["--help"])
