@@ -51,6 +51,7 @@ class UpdateState:
         from platformdirs import user_config_dir
 
         self.path = Path(user_config_dir("afm")) / "update_state.json"
+        logger.debug("Update state file path: %s", self.path)
         self.data = self._load()
 
     def _load(self) -> dict:
@@ -60,9 +61,12 @@ class UpdateState:
                 with open(self.path) as f:
                     data = json.load(f)
                     if isinstance(data, dict):
+                        logger.debug("Loaded update state: %s", data)
                         return data
-        except (json.JSONDecodeError, OSError, ValueError):
-            pass
+            else:
+                logger.debug("No update state file found at %s", self.path)
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            logger.debug("Failed to load update state: %s", exc)
         return {"last_check": 0, "latest_version": None, "notified_version": None}
 
     def save(self) -> None:
@@ -71,8 +75,9 @@ class UpdateState:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.path, "w") as f:
                 json.dump(self.data, f)
-        except OSError:
-            pass  # Non-critical — silently ignore write failures
+            logger.debug("Saved update state to %s: %s", self.path, self.data)
+        except OSError as exc:
+            logger.debug("Failed to save update state: %s", exc)
 
     @property
     def is_check_due(self) -> bool:
@@ -101,15 +106,18 @@ def maybe_check_for_updates() -> None:
     """
     # Opt-out via environment variable
     if os.environ.get("AFM_NO_UPDATE_CHECK", "").strip() == "1":
+        logger.debug("Update check disabled via AFM_NO_UPDATE_CHECK")
         return
 
     try:
         state = UpdateState()
         if not state.is_check_due:
+            logger.debug("Update check not due yet (last: %.0f)", state.data.get("last_check", 0))
             return
 
         # Spawn detached background process
         cmd = [sys.executable, "-m", "afm.update"]
+        logger.debug("Spawning background update check: %s", cmd)
 
         kwargs: dict = {
             "stdout": subprocess.DEVNULL,
@@ -125,8 +133,8 @@ def maybe_check_for_updates() -> None:
             kwargs["start_new_session"] = True
 
         subprocess.Popen(cmd, **kwargs)  # noqa: S603
-    except Exception:
-        pass  # Never let update checking break the CLI
+    except Exception as exc:
+        logger.debug("Failed to spawn update check: %s", exc)
 
 
 def get_update_notification() -> str | None:
@@ -137,6 +145,7 @@ def get_update_notification() -> str | None:
     write to stderr — it just returns the message.
     """
     if os.environ.get("AFM_NO_UPDATE_CHECK", "").strip() == "1":
+        logger.debug("Update notification disabled via AFM_NO_UPDATE_CHECK")
         return None
 
     try:
@@ -145,14 +154,17 @@ def get_update_notification() -> str | None:
         state = UpdateState()
         latest = state.data.get("latest_version")
         if not latest:
+            logger.debug("No latest version in state, skipping toast")
             return None
 
         current = _get_installed_version()
         if not current:
+            logger.debug("Could not determine installed version")
             return None
 
         try:
             if Version(latest) <= Version(current):
+                logger.debug("Already up to date: %s >= %s", current, latest)
                 return None
         except Exception:
             return None
@@ -161,11 +173,14 @@ def get_update_notification() -> str | None:
         state.save()
 
         upgrade_cmd = _detect_upgrade_command()
-        return (
+        msg = (
             f"Update available: {current} \u2192 {latest}. "
             f"Run '{upgrade_cmd}' to update."
         )
-    except Exception:
+        logger.debug("Returning toast notification: %s", msg)
+        return msg
+    except Exception as exc:
+        logger.debug("Error in get_update_notification: %s", exc)
         return None
 
 
@@ -177,11 +192,13 @@ def notify_if_update_available() -> None:
     """
     # Opt-out via environment variable
     if os.environ.get("AFM_NO_UPDATE_CHECK", "").strip() == "1":
+        logger.debug("Update notification disabled via AFM_NO_UPDATE_CHECK")
         return
 
     # Only notify in interactive terminals
     try:
         if not sys.stderr.isatty():
+            logger.debug("stderr is not a TTY, skipping notification")
             return
     except Exception:
         return
@@ -192,27 +209,32 @@ def notify_if_update_available() -> None:
         state = UpdateState()
         latest = state.data.get("latest_version")
         if not latest:
+            logger.debug("No latest version in state, skipping notification")
             return
 
         current = _get_installed_version()
         if not current:
+            logger.debug("Could not determine installed version")
             return
 
         # Compare versions properly (handles pre-releases, etc.)
         try:
             if Version(latest) <= Version(current):
+                logger.debug("Already up to date: %s >= %s", current, latest)
                 return
         except Exception:
             return
 
         # Don't re-notify for the same version
         if state.data.get("notified_version") == latest:
+            logger.debug("Already notified for version %s, skipping", latest)
             return
 
-        # Print notification to stderr
+        # Print notification to stderr using Rich
         from rich.console import Console
 
         upgrade_cmd = _detect_upgrade_command()
+        logger.debug("Showing update notification: %s -> %s", current, latest)
         console = Console(stderr=True)
         console.print(
             f"\n[yellow bold]A new version of afm is available: "
@@ -239,18 +261,24 @@ def _perform_background_check() -> None:
     try:
         import httpx
 
+        url = f"https://pypi.org/pypi/{PYPI_PACKAGE}/json"
+        logger.debug("Querying PyPI: %s", url)
         response = httpx.get(
-            f"https://pypi.org/pypi/{PYPI_PACKAGE}/json",
+            url,
             timeout=10,
             follow_redirects=True,
         )
         if response.status_code == 200:
             latest = response.json()["info"]["version"]
+            logger.debug("PyPI reports latest version: %s", latest)
             state = UpdateState()
             state.data["last_check"] = time.time()
             state.data["latest_version"] = latest
             state.save()
-    except Exception:
+        else:
+            logger.debug("PyPI returned status %s", response.status_code)
+    except Exception as exc:
+        logger.debug("Background check failed: %s", exc)
         # Update the last_check even on failure to avoid hammering PyPI
         try:
             state = UpdateState()
