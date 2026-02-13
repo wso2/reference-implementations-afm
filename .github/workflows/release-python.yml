@@ -17,7 +17,7 @@ on:
         type: string
 
 concurrency:
-  group: release-langchain-interpreter
+  group: release-python-interpreter
   cancel-in-progress: false
 
 jobs:
@@ -50,7 +50,7 @@ jobs:
         env:
           PACKAGE: ${{ inputs.package }}
         run: |
-          VERSION_FILE="langchain-interpreter/packages/$PACKAGE/pyproject.toml"
+          VERSION_FILE="python-interpreter/packages/$PACKAGE/pyproject.toml"
 
           if [ ! -f "$VERSION_FILE" ]; then
             echo "::error::Version file not found: $VERSION_FILE"
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: langchain-interpreter
+        working-directory: python-interpreter
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -133,7 +133,7 @@ jobs:
           enable-cache: true
 
       - name: Build packages
-        working-directory: langchain-interpreter
+        working-directory: python-interpreter
         env:
           PACKAGE: ${{ inputs.package }}
         run: |
@@ -145,7 +145,7 @@ jobs:
           fi
 
       - name: Publish to PyPI
-        working-directory: langchain-interpreter
+        working-directory: python-interpreter
         env:
           PACKAGE: ${{ inputs.package }}
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
@@ -199,7 +199,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: langchain-interpreter
+          context: python-interpreter
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.docker-tags.outputs.TAGS }}
@@ -240,7 +240,7 @@ jobs:
     uses: ./.github/workflows/release-finalize.yml
     with:
       tag: ${{ needs.validate.outputs.tag }}
-      implementation: langchain-interpreter
+      implementation: python-interpreter
       version: ${{ needs.validate.outputs.release_version }}
       branch: ${{ inputs.branch }}
       is_rerelease: false
@@ -276,7 +276,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull origin "$BRANCH" --rebase
 
-          cd langchain-interpreter
+          cd python-interpreter
           if [ "$PACKAGE" = "afm-core" ]; then
             uv version --bump patch --package afm-core --frozen
             uv version --bump patch --package afm-cli --frozen
@@ -288,6 +288,6 @@ jobs:
           fi
           cd ..
 
-          git add langchain-interpreter/packages/
-          git commit -m "Bump langchain-interpreter $PACKAGE versions to next patch"
+          git add python-interpreter/packages/
+          git commit -m "Bump python-interpreter $PACKAGE versions to next patch"
           git push origin "$BRANCH"

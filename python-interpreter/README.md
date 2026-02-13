@@ -1,4 +1,4 @@
-# AFM LangChain Interpreter
+# AFM Python Interpreter
 
 A LangChain-based reference implementation of an interpreter for [Agent-Flavored Markdown (AFM)](https://github.com/wso2/agent-flavored-markdown) files.
 
@@ -57,7 +57,7 @@ uv run pytest
 ## Project Structure
 
 ```text
-langchain-interpreter/
+python-interpreter/
 ├── src/afm/
 │   ├── interfaces/        # Interface implementations (console, web, webhook)
 │   ├── tools/             # Tool support (MCP server)

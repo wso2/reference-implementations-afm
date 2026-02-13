@@ -2,7 +2,7 @@
 
 This repository has two separate release workflows:
 
-- **`release-python.yml`** — for the `langchain-interpreter` (Python, multi-package)
+- **`release-python.yml`** — for the `python-interpreter` (Python, multi-package)
 - **`release.yml`** — for the `ballerina-interpreter` (and future non-Python implementations)
 
 Both workflows call `release-finalize.yml` to create tags, release branches, and GitHub Releases.
@@ -11,8 +11,8 @@ Both workflows call `release-finalize.yml` to create tags, release branches, and
 
 ## Langchain Interpreter (Python)
 
-The langchain-interpreter workspace contains independently versioned packages:
-- **`afm-core`** — released together with `afm-cli` (lockstep version)
+The python-interpreter workspace contains independently versioned packages:
+- **`afm-core`** — released together with `afm-cli`
 - **`afm-langchain`** — released independently
 
 ### Normal Release
@@ -22,7 +22,7 @@ The langchain-interpreter workspace contains independently versioned packages:
 - branch: `main`
 
 **What happens:**
-1. Reads version from `langchain-interpreter/packages/<package>/pyproject.toml`
+1. Reads version from `python-interpreter/packages/<package>/pyproject.toml`
 2. Validates tag and release branch don't exist
 3. Runs tests (`pytest packages/afm-core/tests/ packages/afm-langchain/tests/`)
 4. Builds and publishes to PyPI:
@@ -123,7 +123,7 @@ git push origin ballerina-interpreter-v0.1.x
 
 | File | Purpose |
 |------|---------|
-| `release-python.yml` | Dispatch: langchain-interpreter releases (PyPI + Docker + tag) |
+| `release-python.yml` | Dispatch: python-interpreter releases (PyPI + Docker + tag) |
 | `release-common.yml` | Dispatch: ballerina-interpreter releases (Docker + tag) |
 | `release-finalize.yml` | Shared: create tag, release branch, and GitHub Release |
 | `re-release.yml` | Dispatch: re-release an existing version (CODEOWNERS only) |
@@ -132,7 +132,7 @@ git push origin ballerina-interpreter-v0.1.x
 
 | Action | Workflow | Implementations | Bumps Version? |
 |--------|----------|-----------------|----------------|
-| New release (Python) | `release-python.yml` | langchain-interpreter | Yes |
+| New release (Python) | `release-python.yml` | python-interpreter | Yes |
 | New release (generic) | `release-common.yml` | ballerina-interpreter | Yes |
 | Patch release | Same as above (from patch branch) | Any | Yes |
 | Re-release | `re-release.yml` | Any | No |

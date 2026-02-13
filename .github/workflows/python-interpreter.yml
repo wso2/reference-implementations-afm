@@ -1,23 +1,23 @@
-name: LangChain Interpreter CI
+name: Python Interpreter CI
 
 on:
   push:
     branches: [main, dev]
     paths:
-      - "langchain-interpreter/**"
-      - ".github/workflows/langchain-interpreter.yml"
+      - "python-interpreter/**"
+      - ".github/workflows/python-interpreter.yml"
   pull_request:
     branches: [main, dev]
     paths:
-      - "langchain-interpreter/**"
-      - ".github/workflows/langchain-interpreter.yml"
+      - "python-interpreter/**"
+      - ".github/workflows/python-interpreter.yml"
 
 jobs:
   test:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: langchain-interpreter
+        working-directory: python-interpreter
 
     steps:
       - name: Checkout repository
@@ -48,7 +48,7 @@ jobs:
       packages: write
     defaults:
       run:
-        working-directory: langchain-interpreter
+        working-directory: python-interpreter
 
     steps:
       - name: Checkout repository
@@ -76,7 +76,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: langchain-interpreter
+          context: python-interpreter
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
