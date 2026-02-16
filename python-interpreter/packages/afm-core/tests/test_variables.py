@@ -15,9 +15,9 @@
 # under the License.
 
 import pytest
-import os
-from afm.variables import resolve_variables
+
 from afm.exceptions import VariableResolutionError
+from afm.variables import resolve_variables
 
 
 class TestResolveVariables:
@@ -43,9 +43,9 @@ class TestResolveVariables:
             resolve_variables("${unsupported:VAR}")
         assert "unsupported" in str(exc_info.value)
 
-    def test_skips_commented_variables(self) -> None:
+    def test_skips_commented_variables(self, monkeypatch) -> None:
+        monkeypatch.setenv("TEST_VAR", "value")
         content = "# ${env:TEST_VAR}\nActual: ${env:TEST_VAR}"
-        os.environ["TEST_VAR"] = "value"
         # The first one should remain as is if it's detected as a comment line
         # Note: Current implementation of resolve_variables has some basic comment skipping
         result = resolve_variables(content)
