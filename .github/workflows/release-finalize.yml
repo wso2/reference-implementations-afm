@@ -69,25 +69,40 @@ jobs:
             COMMITS=$(git log --oneline -50 -- "$IMPLEMENTATION/")
           fi
 
-          # Format notes
-          RERELEASE_NOTE=""
-          if [ "$IS_RERELEASE" = "true" ]; then
-            RERELEASE_NOTE="
-
-          _Re-released version_"
-          fi
-
+          # Write release notes using heredoc
           if [ -n "$COMMITS" ]; then
-            NOTES="## Changes in $IMPLEMENTATION
+            if [ "$IS_RERELEASE" = "true" ]; then
+              cat <<-EOF > release_notes.md
+          ## Changes in $IMPLEMENTATION
 
-          $COMMITS$RERELEASE_NOTE"
+          $COMMITS
+
+          _Re-released version_
+          EOF
+            else
+              cat <<-EOF > release_notes.md
+          ## Changes in $IMPLEMENTATION
+
+          $COMMITS
+          EOF
+            fi
           else
-            NOTES="## Changes in $IMPLEMENTATION
+            if [ "$IS_RERELEASE" = "true" ]; then
+              cat <<-EOF > release_notes.md
+          ## Changes in $IMPLEMENTATION
 
-          No changes detected in this implementation directory.$RERELEASE_NOTE"
+          No changes detected in this implementation directory.
+
+          _Re-released version_
+          EOF
+            else
+              cat <<-EOF > release_notes.md
+          ## Changes in $IMPLEMENTATION
+
+          No changes detected in this implementation directory.
+          EOF
+            fi
           fi
-
-          echo "$NOTES" > release_notes.md
 
       - name: Create GitHub Release
         env:
