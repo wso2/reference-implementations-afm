@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from afm.exceptions import AFMParseError, AFMValidationError
+from afm.exceptions import AFMParseError, AFMValidationError, VariableResolutionError
 from afm.models import ConsoleChatInterface, WebChatInterface, WebhookInterface
 from afm.parser import parse_afm, parse_afm_file
 
@@ -259,3 +259,87 @@ class TestParseAfmFile:
     def test_parse_nonexistent_file(self) -> None:
         with pytest.raises(FileNotFoundError):
             parse_afm_file("/nonexistent/path/agent.afm.md")
+
+
+class TestResolveEnvParameter:
+    def test_parse_afm_without_resolve_env_preserves_variables(self) -> None:
+        """Test that resolve_env=False preserves ${env:VAR} syntax in string fields."""
+        content = """---
+spec_version: "0.3.0"
+name: "TestAgent"
+model:
+  provider: "openai"
+  name: "gpt-4"
+  authentication:
+    type: "bearer"
+    token: "${env:UNSET_API_TOKEN}"
+---
+
+# Role
+Test role
+
+# Instructions
+Test instructions
+"""
+        # Should parse successfully without resolving env variables
+        result = parse_afm(content, resolve_env=False)
+
+        assert result.metadata.name == "TestAgent"
+        assert result.metadata.model is not None
+        assert result.metadata.model.authentication is not None
+        # Variable should be preserved as-is
+        assert result.metadata.model.authentication.token == "${env:UNSET_API_TOKEN}"
+
+    def test_parse_afm_with_resolve_env_fails_on_missing_var(self) -> None:
+        """Test that resolve_env=True (default) raises error for unset env variables."""
+        content = """---
+spec_version: "0.3.0"
+name: "TestAgent"
+model:
+  provider: "openai"
+  name: "gpt-4"
+  authentication:
+    type: "bearer"
+    token: "${env:UNSET_API_TOKEN_XYZ123}"
+---
+
+# Role
+Test role
+
+# Instructions
+Test instructions
+"""
+        # Should fail when trying to resolve missing env variable
+        with pytest.raises(VariableResolutionError) as exc_info:
+            parse_afm(content, resolve_env=True)
+
+        assert "UNSET_API_TOKEN_XYZ123" in str(exc_info.value)
+
+    def test_parse_afm_default_behavior_resolves_env(self, monkeypatch) -> None:
+        """Test that default behavior (no resolve_env parameter) resolves env variables."""
+        # Set an environment variable
+        monkeypatch.setenv("TEST_TOKEN_VALUE", "secret-token-123")
+
+        content = """---
+spec_version: "0.3.0"
+name: "TestAgent"
+model:
+  provider: "openai"
+  name: "gpt-4"
+  authentication:
+    type: "bearer"
+    token: "${env:TEST_TOKEN_VALUE}"
+---
+
+# Role
+Test role
+
+# Instructions
+Test instructions
+"""
+        # Default behavior should resolve variables
+        result = parse_afm(content)
+
+        assert result.metadata.model is not None
+        assert result.metadata.model.authentication is not None
+        assert result.metadata.model.authentication.token == "secret-token-123"

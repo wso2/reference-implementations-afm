@@ -329,3 +329,72 @@ class TestUnifiedAppLifespan:
             # After exiting the context, task should be cancelled
             assert task.done()
             assert task.cancelled()
+
+
+class TestValidateWithEnvVariables:
+    def test_validate_with_env_variables_succeeds_without_env_set(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        """Test that validate succeeds even when env variables are not set."""
+        # Create an AFM file with unresolved environment variables
+        afm_with_env_var = tmp_path / "agent_with_env.afm.md"
+        afm_with_env_var.write_text(
+            """---
+spec_version: "0.3.0"
+name: "EnvTestAgent"
+model:
+  provider: "openai"
+  name: "gpt-4"
+  authentication:
+    type: "bearer"
+    token: "${env:UNSET_API_TOKEN_FOR_VALIDATE_TEST}"
+---
+
+# Role
+Test role
+
+# Instructions
+Test instructions
+"""
+        )
+
+        # Validate should succeed without requiring env var to be set
+        result = runner.invoke(cli, ["validate", str(afm_with_env_var)])
+        assert result.exit_code == 0
+        assert "validated successfully" in result.output.lower()
+        assert "EnvTestAgent" in result.output
+
+    def test_dry_run_with_env_variables_fails_without_env_set(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        """Test that run --dry-run fails when env variables are not set."""
+        # Create the same AFM file with unresolved environment variables
+        afm_with_env_var = tmp_path / "agent_with_env.afm.md"
+        afm_with_env_var.write_text(
+            """---
+spec_version: "0.3.0"
+name: "EnvTestAgent"
+model:
+  provider: "openai"
+  name: "gpt-4"
+  authentication:
+    type: "bearer"
+    token: "${env:UNSET_API_TOKEN_FOR_DRYRUN_TEST}"
+---
+
+# Role
+Test role
+
+# Instructions
+Test instructions
+"""
+        )
+
+        # Dry-run should fail because it tries to resolve env variables
+        result = runner.invoke(cli, ["run", str(afm_with_env_var), "--dry-run"])
+        assert result.exit_code != 0
+        assert (
+            "UNSET_API_TOKEN_FOR_DRYRUN_TEST" in result.output
+            or "Environment variable" in result.output
+            or "variable" in result.output.lower()
+        )

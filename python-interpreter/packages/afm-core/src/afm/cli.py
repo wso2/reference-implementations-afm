@@ -321,7 +321,7 @@ def validate(file: Path) -> None:
     Does NOT require a backend (e.g. langchain) to be installed.
     """
     try:
-        afm = parse_afm_file(str(file))
+        afm = parse_afm_file(str(file), resolve_env=False)
     except AFMError as e:
         raise click.ClickException(f"Failed to parse AFM file: {e}") from e
     except Exception as e:

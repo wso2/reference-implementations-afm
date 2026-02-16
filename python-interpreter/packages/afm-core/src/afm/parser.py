@@ -27,9 +27,10 @@ from .variables import resolve_variables, validate_http_variables
 FRONTMATTER_DELIMITER = "---"
 
 
-def parse_afm(content: str) -> AFMRecord:
-    resolved_content = resolve_variables(content)
-    lines = resolved_content.splitlines()
+def parse_afm(content: str, *, resolve_env: bool = True) -> AFMRecord:
+    if resolve_env:
+        content = resolve_variables(content)
+    lines = content.splitlines()
     metadata, body_start = _extract_frontmatter(lines)
     role, instructions = _extract_role_and_instructions(lines, body_start)
     afm_record = AFMRecord(
@@ -41,10 +42,10 @@ def parse_afm(content: str) -> AFMRecord:
     return afm_record
 
 
-def parse_afm_file(file_path: str | Path) -> AFMRecord:
+def parse_afm_file(file_path: str | Path, *, resolve_env: bool = True) -> AFMRecord:
     path = Path(file_path)
     content = path.read_text(encoding="utf-8")
-    return parse_afm(content)
+    return parse_afm(content, resolve_env=resolve_env)
 
 
 def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
