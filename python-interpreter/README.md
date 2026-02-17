@@ -1,9 +1,10 @@
 # AFM Python Interpreter
 
-A LangChain-based reference implementation of an interpreter for [Agent-Flavored Markdown (AFM)](https://github.com/wso2/agent-flavored-markdown) files.
+A reference implementation of an interpreter for [Agent-Flavored Markdown (AFM)](https://github.com/wso2/agent-flavored-markdown) files. Built with a modular, plugin-based architecture that supports multiple execution backends, with LangChain provided as the reference implementation.
 
 ## Features
 
+- **Pluggable execution backends** - Support for multiple LLM frameworks via the `AgentRunner` protocol (LangChain included as reference implementation)
 - **Support for all interface types:**
   - Console chat (interactive CLI)
   - Web chat (HTTP API + optional UI)
@@ -14,7 +15,7 @@ A LangChain-based reference implementation of an interpreter for [Agent-Flavored
 
 ## Prerequisites
 
-- [Python](https://www.python.org/) 3.12 or later.
+- [Python](https://www.python.org/) 3.11 or later.
 - [uv](https://docs.astral.sh/uv/) for dependency management.
 - [Docker](https://www.docker.com/) (optional, for running via containers).
 
@@ -56,21 +57,20 @@ uv run pytest
 
 ## Project Structure
 
+This is a uv workspace with three packages:
+
 ```text
 python-interpreter/
-├── src/afm/
-│   ├── interfaces/        # Interface implementations (console, web, webhook)
-│   ├── tools/             # Tool support (MCP server)
-│   ├── resources/         # Static assets (web UI)
-│   ├── agent.py           # Core agent logic
-│   ├── cli.py             # CLI entry point
-│   ├── parser.py          # AFM file parsing
-│   ├── models.py          # Model configuration
-│   ├── providers.py       # LLM provider handling
-│   └── templates.py       # Prompt templates
-├── tests/                 # Unit and integration tests
+├── packages/
+│   ├── afm-core/          # Core: parser, CLI, models, interfaces, protocols
+│   │   ├── src/afm/
+│   │   └── tests/
+│   ├── afm-langchain/     # LangChain execution backend
+│   │   ├── src/afm_langchain/
+│   │   └── tests/
+│   └── afm-cli/           # User-facing metapackage
 ├── Dockerfile             # Container build
-├── pyproject.toml         # Python project configuration
+├── pyproject.toml         # Workspace configuration
 └── uv.lock                # Dependency lock file
 ```
 
