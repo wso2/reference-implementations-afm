@@ -4,23 +4,23 @@ on:
   workflow_call:
     inputs:
       context:
-        description: 'Docker build context directory (e.g., ballerina-interpreter)'
+        description: "Docker build context directory (e.g., ballerina-interpreter)"
         required: true
         type: string
       image_name:
-        description: 'Docker image name without registry prefix (e.g., afm-ballerina-interpreter)'
+        description: "Docker image name without registry prefix (e.g., afm-ballerina-interpreter)"
         required: true
         type: string
       version:
-        description: 'Release version (e.g., 0.1.0)'
+        description: "Release version (e.g., 0.1.0)"
         required: true
         type: string
       branch:
-        description: 'Branch being released from'
+        description: "Branch being released from"
         required: true
         type: string
       image_title:
-        description: 'Human-readable image title for OCI labels (e.g., AFM Ballerina Interpreter)'
+        description: "Human-readable image title for OCI labels (e.g., AFM Ballerina Interpreter)"
         required: true
         type: string
 
@@ -82,17 +82,17 @@ jobs:
             index:org.opencontainers.image.licenses=Apache-2.0
 
       - name: Scan Docker image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.34
+        uses: aquasecurity/trivy-action@0.34.0
         with:
           image-ref: ${{ steps.docker-tags.outputs.FULL_IMAGE }}:v${{ inputs.version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
           limit-severities-for-sarif: true
-          exit-code: '1'
+          exit-code: "1"
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
