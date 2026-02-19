@@ -119,7 +119,13 @@ jobs:
           uv run pytest packages/afm-core/tests/ packages/afm-langchain/tests/
 
   pypi-publish:
-    needs: [validate, test]
+    needs: [validate, test, docker]
+    if: >-
+          !cancelled()
+          && needs.validate.result == 'success'
+          && needs.test.result == 'success'
+          && (needs.docker.result == 'success'
+            || needs.docker.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -158,7 +164,7 @@ jobs:
           fi
 
   docker:
-    needs: [validate, pypi-publish]
+    needs: [validate, test]
     if: inputs.package == 'afm-langchain'
     uses: ./.github/workflows/release-docker.yml
     with:
