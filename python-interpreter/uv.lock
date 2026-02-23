@@ -26,7 +26,7 @@ dev = [
 
 [[package]]
 name = "afm-cli"
-version = "0.2.9"
+version = "0.2.10"
 source = { editable = "packages/afm-cli" }
 dependencies = [
     { name = "afm-core" },
@@ -41,7 +41,7 @@ requires-dist = [
 
 [[package]]
 name = "afm-core"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "packages/afm-core" }
 dependencies = [
     { name = "click" },
@@ -74,7 +74,7 @@ requires-dist = [
 
 [[package]]
 name = "afm-langchain"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "packages/afm-langchain" }
 dependencies = [
     { name = "afm-core" },
