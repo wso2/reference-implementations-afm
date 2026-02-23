@@ -123,6 +123,22 @@ class UpdateState:
         return (time.time() - last) >= CHECK_INTERVAL
 
 
+def _detect_install_command(package: str = "afm-langchain") -> str | None:
+    """Return the appropriate install command for a new plugin package."""
+    if _is_docker():
+        return None
+
+    host_pkg = _detect_package()  # "afm-cli" or "afm-core"
+    executable = sys.executable or ""
+
+    if "pipx" in executable:
+        return f"pipx inject {host_pkg} {package}"
+    elif "uv" in executable:
+        return f"uv tool install --with {package} {host_pkg}"
+    else:
+        return f"pip install {package}"
+
+
 def _detect_upgrade_command(package: str | None = None) -> str | None:
     """Return the appropriate upgrade command string, or None in containers."""
     if _is_docker():

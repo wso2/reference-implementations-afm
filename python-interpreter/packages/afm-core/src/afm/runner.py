@@ -88,11 +88,17 @@ def load_runner(name: str | None = None) -> type[AgentRunner]:
     runners = discover_runners()
 
     if not runners:
-        raise RuntimeError(
-            "No AFM runner backends found. "
-            "Install a backend package such as 'afm-langchain':\n\n"
-            "  uv add afm-langchain\n"
-        )
+        from afm.update import _detect_install_command
+
+        install_cmd = _detect_install_command("afm-langchain")
+        if install_cmd is None:
+            hint = "Use a container image that includes 'afm-langchain'."
+        else:
+            hint = (
+                "Install a backend package such as 'afm-langchain':\n\n"
+                f"  {install_cmd}\n"
+            )
+        raise RuntimeError(f"No AFM runner backends found. {hint}")
 
     if name is not None:
         if name not in runners:

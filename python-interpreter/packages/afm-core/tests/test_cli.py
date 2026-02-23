@@ -264,11 +264,87 @@ class TestFrameworkCommand:
     def test_framework_list_no_backends(
         self, mock_discover: MagicMock, runner: CliRunner
     ):
+        """Basic smoke test: always shows 'No runner backends found'."""
         mock_discover.return_value = {}
 
         result = runner.invoke(cli, ["framework", "list"])
         assert result.exit_code == 0
         assert "No runner backends found" in result.output
+
+    @patch("afm.cli.discover_runners")
+    @patch("afm.update._detect_package", return_value="afm-cli")
+    def test_framework_list_no_backends_uv(
+        self,
+        mock_pkg: MagicMock,
+        mock_discover: MagicMock,
+        runner: CliRunner,
+    ):
+        """uv installation shows 'uv tool install --with afm-langchain afm-cli'."""
+        mock_discover.return_value = {}
+
+        with patch("afm.update.sys") as mock_sys:
+            mock_sys.executable = "/home/user/.local/share/uv/tools/afm-cli/bin/python"
+            result = runner.invoke(cli, ["framework", "list"])
+
+        assert result.exit_code == 0
+        assert "uv tool install --with afm-langchain afm-cli" in result.output
+
+    @patch("afm.cli.discover_runners")
+    @patch("afm.update._detect_package", return_value="afm-cli")
+    def test_framework_list_no_backends_pipx(
+        self,
+        mock_pkg: MagicMock,
+        mock_discover: MagicMock,
+        runner: CliRunner,
+    ):
+        """pipx installation shows 'pipx inject afm-cli afm-langchain'."""
+        mock_discover.return_value = {}
+
+        with patch("afm.update.sys") as mock_sys:
+            mock_sys.executable = (
+                "/home/user/.local/share/pipx/venvs/afm-cli/bin/python"
+            )
+            result = runner.invoke(cli, ["framework", "list"])
+
+        assert result.exit_code == 0
+        assert "pipx inject afm-cli afm-langchain" in result.output
+
+    @patch("afm.cli.discover_runners")
+    @patch("afm.update._detect_package", return_value="afm-core")
+    def test_framework_list_no_backends_pip(
+        self,
+        mock_pkg: MagicMock,
+        mock_discover: MagicMock,
+        runner: CliRunner,
+    ):
+        """pip installation shows 'pip install afm-langchain'."""
+        mock_discover.return_value = {}
+
+        with patch("afm.update.sys") as mock_sys:
+            mock_sys.executable = "/usr/bin/python3"
+            result = runner.invoke(cli, ["framework", "list"])
+
+        assert result.exit_code == 0
+        assert "pip install afm-langchain" in result.output
+
+    @patch("afm.cli.discover_runners")
+    def test_framework_list_no_backends_docker(
+        self,
+        mock_discover: MagicMock,
+        runner: CliRunner,
+    ):
+        """Docker shows container image message with no install command."""
+        mock_discover.return_value = {}
+
+        with patch.dict("os.environ", {"AFM_RUNTIME": "docker"}):
+            result = runner.invoke(cli, ["framework", "list"])
+
+        assert result.exit_code == 0
+        assert "No runner backends found" in result.output
+        assert "container image" in result.output.lower()
+        assert "uv tool install" not in result.output
+        assert "pipx inject" not in result.output
+        assert "pip install" not in result.output
 
 
 class TestEdgeCases:

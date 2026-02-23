@@ -30,6 +30,7 @@ from afm.cli import cli
 from afm.update import (
     CHECK_INTERVAL,
     UpdateState,
+    _detect_install_command,
     _detect_package,
     _detect_upgrade_command,
     _get_installed_version,
@@ -394,6 +395,82 @@ class TestDetectUpgradeCommand:
             mock_sys.executable = "/usr/bin/python3"
             cmd = _detect_upgrade_command("afm-core")
             assert cmd == "pip install -U afm-core"
+
+
+class TestDetectInstallCommand:
+    def test_returns_none_in_docker(self):
+        """Should return None when running in a Docker container."""
+        with patch.dict("os.environ", {"AFM_RUNTIME": "docker"}):
+            assert _detect_install_command() is None
+
+    def test_returns_none_in_docker_with_explicit_package(self):
+        """Should return None in Docker regardless of the package argument."""
+        with patch.dict("os.environ", {"AFM_RUNTIME": "docker"}):
+            assert _detect_install_command("afm-langchain") is None
+
+    def test_pipx_afm_cli(self):
+        """Should inject into the afm-cli pipx env when afm-cli is installed."""
+        with patch("afm.update._detect_package", return_value="afm-cli"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = (
+                    "/home/user/.local/share/pipx/venvs/afm-cli/bin/python"
+                )
+                cmd = _detect_install_command("afm-langchain")
+        assert cmd == "pipx inject afm-cli afm-langchain"
+
+    def test_pipx_afm_core(self):
+        """Should inject into the afm-core pipx env when only afm-core is installed."""
+        with patch("afm.update._detect_package", return_value="afm-core"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = (
+                    "/home/user/.local/share/pipx/venvs/afm-core/bin/python"
+                )
+                cmd = _detect_install_command("afm-langchain")
+        assert cmd == "pipx inject afm-core afm-langchain"
+
+    def test_uv_afm_cli(self):
+        """Should produce 'uv tool install --with' targeting afm-cli."""
+        with patch("afm.update._detect_package", return_value="afm-cli"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = (
+                    "/home/user/.local/share/uv/tools/afm-cli/bin/python"
+                )
+                cmd = _detect_install_command("afm-langchain")
+        assert cmd == "uv tool install --with afm-langchain afm-cli"
+
+    def test_uv_afm_core(self):
+        """Should produce 'uv tool install --with' targeting afm-core."""
+        with patch("afm.update._detect_package", return_value="afm-core"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = (
+                    "/home/user/.local/share/uv/tools/afm-core/bin/python"
+                )
+                cmd = _detect_install_command("afm-langchain")
+        assert cmd == "uv tool install --with afm-langchain afm-core"
+
+    def test_pip_fallback(self):
+        """Should fall back to pip install for non-pipx, non-uv environments."""
+        with patch("afm.update._detect_package", return_value="afm-cli"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = "/usr/bin/python3"
+                cmd = _detect_install_command("afm-langchain")
+        assert cmd == "pip install afm-langchain"
+
+    def test_custom_package_name(self):
+        """Should use the provided package name in the install command."""
+        with patch("afm.update._detect_package", return_value="afm-cli"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = "/usr/bin/python3"
+                cmd = _detect_install_command("some-other-backend")
+        assert cmd == "pip install some-other-backend"
+
+    def test_default_package_is_afm_langchain(self):
+        """Default package argument should be 'afm-langchain'."""
+        with patch("afm.update._detect_package", return_value="afm-cli"):
+            with patch("afm.update.sys") as mock_sys:
+                mock_sys.executable = "/usr/bin/python3"
+                cmd = _detect_install_command()
+        assert "afm-langchain" in cmd
 
 
 class TestBackgroundCheck:

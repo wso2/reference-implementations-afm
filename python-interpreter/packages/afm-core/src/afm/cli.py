@@ -499,10 +499,16 @@ def framework_list() -> None:
     runners = discover_runners()
 
     if not runners:
+        from afm.update import _detect_install_command
+
         click.echo("No runner backends found.")
         click.echo("")
-        click.echo("Install a backend package such as 'afm-langchain':")
-        click.echo("  uv add afm-langchain")
+        install_cmd = _detect_install_command("afm-langchain")
+        if install_cmd is None:
+            click.echo("Use a container image that includes 'afm-langchain'.")
+        else:
+            click.echo("Install a backend package such as 'afm-langchain':")
+            click.echo(f"  {install_cmd}")
         return
 
     click.echo("Discovered runner backends:")
