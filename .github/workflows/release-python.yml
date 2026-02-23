@@ -150,18 +150,26 @@ jobs:
             uv build --package afm-langchain
           fi
 
-      - name: Publish to PyPI
+      - name: Publish afm-core to PyPI
+        if: inputs.package == 'afm-core'
         working-directory: python-interpreter
         env:
-          PACKAGE: ${{ inputs.package }}
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ "$PACKAGE" = "afm-core" ]; then
-            uv publish dist/afm_core-*
-            uv publish dist/afm_cli-*
-          elif [ "$PACKAGE" = "afm-langchain" ]; then
-            uv publish dist/afm_langchain-*
-          fi
+          UV_PUBLISH_TOKEN: ${{ secrets.AFM_CORE_PYPI_API_TOKEN }}
+        run: uv publish dist/afm_core-*
+
+      - name: Publish afm-cli to PyPI
+        if: inputs.package == 'afm-core'
+        working-directory: python-interpreter
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.AFM_CLI_PYPI_API_TOKEN }}
+        run: uv publish dist/afm_cli-*
+
+      - name: Publish afm-langchain to PyPI
+        if: inputs.package == 'afm-langchain'
+        working-directory: python-interpreter
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.AFM_LANGCHAIN_PYPI_API_TOKEN }}
+        run: uv publish dist/afm_langchain-*
 
   docker:
     needs: [validate, test]
