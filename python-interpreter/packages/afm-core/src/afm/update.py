@@ -81,38 +81,68 @@ def _get_installed_version() -> str | None:
 class UpdateState:
     """Manages persistent state for update checks.
 
-    State is stored as JSON at <user_config_dir>/afm/update_state.json.
+    State is stored as JSON at <user_config_dir>/afm/update_state.json with
+    a per-package structure so that ``afm-cli`` and ``afm-core`` version data
+    are tracked independently:
+
+    .. code-block:: json
+
+        {
+            "packages": {
+                "afm-cli":  {"last_check": 1740000000.0, "latest_version": "0.2.1"},
+                "afm-core": {"last_check": 1739900000.0, "latest_version": "0.1.8"}
+            }
+        }
+
+    Args:
+        package: The PyPI package name whose state should be read/written
+                 (e.g. ``"afm-cli"`` or ``"afm-core"``).
     """
 
-    def __init__(self) -> None:
+    _PACKAGE_DEFAULTS: dict = {"last_check": 0, "latest_version": None}
+
+    def __init__(self, package: str) -> None:
         from platformdirs import user_config_dir
 
+        self.package = package
         self.path = Path(user_config_dir("afm")) / "update_state.json"
         logger.debug("Update state file path: %s", self.path)
-        self.data = self._load()
+        self._root = self._load_root()
+        self.data: dict = self._root["packages"].setdefault(
+            package, dict(self._PACKAGE_DEFAULTS)
+        )
 
-    def _load(self) -> dict:
-        """Load state from disk, returning defaults if missing/corrupt."""
+    def _load_root(self) -> dict:
+        """Load the root state dict from disk, returning an empty root on any problem."""
         try:
             if self.path.exists():
                 with open(self.path) as f:
                     data = json.load(f)
-                    if isinstance(data, dict):
-                        logger.debug("Loaded update state: %s", data)
-                        return data
+                if (
+                    isinstance(data, dict)
+                    and "packages" in data
+                    and isinstance(data["packages"], dict)
+                ):
+                    logger.debug("Loaded update state: %s", data)
+                    return data
+                else:
+                    logger.debug(
+                        "Update state file has unrecognised format, discarding: %s",
+                        data,
+                    )
             else:
                 logger.debug("No update state file found at %s", self.path)
         except (json.JSONDecodeError, OSError, ValueError) as exc:
             logger.debug("Failed to load update state: %s", exc)
-        return {"last_check": 0, "latest_version": None}
+        return {"packages": {}}
 
     def save(self) -> None:
         """Persist current state to disk."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.path, "w") as f:
-                json.dump(self.data, f)
-            logger.debug("Saved update state to %s: %s", self.path, self.data)
+                json.dump(self._root, f)
+            logger.debug("Saved update state to %s: %s", self.path, self._root)
         except OSError as exc:
             logger.debug("Failed to save update state: %s", exc)
 
@@ -169,7 +199,7 @@ def maybe_check_for_updates() -> None:
         return
 
     try:
-        state = UpdateState()
+        state = UpdateState(_detect_package())
         if not state.is_check_due:
             logger.debug(
                 "Update check not due yet (last: %.0f)", state.data.get("last_check", 0)
@@ -208,7 +238,8 @@ def get_update_notification() -> str | None:
     try:
         from packaging.version import Version
 
-        state = UpdateState()
+        pkg = _detect_package()
+        state = UpdateState(pkg)
         latest = state.data.get("latest_version")
         if not latest:
             logger.debug("No latest version in state, skipping toast")
@@ -226,7 +257,7 @@ def get_update_notification() -> str | None:
         except Exception:
             return None
 
-        upgrade_cmd = _detect_upgrade_command()
+        upgrade_cmd = _detect_upgrade_command(pkg)
         if upgrade_cmd is None:
             # Docker / container: no package-manager command to suggest
             msg = f"Update available: {current} \u2192 {latest}."
@@ -260,7 +291,8 @@ def notify_if_update_available() -> None:
     try:
         from packaging.version import Version
 
-        state = UpdateState()
+        pkg = _detect_package()
+        state = UpdateState(pkg)
         latest = state.data.get("latest_version")
         if not latest:
             logger.debug("No latest version in state, skipping notification")
@@ -282,7 +314,7 @@ def notify_if_update_available() -> None:
         # Print notification to stderr using Rich
         from rich.console import Console
 
-        upgrade_cmd = _detect_upgrade_command()
+        upgrade_cmd = _detect_upgrade_command(pkg)
         logger.debug("Showing update notification: %s -> %s", current, latest)
         console = Console(stderr=True)
         console.print(
@@ -304,10 +336,10 @@ def notify_if_update_available() -> None:
 
 def _perform_background_check() -> None:
     """Query PyPI for the latest version and write it to the state file."""
+    package = _detect_package()
     try:
         import httpx
 
-        package = _detect_package()
         url = f"https://pypi.org/pypi/{package}/json"
         logger.debug("Querying PyPI: %s", url)
         response = httpx.get(
@@ -318,7 +350,7 @@ def _perform_background_check() -> None:
         if response.status_code == 200:
             latest = response.json()["info"]["version"]
             logger.debug("PyPI reports latest version: %s", latest)
-            state = UpdateState()
+            state = UpdateState(package)
             state.data["last_check"] = time.time()
             state.data["latest_version"] = latest
             state.save()
@@ -328,7 +360,7 @@ def _perform_background_check() -> None:
         logger.debug("Background check failed: %s", exc)
         # Update the last_check even on failure to avoid hammering PyPI
         try:
-            state = UpdateState()
+            state = UpdateState(package)
             state.data["last_check"] = time.time()
             state.save()
         except Exception:

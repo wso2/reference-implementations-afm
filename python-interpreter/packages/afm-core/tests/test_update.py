@@ -75,19 +75,28 @@ def clear_docker_env():
 class TestUpdateState:
     def test_load_missing_file(self, patch_config_dir: None):
         """Should return defaults when no state file exists."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
+        assert state.package == "afm-cli"
         assert state.data["last_check"] == 0
         assert state.data["latest_version"] is None
 
     def test_save_and_load(self, patch_config_dir: None):
-        """Should round-trip save/load correctly."""
-        state = UpdateState()
+        """Should round-trip save/load correctly and store data under the package key."""
+        import json
+
+        state = UpdateState("afm-cli")
         state.data["last_check"] = 1234567890.0
         state.data["latest_version"] = "1.0.0"
         state.save()
 
-        # Load again from disk
-        state2 = UpdateState()
+        # Verify on-disk structure has per-package nesting
+        raw = json.loads(state.path.read_text())
+        assert "packages" in raw
+        assert "afm-cli" in raw["packages"]
+        assert raw["packages"]["afm-cli"]["latest_version"] == "1.0.0"
+
+        # Load again from disk for the same package
+        state2 = UpdateState("afm-cli")
         assert state2.data["last_check"] == 1234567890.0
         assert state2.data["latest_version"] == "1.0.0"
 
@@ -96,24 +105,58 @@ class TestUpdateState:
         state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text("not valid json {{{")
 
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         assert state.data["last_check"] == 0
         assert state.data["latest_version"] is None
 
+    def test_old_flat_format_discarded(self, patch_config_dir: None, state_file: Path):
+        """Old flat format (no 'packages' key) should be silently discarded."""
+        import json
+
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(
+            json.dumps({"last_check": 9999999.0, "latest_version": "0.1.0"})
+        )
+
+        state = UpdateState("afm-cli")
+        # Old data is discarded; defaults are used
+        assert state.data["last_check"] == 0
+        assert state.data["latest_version"] is None
+
+    def test_two_packages_are_independent(self, patch_config_dir: None):
+        """afm-cli and afm-core state should not interfere with each other."""
+        cli_state = UpdateState("afm-cli")
+        cli_state.data["latest_version"] = "0.2.1"
+        cli_state.data["last_check"] = 1000.0
+        cli_state.save()
+
+        core_state = UpdateState("afm-core")
+        core_state.data["latest_version"] = "0.1.8"
+        core_state.data["last_check"] = 2000.0
+        core_state.save()
+
+        # Reload both and verify they don't bleed into each other
+        cli_state2 = UpdateState("afm-cli")
+        core_state2 = UpdateState("afm-core")
+        assert cli_state2.data["latest_version"] == "0.2.1"
+        assert cli_state2.data["last_check"] == 1000.0
+        assert core_state2.data["latest_version"] == "0.1.8"
+        assert core_state2.data["last_check"] == 2000.0
+
     def test_is_check_due_never_checked(self, patch_config_dir: None):
         """Should be due if never checked before."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         assert state.is_check_due is True
 
     def test_is_check_due_recent(self, patch_config_dir: None):
         """Should not be due if checked recently."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["last_check"] = time.time()
         assert state.is_check_due is False
 
     def test_is_check_due_expired(self, patch_config_dir: None):
         """Should be due if TTL has expired."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["last_check"] = time.time() - CHECK_INTERVAL - 1
         assert state.is_check_due is True
 
@@ -167,12 +210,13 @@ class TestIsDocker:
 
 class TestMaybeCheckForUpdates:
     @patch("afm.update.subprocess.Popen")
+    @patch("afm.update._detect_package", return_value="afm-cli")
     def test_check_skipped_within_ttl(
-        self, mock_popen: MagicMock, patch_config_dir: None
+        self, mock_pkg: MagicMock, mock_popen: MagicMock, patch_config_dir: None
     ):
         """Should NOT spawn subprocess when last check was recent."""
-        # Set up a recent check
-        state = UpdateState()
+        # Set up a recent check for the same package that will be detected
+        state = UpdateState("afm-cli")
         state.data["last_check"] = time.time()
         state.save()
 
@@ -210,14 +254,15 @@ class TestMaybeCheckForUpdates:
 
 
 class TestNotifyIfUpdateAvailable:
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_notify_shows_message_with_upgrade_cmd(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should print notification with upgrade command when not in Docker."""
         from io import StringIO
 
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -241,14 +286,15 @@ class TestNotifyIfUpdateAvailable:
             cmd in output for cmd in ("pip install", "pipx upgrade", "uv tool upgrade")
         )
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_notify_docker_shows_container_message(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should show container-image message (no upgrade cmd) in Docker."""
         from io import StringIO
 
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -275,12 +321,17 @@ class TestNotifyIfUpdateAvailable:
         # Should mention container image
         assert "container image" in output.lower()
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_notify_skipped_non_tty(
-        self, mock_version: MagicMock, patch_config_dir: None, capsys
+        self,
+        mock_version: MagicMock,
+        mock_pkg: MagicMock,
+        patch_config_dir: None,
+        capsys,
     ):
         """Should NOT notify when stderr is not a TTY."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -290,12 +341,17 @@ class TestNotifyIfUpdateAvailable:
         captured = capsys.readouterr()
         assert "pip install" not in captured.err
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.2.0")
     def test_notify_skipped_same_version(
-        self, mock_version: MagicMock, patch_config_dir: None, capsys
+        self,
+        mock_version: MagicMock,
+        mock_pkg: MagicMock,
+        patch_config_dir: None,
+        capsys,
     ):
         """Should NOT notify when current == latest."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -306,12 +362,17 @@ class TestNotifyIfUpdateAvailable:
         captured = capsys.readouterr()
         assert "pip install" not in captured.err
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_notify_skipped_with_env_var(
-        self, mock_version: MagicMock, patch_config_dir: None, capsys
+        self,
+        mock_version: MagicMock,
+        mock_pkg: MagicMock,
+        patch_config_dir: None,
+        capsys,
     ):
         """Should skip when AFM_NO_UPDATE_CHECK=1."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -321,14 +382,15 @@ class TestNotifyIfUpdateAvailable:
         captured = capsys.readouterr()
         assert "pip install" not in captured.err
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_notify_fires_on_every_run(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should notify on every run while an update is available."""
         from io import StringIO
 
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -475,8 +537,11 @@ class TestDetectInstallCommand:
 
 class TestBackgroundCheck:
     @patch("httpx.get")
-    def test_writes_state_on_success(self, mock_get: MagicMock, patch_config_dir: None):
-        """Should write latest version and timestamp to state file."""
+    @patch("afm.update._detect_package", return_value="afm-cli")
+    def test_writes_state_on_success(
+        self, mock_pkg: MagicMock, mock_get: MagicMock, patch_config_dir: None
+    ):
+        """Should write latest version and timestamp under the detected package key."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"info": {"version": "1.0.0"}}
@@ -484,18 +549,19 @@ class TestBackgroundCheck:
 
         _perform_background_check()
 
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         assert state.data["latest_version"] == "1.0.0"
         assert state.data["last_check"] > 0
 
     @patch("httpx.get", side_effect=Exception("network error"))
+    @patch("afm.update._detect_package", return_value="afm-cli")
     def test_updates_timestamp_on_failure(
-        self, mock_get: MagicMock, patch_config_dir: None
+        self, mock_pkg: MagicMock, mock_get: MagicMock, patch_config_dir: None
     ):
         """Should still update last_check on failure to avoid hammering PyPI."""
         _perform_background_check()
 
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         assert state.data["last_check"] > 0
         assert state.data["latest_version"] is None
 
@@ -573,12 +639,13 @@ class TestCLIUpdateIntegration:
 
 
 class TestGetUpdateNotification:
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_returns_message_when_update_available(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should return notification string with upgrade command when not in Docker."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -591,12 +658,13 @@ class TestGetUpdateNotification:
             cmd in result for cmd in ("pip install", "pipx upgrade", "uv tool upgrade")
         )
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_returns_message_without_upgrade_cmd_in_docker(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should return notification string without upgrade command in Docker."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -611,23 +679,25 @@ class TestGetUpdateNotification:
         assert "pipx upgrade" not in result
         assert "uv tool upgrade" not in result
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.2.0")
     def test_returns_none_when_up_to_date(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should return None when current version matches latest."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
         assert get_update_notification() is None
 
+    @patch("afm.update._detect_package", return_value="afm-cli")
     @patch("afm.update._get_installed_version", return_value="0.1.0")
     def test_returns_none_with_env_var(
-        self, mock_version: MagicMock, patch_config_dir: None
+        self, mock_version: MagicMock, mock_pkg: MagicMock, patch_config_dir: None
     ):
         """Should return None when AFM_NO_UPDATE_CHECK=1."""
-        state = UpdateState()
+        state = UpdateState("afm-cli")
         state.data["latest_version"] = "0.2.0"
         state.save()
 
@@ -643,11 +713,11 @@ class TestGetUpdateNotification:
         self, mock_version: MagicMock, patch_config_dir: None
     ):
         """Should include afm-core in upgrade command for afm-core-only users."""
-        state = UpdateState()
-        state.data["latest_version"] = "0.1.8"
-        state.save()
-
         with patch("afm.update._detect_package", return_value="afm-core"):
+            state = UpdateState("afm-core")
+            state.data["latest_version"] = "0.1.8"
+            state.save()
+
             with patch("afm.update.sys") as mock_sys:
                 mock_sys.executable = "/usr/bin/python3"
                 result = get_update_notification()
@@ -661,11 +731,11 @@ class TestGetUpdateNotification:
         self, mock_version: MagicMock, patch_config_dir: None
     ):
         """Should include afm-cli in upgrade command for afm-cli users."""
-        state = UpdateState()
-        state.data["latest_version"] = "0.2.10"
-        state.save()
-
         with patch("afm.update._detect_package", return_value="afm-cli"):
+            state = UpdateState("afm-cli")
+            state.data["latest_version"] = "0.2.10"
+            state.save()
+
             with patch("afm.update.sys") as mock_sys:
                 mock_sys.executable = "/usr/bin/python3"
                 result = get_update_notification()
