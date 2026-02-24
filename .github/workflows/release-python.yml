@@ -238,6 +238,10 @@ jobs:
             uv version --bump patch --package afm-cli --frozen
             # Sync the afm-core exact pin in afm-cli's dependencies
             NEW_CORE_VERSION=$(uv version --short --package afm-core)
+            if [[ ! "$NEW_CORE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Failed to get valid afm-core version, got: '$NEW_CORE_VERSION'"
+              exit 1
+            fi
             sed -i "s/\"afm-core==.*\"/\"afm-core==$NEW_CORE_VERSION\"/" packages/afm-cli/pyproject.toml
           elif [ "$PACKAGE" = "afm-langchain" ]; then
             uv version --bump patch --package afm-langchain --frozen
