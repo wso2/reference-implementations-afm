@@ -1,6 +1,6 @@
 # AFM Python Interpreter
 
-A reference implementation of an interpreter for [Agent-Flavored Markdown (AFM)](https://github.com/wso2/agent-flavored-markdown) files. Built with a modular, plugin-based architecture that supports multiple execution backends, with LangChain provided as the reference implementation.
+The AFM Python Interpreter is the shared runtime for Python-based [Agent-Flavored Markdown (AFM)](https://github.com/wso2/agent-flavored-markdown) implementations. It provides a modular, plugin-based architecture that supports multiple execution backends, with LangChain provided as the reference backend.
 
 ## Features
 
@@ -21,11 +21,18 @@ A reference implementation of an interpreter for [Agent-Flavored Markdown (AFM)]
 
 ## Quick Start
 
-```bash
-# Set your API Key
-export OPENAI_API_KEY="your-api-key-here"
+### Via pip
 
-# Run with an AFM file using uv
+```bash
+pip install afm-cli
+export OPENAI_API_KEY="your-api-key-here"
+afm run path/to/agent.afm.md
+```
+
+### Via uv (development)
+
+```bash
+export OPENAI_API_KEY="your-api-key-here"
 uv run afm path/to/agent.afm.md
 ```
 
@@ -38,15 +45,17 @@ Configuration via environment variables or CLI options:
 
 ## Running with Docker
 
-```bash
-# Build the image
-docker build -t afm-langchain-interpreter .
+The Docker image bundles the LangChain execution backend.
 
-# Run with an AFM file mounted and API key
+```bash
+# Using the pre-built image
 docker run -v $(pwd)/path/to/agent.afm.md:/app/agent.afm.md \
   -e OPENAI_API_KEY=$OPENAI_API_KEY \
   -p 8000:8000 \
-  afm-langchain-interpreter afm /app/agent.afm.md
+  ghcr.io/wso2/afm-langchain-interpreter:latest run /app/agent.afm.md
+
+# Or build locally
+docker build -t afm-langchain-interpreter .
 ```
 
 ## Testing

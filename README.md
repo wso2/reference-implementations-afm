@@ -4,23 +4,34 @@ Reference implementations for [Agent-Flavored Markdown (AFM)](https://wso2.githu
 
 ## Implementations
 
-| Implementation | Language/Framework | Status |
-|----------------|-------------------|--------|
-| [ballerina-interpreter](./ballerina-interpreter) | Ballerina | Active |
-| [langchain-interpreter](./python-interpreter) | Python/LangChain | Active |
+### Ballerina
+
+A Ballerina-based AFM interpreter.
+
+- **Source:** [`ballerina-interpreter/`](./ballerina-interpreter/)
+- **Docker:** `ghcr.io/wso2/afm-ballerina-interpreter`
+- **[Getting Started →](./ballerina-interpreter/)**
+
+### LangChain
+
+A Python-based AFM interpreter using LangChain for agent execution.
+
+- **Source:** [`python-interpreter/packages/afm-langchain`](./python-interpreter/packages/afm-langchain/)
+- **PyPI:** [`afm-langchain`](https://pypi.org/project/afm-langchain/)
+- **Docker:** `ghcr.io/wso2/afm-langchain-interpreter`
+- **[Getting Started →](./python-interpreter/)**
+
+> [!NOTE]
+> Python-based implementations share a common runtime and CLI ([`afm-core`](./python-interpreter/packages/afm-core/)) that make it easy to switch between backends. LangChain is currently the supported backend; support for additional frameworks is planned.
 
 ## Repository Structure
 
 ```
 reference-implementations-afm/
-├── ballerina-interpreter/    # Ballerina-based AFM interpreter
-├── python-interpreter/       # LangChain-based AFM interpreter
-└── .github/workflows/        # CI/CD (path-filtered per implementation)
+├── ballerina-interpreter/   # Ballerina-based AFM interpreter
+├── python-interpreter/      # Python-based AFM interpreters (plugin-based)
+└── .github/workflows/       # CI/CD
 ```
-
-## Getting Started
-
-Each implementation has its own README with setup and usage instructions. See the implementation directories for details.
 
 ## Contributing
 
@@ -37,7 +48,7 @@ To add an interpreter in a new language or framework:
 
 ### Adding a New Python Execution Backend (Plugin)
 
-The Python interpreter uses a plugin-based architecture. New execution backends (e.g., for LlamaIndex, CrewAI or other agent frameworks) should be contributed as packages inside [`python-interpreter/packages/`](./python-interpreter/packages/).
+The Python interpreter uses a plugin-based architecture. New execution backends should be contributed as packages inside [`python-interpreter/packages/`](./python-interpreter/packages/).
 
 To add a new Python backend:
 
