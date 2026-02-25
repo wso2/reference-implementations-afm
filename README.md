@@ -9,7 +9,7 @@ Reference implementations for [Agent-Flavored Markdown (AFM)](https://wso2.githu
 A Ballerina-based AFM interpreter.
 
 - **Source:** [`ballerina-interpreter/`](./ballerina-interpreter/)
-- **Docker:** `ghcr.io/wso2/afm-ballerina-interpreter`
+- **Docker Image:** `ghcr.io/wso2/afm-ballerina-interpreter`
 - **[Getting Started →](./ballerina-interpreter/)**
 
 ### LangChain
@@ -18,7 +18,7 @@ A Python-based AFM interpreter using LangChain for agent execution.
 
 - **Source:** [`python-interpreter/packages/afm-langchain`](./python-interpreter/packages/afm-langchain/)
 - **PyPI:** [`afm-langchain`](https://pypi.org/project/afm-langchain/)
-- **Docker:** `ghcr.io/wso2/afm-langchain-interpreter`
+- **Docker Image:** `ghcr.io/wso2/afm-langchain-interpreter`
 - **[Getting Started →](./python-interpreter/)**
 
 > [!NOTE]
