@@ -23,6 +23,11 @@ on:
         description: "Human-readable image title for OCI labels (e.g., AFM Ballerina Interpreter)"
         required: true
         type: string
+      build_slim:
+        description: "Whether to build and push a slim image variant"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   docker:
@@ -85,6 +90,7 @@ jobs:
             index:org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push slim image
+        if: ${{ inputs.build_slim }}
         uses: docker/build-push-action@v5
         with:
           context: ${{ inputs.context }}
@@ -120,7 +126,7 @@ jobs:
           category: "trivy-full"
 
       - name: Scan slim Docker image for vulnerabilities
-        if: always()
+        if: ${{ always() && inputs.build_slim }}
         uses: aquasecurity/trivy-action@0.34.0
         with:
           image-ref: ${{ steps.docker-tags.outputs.FULL_IMAGE }}:v${{ inputs.version }}-slim
@@ -132,7 +138,7 @@ jobs:
 
       - name: Upload slim image Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: ${{ always() && inputs.build_slim }}
         with:
           sarif_file: "trivy-results-slim.sarif"
           category: "trivy-slim"
