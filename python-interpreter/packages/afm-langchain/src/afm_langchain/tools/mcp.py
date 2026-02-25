@@ -19,10 +19,6 @@ from __future__ import annotations
 import logging
 
 import httpx
-from langchain_core.tools import BaseTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.sessions import StdioConnection, StreamableHttpConnection
-
 from afm.exceptions import (
     MCPAuthenticationError,
     MCPConnectionError,
@@ -36,6 +32,9 @@ from afm.models import (
     StdioTransport,
     ToolFilter,
 )
+from langchain_core.tools import BaseTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.sessions import StdioConnection, StreamableHttpConnection
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +163,6 @@ class MCPClient:
             return config
 
         else:
-            # StdioTransport
             config: StdioConnection = {
                 "transport": "stdio",
                 "command": self.transport.command,

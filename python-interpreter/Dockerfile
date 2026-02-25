@@ -35,7 +35,6 @@ ARG VARIANT=full
 
 RUN if [ "$VARIANT" = "full" ]; then \
         apk add --no-cache nodejs npm git && \
-        echo "Full variant: nodejs, npm, git installed"; \
     fi
 
 # Install uv and uvx for Python-based MCP server support (full variant only)
