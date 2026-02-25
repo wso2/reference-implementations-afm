@@ -102,18 +102,37 @@ jobs:
             index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
             index:org.opencontainers.image.licenses=Apache-2.0
 
-      - name: Scan Docker image for vulnerabilities
+      - name: Scan full Docker image for vulnerabilities
         uses: aquasecurity/trivy-action@0.34.0
         with:
           image-ref: ${{ steps.docker-tags.outputs.FULL_IMAGE }}:v${{ inputs.version }}
           format: "sarif"
-          output: "trivy-results.sarif"
+          output: "trivy-results-full.sarif"
           severity: "CRITICAL,HIGH"
           limit-severities-for-sarif: true
           exit-code: "1"
 
-      - name: Upload Trivy scan results to GitHub Security tab
+      - name: Upload full image Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: "trivy-results.sarif"
+          sarif_file: "trivy-results-full.sarif"
+          category: "trivy-full"
+
+      - name: Scan slim Docker image for vulnerabilities
+        if: always()
+        uses: aquasecurity/trivy-action@0.34.0
+        with:
+          image-ref: ${{ steps.docker-tags.outputs.FULL_IMAGE }}:v${{ inputs.version }}-slim
+          format: "sarif"
+          output: "trivy-results-slim.sarif"
+          severity: "CRITICAL,HIGH"
+          limit-severities-for-sarif: true
+          exit-code: "1"
+
+      - name: Upload slim image Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: "trivy-results-slim.sarif"
+          category: "trivy-slim"
