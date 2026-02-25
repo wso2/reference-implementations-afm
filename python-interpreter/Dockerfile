@@ -33,16 +33,23 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.13-alpine
 ARG VARIANT=full
 
+# Validate VARIANT early so typos fail loudly instead of silently producing a slim build.
+RUN if [ "$VARIANT" != "full" ] && [ "$VARIANT" != "slim" ]; then \
+        echo "ERROR: VARIANT must be 'full' or 'slim', got: '$VARIANT'" >&2; \
+        exit 1; \
+    fi
+
 RUN if [ "$VARIANT" = "full" ]; then \
         apk add --no-cache nodejs npm git; \
     fi
 
 # Install uv and uvx for Python-based MCP server support (full variant only)
-COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /uv-bins/
-RUN if [ "$VARIANT" = "full" ]; then \
-        mv /uv-bins/uv /uv-bins/uvx /bin/; \
-    fi && \
-    rm -rf /uv-bins
+# Use bind mounts so the uv binaries are never written into any image layer for slim builds.
+RUN --mount=type=bind,from=ghcr.io/astral-sh/uv:0.10.0,source=/uv,target=/tmp/uv \
+    --mount=type=bind,from=ghcr.io/astral-sh/uv:0.10.0,source=/uvx,target=/tmp/uvx \
+    if [ "$VARIANT" = "full" ]; then \
+        cp /tmp/uv /tmp/uvx /bin/; \
+    fi
 
 # Set working directory
 WORKDIR /app

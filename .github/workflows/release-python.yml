@@ -198,7 +198,7 @@ jobs:
       !cancelled()
       && needs.validate.result == 'success'
       && (needs.pypi-publish.result == 'success'
-        || needs.pypi-publish.result == 'skipped')
+        || (needs.pypi-publish.result == 'skipped' && inputs.skip_pypi))
       && (needs.docker.result == 'success'
         || needs.docker.result == 'skipped')
     uses: ./.github/workflows/release-finalize.yml
@@ -214,7 +214,7 @@ jobs:
 
   bump-version:
     needs: [validate, finalize]
-    if: false  # Disabled: direct push blocked by branch protection
+    if: false # Disabled: direct push blocked by branch protection
     runs-on: ubuntu-latest
     permissions:
       contents: write
