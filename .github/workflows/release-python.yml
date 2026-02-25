@@ -15,6 +15,11 @@ on:
         required: false
         default: "main"
         type: string
+      skip_pypi:
+        description: "Skip PyPI publishing"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: release-python-interpreter
@@ -122,6 +127,7 @@ jobs:
     needs: [validate, test, docker]
     if: >-
       !cancelled()
+      && !inputs.skip_pypi
       && needs.validate.result == 'success'
       && needs.test.result == 'success'
       && (needs.docker.result == 'success'
@@ -191,7 +197,8 @@ jobs:
     if: >-
       !cancelled()
       && needs.validate.result == 'success'
-      && needs.pypi-publish.result == 'success'
+      && (needs.pypi-publish.result == 'success'
+        || needs.pypi-publish.result == 'skipped')
       && (needs.docker.result == 'success'
         || needs.docker.result == 'skipped')
     uses: ./.github/workflows/release-finalize.yml
