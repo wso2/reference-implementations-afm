@@ -123,7 +123,7 @@ jobs:
         if: always()
         with:
           sarif_file: "trivy-results-full.sarif"
-          category: "trivy-full"
+          category: "trivy-full-${{ inputs.image_name }}"
 
       - name: Scan slim Docker image for vulnerabilities
         if: ${{ always() && inputs.build_slim }}
@@ -141,4 +141,4 @@ jobs:
         if: ${{ always() && inputs.build_slim }}
         with:
           sarif_file: "trivy-results-slim.sarif"
-          category: "trivy-slim"
+          category: "trivy-slim-${{ inputs.image_name }}"
