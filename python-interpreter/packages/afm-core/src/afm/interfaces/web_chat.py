@@ -82,7 +82,7 @@ def create_webchat_router(
     path: str = "/chat",
 ) -> APIRouter:
     router = APIRouter()
-    ui_path = f"{path}/ui"
+    ui_path = "/chat/ui"
     raw_icon_url = agent.afm.metadata.icon_url
     icon_url = "" if raw_icon_url is None else html.escape(str(raw_icon_url))
     icon_style = "" if icon_url else "display:none;"

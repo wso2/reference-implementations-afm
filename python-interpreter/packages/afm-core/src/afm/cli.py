@@ -59,7 +59,7 @@ def create_unified_app(
     webhook_interface: WebhookInterface | None = None,
     startup_event: asyncio.Event | None = None,
     host: str = "0.0.0.0",
-    port: int = 8000,
+    port: int = 8085,
 ) -> FastAPI:
     if webchat_interface is None and webhook_interface is None:
         raise ValueError("At least one HTTP interface must be provided")
@@ -348,9 +348,9 @@ def validate(file: Path) -> None:
 @click.option(
     "--port",
     "-p",
-    default=8000,
+    default=8085,
     type=int,
-    help="HTTP port for web interfaces (default: 8000)",
+    help="HTTP port for web interfaces (default: 8085)",
 )
 @click.option(
     "--host",

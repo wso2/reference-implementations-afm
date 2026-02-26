@@ -41,7 +41,7 @@ uv run afm path/to/agent.afm.md
 Configuration via environment variables or CLI options:
 
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. (Required based on provider)
-- HTTP port can be set via `-p` or `--port` (default: 8000)
+- HTTP port can be set via `-p` or `--port` (default: 8085)
 
 ## Running with Docker
 
@@ -51,7 +51,7 @@ The Docker image bundles the LangChain execution backend.
 # Using the pre-built image
 docker run -v $(pwd)/path/to/agent.afm.md:/app/agent.afm.md \
   -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -p 8000:8000 \
+  -p 8085:8085 \
   ghcr.io/wso2/afm-langchain-interpreter:latest run /app/agent.afm.md
 
 # Or build locally

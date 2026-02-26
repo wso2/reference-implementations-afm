@@ -66,7 +66,7 @@ ENV PYTHONUNBUFFERED=1
 ENV AFM_RUNTIME=docker
 
 # Expose default port for web interfaces
-EXPOSE 8000
+EXPOSE 8085
 
 # Entry point to run the afm CLI
 ENTRYPOINT ["afm"]

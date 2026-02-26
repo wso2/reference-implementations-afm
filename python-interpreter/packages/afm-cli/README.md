@@ -96,7 +96,7 @@ afm framework list
 
 ### CLI Options
 
-- `-p, --port PORT` - Port for web interfaces (default: 8000)
+- `-p, --port PORT` - Port for web interfaces (default: 8085)
 - `--help` - Show help message
 
 ## Features
@@ -126,7 +126,7 @@ docker build -t afm-langchain-interpreter .
 # Run with an AFM file mounted
 docker run -v $(pwd)/agent.afm.md:/app/agent.afm.md \
   -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -p 8000:8000 \
+  -p 8085:8085 \
   afm-langchain-interpreter afm /app/agent.afm.md
 ```
 
