@@ -61,15 +61,15 @@ jobs:
         run: |
           # GHCR requires lowercase repository names
           OWNER_LOWER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          FULL_IMAGE="ghcr.io/$OWNER_LOWER/$IMAGE_NAME"
-          TAGS_FULL="$FULL_IMAGE:v$VERSION"
-          [ "$UPDATE_LATEST" = "true" ] && TAGS_FULL="$TAGS_FULL,$FULL_IMAGE:latest"
+          BASE_IMAGE="ghcr.io/$OWNER_LOWER/$IMAGE_NAME"
+          TAGS_FULL="$BASE_IMAGE:v$VERSION"
+          [ "$UPDATE_LATEST" = "true" ] && TAGS_FULL="$TAGS_FULL,$BASE_IMAGE:latest"
           echo "TAGS_FULL=$TAGS_FULL" >> $GITHUB_OUTPUT
 
-          TAGS_SLIM="$FULL_IMAGE:v$VERSION-slim"
-          [ "$UPDATE_LATEST" = "true" ] && TAGS_SLIM="$TAGS_SLIM,$FULL_IMAGE:slim"
+          TAGS_SLIM="$BASE_IMAGE:v$VERSION-slim"
+          [ "$UPDATE_LATEST" = "true" ] && TAGS_SLIM="$TAGS_SLIM,$BASE_IMAGE:slim"
           echo "TAGS_SLIM=$TAGS_SLIM" >> $GITHUB_OUTPUT
-          echo "FULL_IMAGE=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "BASE_IMAGE=$BASE_IMAGE" >> $GITHUB_OUTPUT
 
       - name: Build and push full image
         uses: docker/build-push-action@v5
@@ -111,7 +111,7 @@ jobs:
       - name: Scan full Docker image for vulnerabilities
         uses: aquasecurity/trivy-action@0.34.0
         with:
-          image-ref: ${{ steps.docker-tags.outputs.FULL_IMAGE }}:v${{ inputs.version }}
+          image-ref: ${{ steps.docker-tags.outputs.BASE_IMAGE }}:v${{ inputs.version }}
           format: "sarif"
           output: "trivy-results-full.sarif"
           severity: "CRITICAL,HIGH"
@@ -129,7 +129,7 @@ jobs:
         if: ${{ always() && inputs.build_slim }}
         uses: aquasecurity/trivy-action@0.34.0
         with:
-          image-ref: ${{ steps.docker-tags.outputs.FULL_IMAGE }}:v${{ inputs.version }}-slim
+          image-ref: ${{ steps.docker-tags.outputs.BASE_IMAGE }}:v${{ inputs.version }}-slim
           format: "sarif"
           output: "trivy-results-slim.sarif"
           severity: "CRITICAL,HIGH"

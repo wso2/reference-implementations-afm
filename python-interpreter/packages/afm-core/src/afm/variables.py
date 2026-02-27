@@ -150,7 +150,7 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
             errored_fields.append("model.provider")
         if model.url and contains_http_variable(model.url):
             errored_fields.append("model.url")
-        if _authentication_contains_http_variable(model.authentication):
+        if _auth_contains_http_variable(model.authentication):
             errored_fields.append("model.authentication")
 
     # Check interfaces
@@ -179,13 +179,10 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
         for server in metadata.tools.mcp:
             if contains_http_variable(server.name):
                 errored_fields.append("tools.mcp.name")
-            # HTTP transport fields: url and authentication
             if isinstance(server.transport, HttpTransport):
                 if contains_http_variable(server.transport.url):
                     errored_fields.append("tools.mcp.transport.url")
-                if _authentication_contains_http_variable(
-                    server.transport.authentication
-                ):
+                if _auth_contains_http_variable(server.transport.authentication):
                     errored_fields.append("tools.mcp.transport.authentication")
             if _tool_filter_contains_http_variable(server.tool_filter):
                 errored_fields.append("tools.mcp.tool_filter")
@@ -198,7 +195,7 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
         )
 
 
-def _authentication_contains_http_variable(
+def _auth_contains_http_variable(
     auth: ClientAuthentication | None,
 ) -> bool:
     if auth is None:
@@ -255,7 +252,7 @@ def _subscription_contains_http_variable(subscription: Subscription) -> bool:
         return True
     if subscription.secret and contains_http_variable(subscription.secret):
         return True
-    if _authentication_contains_http_variable(subscription.authentication):
+    if _auth_contains_http_variable(subscription.authentication):
         return True
     return False
 
