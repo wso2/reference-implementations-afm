@@ -135,7 +135,7 @@ tools:
         args:
           - "-y"
           - "@modelcontextprotocol/server-filesystem"
-          - "/path/to/allowed/directory"
+          - "${env:ALLOWED_DIRECTORY}"
       tool_filter:
         deny:
           - "write_file"
