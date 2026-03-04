@@ -82,10 +82,14 @@ interfaces:
 # ============================================================================
 tools:
   mcp:
+    # --------------------------------------------------------------------------
+    # HTTP Transport Examples
+    # --------------------------------------------------------------------------
+
     # MCP Server with bearer authentication
     - name: "github_mcp_server"
       transport:
-        type: "http"                     # Only "http" is currently supported
+        type: "http"
         url: "${env:GITHUB_MCP_URL}"
         authentication:
           type: "bearer"
@@ -116,6 +120,39 @@ tools:
       transport:
         type: "http"
         url: "https://public-mcp.example.com"
+
+    # --------------------------------------------------------------------------
+    # stdio Transport Examples
+    # --------------------------------------------------------------------------
+
+    # MCP Server via npx package
+    - name: "filesystem_server"
+      transport:
+        type: "stdio"
+        command: "npx"
+        args:
+          - "-y"
+          - "@modelcontextprotocol/server-filesystem"
+          - "/path/to/allowed/directory"
+      tool_filter:
+        deny:
+          - "write_file"
+          - "edit_file"
+
+    # MCP Server via Python script with environment variables
+    - name: "local_db_tool"
+      transport:
+        type: "stdio"
+        command: "python"
+        args:
+          - "server.py"
+        env:
+          DB_PATH: "./data.db"
+          API_KEY: "${env:LOCAL_DB_API_KEY}"
+      tool_filter:
+        allow:
+          - "query"
+          - "search"
 ---
 
 # Role
