@@ -53,7 +53,7 @@ function createAgent(AFMRecord afmRecord, string afmFileDir) returns ai:Agent|er
         effectiveInstructions = instructions;
         toolKits = mcpToolKits;
     } else {
-        effectiveInstructions = string `${instructions}\n${catalog[0]}`;
+        effectiveInstructions = string `${instructions}\n\n${catalog[0]}`;
         toolKits = [...mcpToolKits, catalog[1]];
     }
 

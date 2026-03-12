@@ -15,7 +15,6 @@
 // under the License.
 
 import ballerina/ai;
-import ballerina/data.yaml;
 import ballerina/file;
 import ballerina/io;
 import ballerina/log;
@@ -102,25 +101,8 @@ function parseSkillMd(string skillMdPath, string basePath) returns SkillInfo|err
 }
 
 function parseSkillMdContent(string content, string basePath, string[] resources) returns SkillInfo|error {
-    string[] lines = splitLines(content);
-    int length = lines.length();
-
-    if length == 0 || lines[0].trim() != FRONTMATTER_DELIMITER {
-        return error("SKILL.md must start with YAML frontmatter (---)");
-    }
-
-    int i = 1;
-    while i < length && lines[i].trim() != FRONTMATTER_DELIMITER {
-        i += 1;
-    }
-
-    if i >= length {
-        return error("SKILL.md frontmatter is not closed (missing ---)");
-    }
-
-    string yamlContent = string:'join("\n", ...lines.slice(1, i));
-    map<json> intermediate = check yaml:parseString(yamlContent);
-    SkillFrontmatter frontmatter = check intermediate.fromJsonWithType();
+    [map<json>, string] [frontmatterMap, body] = check extractFrontmatter(content);
+    SkillFrontmatter frontmatter = check frontmatterMap.fromJsonWithType();
 
     if frontmatter.name.trim() == "" {
         return error("SKILL.md 'name' field is required and must not be empty");
@@ -129,12 +111,10 @@ function parseSkillMdContent(string content, string basePath, string[] resources
         return error("SKILL.md 'description' field is required and must not be empty");
     }
 
-    string body = string:'join("\n", ...lines.slice(i + 1)).trim();
-
     return {
         name: frontmatter.name,
         description: frontmatter.description,
-        body,
+        body: body.trim(),
         basePath,
         resources
     };
@@ -145,25 +125,17 @@ function listLocalResources(string basePath) returns string[] {
     foreach string dir in [REFERENCES_DIR, ASSETS_DIR] {
         do {
             string dirPath = check file:joinPath(basePath, dir);
-            if !check file:test(dirPath, file:EXISTS) {
-                continue;
-            }
             file:MetaData[] entries = check file:readDir(dirPath);
             foreach file:MetaData entry in entries {
                 if !entry.dir {
-                    resources.push(check file:joinPath(dir, getFileName(entry.absPath)));
+                    resources.push(check file:joinPath(dir, check file:basename(entry.absPath)));
                 }
             }
         } on fail error e {
-            log:printWarn(string `Failed to read directory ${dir}`, 'error = e);
+            log:printDebug(string `Failed to read directory ${dir}`, 'error = e);
         }
     }
     return resources;
-}
-
-function getFileName(string path) returns string {
-    int? lastSlash = path.lastIndexOf("/") ?: path.lastIndexOf("\\");
-    return lastSlash is int ? path.substring(lastSlash + 1) : path;
 }
 
 function buildSkillCatalog(map<SkillInfo> skills) returns string? {
@@ -205,26 +177,27 @@ isolated class SkillsToolKit {
     # + return - the skill's full instructions and list of available resource files
     @ai:AgentTool
     isolated function activate_skill(string name) returns string|error {
-        lock {
-            if !self.skills.hasKey(name) {
-                return error(string `Skill '${name}' not found. Available skills: ${
-                    string:'join(", ", ...self.skills.keys())}`);
-            }
+        if !self.skills.hasKey(name) {
+            return error(string `Skill '${name}' not found. Available skills: ${
+                string:'join(", ", ...self.skills.keys())}`);
+        }
 
-            SkillInfo info = self.skills.get(name);
-            return xml `
-<skill_content name="${info.name}">
-${info.body}
-${info.resources.length() > 0 ?
-    xml `
+        SkillInfo info = self.skills.get(name);
+        // Using string templates instead of XML literals to avoid escaping skill body content
+        // (e.g., angle brackets in code examples would be escaped to &lt;/&gt; by XML)
+        string resourcesSection = info.resources.length() > 0 ?
+            string `
 <skill_resources>
-${from string res in info.resources select xml `<file>${res}</file>`}
+${string:'join("\n", ...from string res in info.resources select string `<file>${res}</file>`)}
 </skill_resources>
 Use the read_skill_resource tool to read any of these files if needed.
-` : xml ``}
+` : "";
+        return string `
+<skill_content name="${info.name}">
+${info.body}
+${resourcesSection}
 </skill_content>
-`.toString();
-        }
+`;
     }
 
     # Reads a resource file from a skill's references/ or assets/ directory.
@@ -235,29 +208,27 @@ Use the read_skill_resource tool to read any of these files if needed.
     # + return - the content of the resource file
     @ai:AgentTool
     isolated function read_skill_resource(string skillName, string resourcePath) returns string|error {
-        lock {
-            if !self.skills.hasKey(skillName) {
-                return error(string `Skill '${skillName}' not found`);
-            }
-
-            if !resourcePath.startsWith(string `${REFERENCES_DIR}/`) && 
-                    !resourcePath.startsWith(string `${ASSETS_DIR}/`) {
-                return error(string `Resource path must start with '${REFERENCES_DIR}/' or '${ASSETS_DIR}/'`);
-            }
-
-            if resourcePath.indexOf("../") != () || resourcePath.indexOf("..\\") != () {
-                return error("Path traversal is not allowed in resource paths");
-            }
-
-            SkillInfo info = self.skills.get(skillName);
-            if info.resources.indexOf(resourcePath) is () {
-                return error(string `Resource '${resourcePath}' not found in skill '${
-                    skillName}'. Available: ${string:'join(", ", ...info.resources)}`);
-            }
-
-            string fullPath = check file:joinPath(info.basePath, resourcePath);
-            return io:fileReadString(fullPath);
+        if !self.skills.hasKey(skillName) {
+            return error(string `Skill '${skillName}' not found`);
         }
+
+        string[] segments = check file:splitPath(resourcePath);
+        if segments.length() < 2 || (segments[0] != REFERENCES_DIR && segments[0] != ASSETS_DIR) {
+            return error(string `Resource path must start with '${REFERENCES_DIR}/' or '${ASSETS_DIR}/'`);
+        }
+
+        if resourcePath.indexOf("..") != () {
+            return error("Path traversal is not allowed in resource paths");
+        }
+
+        SkillInfo info = self.skills.get(skillName);
+        if info.resources.indexOf(resourcePath) is () {
+            return error(string `Resource '${resourcePath}' not found in skill '${
+                skillName}'. Available: ${string:'join(", ", ...info.resources)}`);
+        }
+
+        string fullPath = check file:joinPath(info.basePath, resourcePath);
+        return io:fileReadString(fullPath);
     }
 
     public isolated function getTools() returns ai:ToolConfig[] =>
