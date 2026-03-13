@@ -61,7 +61,6 @@ function discoverSkills(SkillSource[] sources, string afmFileDir) returns map<Sk
 }
 
 function discoverLocalSkills(string path) returns map<SkillInfo>|error {
-    map<SkillInfo> skills = {};
     string absPath = check file:getAbsolutePath(path);
 
     string skillMdPath = check file:joinPath(absPath, SKILL_FILE);
@@ -70,6 +69,7 @@ function discoverLocalSkills(string path) returns map<SkillInfo>|error {
         return {[info.name]: info};
     }
 
+    map<SkillInfo> skills = {};
     file:MetaData[] entries = check file:readDir(absPath);
     foreach file:MetaData entry in entries {
         if !entry.dir {
@@ -217,7 +217,7 @@ ${resourcesSection}
             return error(string `Resource path must start with '${REFERENCES_DIR}/' or '${ASSETS_DIR}/'`);
         }
 
-        if resourcePath.indexOf("..") != () {
+        if segments.indexOf("..") != () {
             return error("Path traversal is not allowed in resource paths");
         }
 
