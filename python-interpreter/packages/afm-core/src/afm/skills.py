@@ -18,13 +18,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from xml.sax.saxutils import escape as xml_escape
-
-from .models import AgentMetadata, SkillInfo, SkillSource
+from .models import AgentMetadata, LocalSkillSource, SkillInfo, SkillSource
 from .parser import extract_raw_frontmatter
 
 logger = logging.getLogger(__name__)
-
 SKILL_FILE = "SKILL.md"
 REFERENCES_DIR = "references"
 ASSETS_DIR = "assets"
@@ -64,12 +61,15 @@ def discover_skills(
     normalized_afm_dir = afm_file_dir.resolve()
 
     for source in sources:
+        if not isinstance(source, LocalSkillSource):
+            logger.warning("Unsupported skill source type: %s", type(source).__name__)
+            continue
         if Path(source.path).is_absolute():
             raise ValueError(
                 f"Skill source path must be relative, but got: {source.path}"
             )
         resolved_path = (afm_file_dir / source.path).resolve()
-        if not str(resolved_path).startswith(str(normalized_afm_dir)):
+        if not resolved_path.is_relative_to(normalized_afm_dir):
             raise ValueError(
                 f"Skill source path '{source.path}' resolves outside the AFM file directory"
             )
@@ -186,8 +186,8 @@ def build_skill_catalog(skills: dict[str, SkillInfo]) -> str | None:
 
     skill_entries = "\n".join(
         f"    <skill>\n"
-        f"        <name>{xml_escape(info.name)}</name>\n"
-        f"        <description>{xml_escape(info.description)}</description>\n"
+        f"        <name>{info.name}</name>\n"
+        f"        <description>{info.description}</description>\n"
         f"    </skill>"
         for info in skills.values()
     )

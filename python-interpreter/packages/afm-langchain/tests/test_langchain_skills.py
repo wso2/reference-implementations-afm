@@ -75,7 +75,7 @@ class TestActivateSkillTool:
     @pytest.mark.asyncio
     async def test_arun(self, multi_skills: dict[str, SkillInfo]) -> None:
         tool = ActivateSkillTool(skills=multi_skills)
-        result = await tool._arun(name="security-review")
+        result = await tool.ainvoke({"name": "security-review"})
         assert "OWASP" in result
 
 

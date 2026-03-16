@@ -58,9 +58,6 @@ class ActivateSkillTool(BaseTool):
         except ValueError as e:
             return f"Error: {e}"
 
-    async def _arun(self, name: str, **kwargs: Any) -> str:
-        return self._run(name)
-
 
 class ReadSkillResourceTool(BaseTool):
     """Reads a resource file from a skill's references/ or assets/ directory."""
@@ -81,8 +78,3 @@ class ReadSkillResourceTool(BaseTool):
             return read_skill_resource(skill_name, resource_path, self.skills)
         except ValueError as e:
             return f"Error: {e}"
-
-    async def _arun(
-        self, skill_name: str, resource_path: str, **kwargs: Any
-    ) -> str:
-        return self._run(skill_name, resource_path)

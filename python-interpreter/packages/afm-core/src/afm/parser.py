@@ -92,38 +92,24 @@ def parse_afm_file(file_path: str | Path, *, resolve_env: bool = True) -> AFMRec
 
 
 def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
-    if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
-        # No frontmatter - return empty metadata
+    content = "\n".join(lines)
+    try:
+        raw, body = extract_raw_frontmatter(content)
+    except ValueError as e:
+        raise AFMParseError(str(e))
+
+    if raw is None:
         return AgentMetadata(), 0
 
-    end_index = None
-    for i in range(1, len(lines)):
-        if lines[i].strip() == FRONTMATTER_DELIMITER:
-            end_index = i
-            break
+    # Calculate the body start line index
+    # The frontmatter occupies: opening --- + yaml lines + closing ---
+    body_start = len(lines) - len(body.splitlines()) if body else len(lines)
 
-    if end_index is None:
-        raise AFMParseError("Unclosed frontmatter - missing closing '---'")
-
-    yaml_lines = lines[1:end_index]
-    yaml_content = "\n".join(yaml_lines)
-
-    if not yaml_content.strip():
-        return AgentMetadata(), end_index + 1
+    if not raw:
+        return AgentMetadata(), body_start
 
     try:
-        yaml_data = yaml.safe_load(yaml_content)
-    except yaml.YAMLError as e:
-        raise AFMParseError(f"Invalid YAML in frontmatter: {e}")
-
-    if yaml_data is None:
-        return AgentMetadata(), end_index + 1
-
-    if not isinstance(yaml_data, dict):
-        raise AFMParseError("Frontmatter must be a YAML mapping/object")
-
-    try:
-        metadata = AgentMetadata.model_validate(yaml_data)
+        metadata = AgentMetadata.model_validate(raw)
     except ValidationError as e:
         errors = e.errors()
         if errors:
@@ -133,7 +119,7 @@ def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
             raise AFMValidationError(msg, field=field)
         raise AFMValidationError(str(e))
 
-    return metadata, end_index + 1
+    return metadata, body_start
 
 
 def _extract_role_and_instructions(

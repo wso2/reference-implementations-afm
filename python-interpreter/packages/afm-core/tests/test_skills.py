@@ -212,6 +212,20 @@ class TestDiscoverSkills:
         with pytest.raises(ValueError, match="resolves outside"):
             discover_skills(sources, FIXTURES_DIR)
 
+    def test_sibling_prefix_path_raises(self, tmp_path: Path) -> None:
+        """A sibling directory sharing a name prefix must not pass validation.
+
+        E.g. if afm_dir is '/a/skills', a path resolving to '/a/skills-evil'
+        should be rejected even though it starts with the same string prefix.
+        """
+        afm_dir = tmp_path / "project"
+        sibling = tmp_path / "project-evil"
+        afm_dir.mkdir()
+        sibling.mkdir()
+        sources = [LocalSkillSource(path="../project-evil")]
+        with pytest.raises(ValueError, match="resolves outside"):
+            discover_skills(sources, afm_dir)
+
 
 # ---------------------------------------------------------------------------
 # build_skill_catalog
