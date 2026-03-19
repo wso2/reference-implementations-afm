@@ -23,10 +23,10 @@ import ballerina/http;
 import ballerinax/ai.anthropic;
 import ballerinax/ai.openai;
 
-function createAgent(AFMRecord afmRecord) returns ai:Agent|error {
+function createAgent(AFMRecord afmRecord, string afmFileDir) returns ai:Agent|error {
     AFMRecord {metadata, role, instructions} = afmRecord;
 
-    ai:McpToolKit[] mcpToolkits = [];
+    ai:McpToolKit[] mcpToolKits = [];
     MCPServer[]? mcpServers = metadata?.tools?.mcp;
     if mcpServers is MCPServer[] {
         foreach MCPServer mcpConn in mcpServers {
@@ -36,7 +36,7 @@ function createAgent(AFMRecord afmRecord) returns ai:Agent|error {
             }
 
             string[]? filteredTools = getFilteredTools(mcpConn.tool_filter);
-            mcpToolkits.push(check new ai:McpToolKit(
+            mcpToolKits.push(check new ai:McpToolKit(
                 transport.url,
                 permittedTools = filteredTools,
                 auth = check mapToHttpClientAuth(transport.authentication)
@@ -44,14 +44,27 @@ function createAgent(AFMRecord afmRecord) returns ai:Agent|error {
         }
     }
 
+    [string, SkillsToolKit]? catalog = check extractSkillCatalog(metadata, afmFileDir);
+
+    string effectiveInstructions;
+    (ai:BaseToolKit)[] toolKits;
+
+    if catalog is () {
+        effectiveInstructions = instructions;
+        toolKits = mcpToolKits;
+    } else {
+        effectiveInstructions = string `${instructions}\n\n${catalog[0]}`;
+        toolKits = [...mcpToolKits, catalog[1]];
+    }
+
     ai:ModelProvider model = check getModel(metadata?.model);
-    
+
     ai:AgentConfiguration agentConfig = {
         systemPrompt: {
-            role, 
-            instructions
+            role,
+            instructions: effectiveInstructions
         },
-        tools: mcpToolkits,
+        tools: toolKits,
         model
     };
     
@@ -85,9 +98,9 @@ function getModel(Model? model) returns ai:ModelProvider|error {
         return error("This implementation requires the 'provider' of the model to be specified");
     }
 
-    provider = provider.toLowerAscii();
+    string providerLower = provider.toLowerAscii();
 
-    if provider == "wso2" {
+    if providerLower == "wso2" {
         return new ai:Wso2ModelProvider(
             model.url ?: "https://dev-tools.wso2.com/ballerina-copilot/v2.0",
             check getToken(model.authentication)
@@ -99,7 +112,7 @@ function getModel(Model? model) returns ai:ModelProvider|error {
         return error("This implementation requires the 'name' of the model to be specified");
     }
 
-    match provider {
+    match providerLower {
         "openai" => {
             return new openai:ModelProvider(
                 check getApiKey(model.authentication),
@@ -115,12 +128,13 @@ function getModel(Model? model) returns ai:ModelProvider|error {
             );
         }
     }
-    return error(string `Model provider: ${<string>provider} not yet supported`);
+    return error(string `Model provider: ${provider} not yet supported`);
 }
 
 const DEFAULT_SESSION_ID = "sessionId";
 
-function runAgent(ai:Agent agent, json payload, map<json>? inputSchema = (), map<json>? outputSchema = (), string sessionId = DEFAULT_SESSION_ID) 
+function runAgent(ai:Agent agent, json payload, map<json>? inputSchema = (), 
+                  map<json>? outputSchema = (), string sessionId = DEFAULT_SESSION_ID) 
         returns json|InputError|AgentError {
     error? validateJsonSchemaResult = validateJsonSchema(inputSchema, payload);
     if validateJsonSchemaResult is error {
@@ -275,7 +289,7 @@ isolated function validateJsonSchema(map<json>? jsonSchemaVal, json sampleJson) 
         validator:JSONObject jsonObject = validator:newJSONObject7(sampleJson.toJsonString());
         error? validationResult = trap schema.validate(jsonObject);
         if validationResult is error {
-            return error("JSON validation failed: " + validationResult.message());
+            return error(string `JSON validation failed: ${validationResult.message()}`);
         }
         return (); 
     }

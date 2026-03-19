@@ -155,6 +155,13 @@ tools:
         allow:
           - "query"
           - "search"
+# ============================================================================
+# SKILLS - OPTIONAL (Agent Skills format: https://agentskills.io)
+# ============================================================================
+skills:
+  # Local skills directory (or a directory that may contain multiple skill subdirectories)
+  - type: "local"
+    path: "./skills"
 ---
 
 # Role

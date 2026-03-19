@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/file;
 import ballerina/http;
 import ballerina/io;
 import ballerina/log;
@@ -41,22 +42,22 @@ public function main(string? filePath = ()) returns error? {
         fileToUse = filePath;
     }
 
-
     string content = check io:fileReadString(fileToUse);
+    string afmFileDir = check file:parentPath(check file:getAbsolutePath(fileToUse));
 
     AFMRecord afm = check parseAfm(content);
-    check runAgentFromAFM(afm, port);    
+    check runAgentFromAFM(afm, port, afmFileDir);
 }
 
-function runAgentFromAFM(AFMRecord afm, int port) returns error? {
-    AgentMetadata metadata = afm.metadata;
+function runAgentFromAFM(AFMRecord afm, int port, string afmFileDir) returns error? {
+    AgentMetadata? metadata = afm?.metadata;
 
-    Interface[] agentInterfaces = metadata.interfaces ?: [<ConsoleChatInterface>{}];
+    Interface[] agentInterfaces = metadata?.interfaces ?: [<ConsoleChatInterface>{}];
 
     var [consoleChatInterface, webChatInterface, webhookInterface] = 
                         check validateAndExtractInterfaces(agentInterfaces);
 
-    ai:Agent agent = check createAgent(afm);
+    ai:Agent agent = check createAgent(afm, afmFileDir);
 
     // Start all service-based interfaces first (non-blocking)
     http:Listener? httpListener = ();
