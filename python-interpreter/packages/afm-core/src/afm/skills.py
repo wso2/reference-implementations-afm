@@ -251,6 +251,9 @@ def read_skill_resource(
             f"Available: {available}"
         )
 
-    full_path = info.base_path / resource_path
+    full_path = (info.base_path / resource_path).resolve()
+    if not full_path.is_relative_to(info.base_path.resolve()):
+        raise ValueError("Path traversal is not allowed in resource paths")
+
     return full_path.read_text(encoding="utf-8")
 

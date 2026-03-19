@@ -331,6 +331,24 @@ class TestReadSkillResource:
                 "security-review", "references/../../../etc/passwd", skills
             )
 
+    def test_symlink_traversal_raises(
+        self, skills: dict[str, SkillInfo], tmp_path: Path
+    ) -> None:
+        # Create a symlink inside the skill's references/ dir pointing outside
+        skill_info = skills["security-review"]
+        outside_file = tmp_path / "secret.txt"
+        outside_file.write_text("secret data")
+        symlink = skill_info.base_path / "references" / "sneaky.md"
+        symlink.symlink_to(outside_file)
+        try:
+            # Add the symlink to resources so it passes the allowlist check
+            skill_info.resources.append("references/sneaky.md")
+            with pytest.raises(ValueError, match="traversal"):
+                read_skill_resource("security-review", "references/sneaky.md", skills)
+        finally:
+            symlink.unlink()
+            skill_info.resources.remove("references/sneaky.md")
+
     def test_invalid_prefix_raises(self, skills: dict[str, SkillInfo]) -> None:
         with pytest.raises(ValueError, match="must start with"):
             read_skill_resource("security-review", "other/file.txt", skills)
