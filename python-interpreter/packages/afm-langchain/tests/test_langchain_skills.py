@@ -26,11 +26,7 @@ from afm_langchain.tools.skills import ActivateSkillTool, ReadSkillResourceTool
 
 # Reuse the fixtures from afm-core
 FIXTURES_DIR = (
-    Path(__file__).parent.parent.parent
-    / "afm-core"
-    / "tests"
-    / "fixtures"
-    / "skills"
+    Path(__file__).parent.parent.parent / "afm-core" / "tests" / "fixtures" / "skills"
 )
 
 
@@ -46,9 +42,7 @@ def mock_chat_model() -> MagicMock:
     from langchain_core.messages import AIMessage
 
     model = MagicMock()
-    model.ainvoke = AsyncMock(
-        return_value=AIMessage(content="Hello!")
-    )
+    model.ainvoke = AsyncMock(return_value=AIMessage(content="Hello!"))
     return model
 
 
@@ -85,9 +79,7 @@ class TestActivateSkillTool:
 
 
 class TestReadSkillResourceTool:
-    def test_read_valid_resource(
-        self, multi_skills: dict[str, SkillInfo]
-    ) -> None:
+    def test_read_valid_resource(self, multi_skills: dict[str, SkillInfo]) -> None:
         tool = ReadSkillResourceTool(skills=multi_skills)
         result = tool._run(
             skill_name="security-review",
@@ -153,9 +145,7 @@ class TestLangChainRunnerSkills:
         assert "Available Skills" not in runner.system_prompt
         assert runner.tools == []
 
-    def test_no_source_dir_skips_skills(
-        self, mock_chat_model: MagicMock
-    ) -> None:
+    def test_no_source_dir_skips_skills(self, mock_chat_model: MagicMock) -> None:
         afm = AFMRecord(
             metadata=AgentMetadata(
                 skills=[LocalSkillSource(path="multi_skills")],

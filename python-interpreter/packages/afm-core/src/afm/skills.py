@@ -41,9 +41,7 @@ def extract_skill_catalog(
     if not skills:
         return None
 
-    logger.debug(
-        "Loaded %d skill(s): %s", len(skills), ", ".join(skills.keys())
-    )
+    logger.debug("Loaded %d skill(s): %s", len(skills), ", ".join(skills.keys()))
 
     catalog = build_skill_catalog(skills)
     if catalog is None:
@@ -64,7 +62,8 @@ def discover_skills(
             continue
         source_path = Path(source.path)
         resolved_path = (
-            source_path if source_path.is_absolute()
+            source_path
+            if source_path.is_absolute()
             else (afm_file_dir / source.path).resolve()
         )
         local_skills = discover_local_skills(resolved_path)
@@ -203,16 +202,12 @@ def activate_skill(name: str, skills: dict[str, SkillInfo]) -> str:
     """Activate a skill by name and return its full instructions."""
     if name not in skills:
         available = ", ".join(skills.keys())
-        raise ValueError(
-            f"Skill '{name}' not found. Available skills: {available}"
-        )
+        raise ValueError(f"Skill '{name}' not found. Available skills: {available}")
 
     info = skills[name]
     resources_section = ""
     if info.resources:
-        resource_entries = "\n".join(
-            f"<file>{res}</file>" for res in info.resources
-        )
+        resource_entries = "\n".join(f"<file>{res}</file>" for res in info.resources)
         resources_section = (
             f"\n<skill_resources>\n{resource_entries}\n</skill_resources>\n"
             "Use the read_skill_resource tool to read any of these files if needed.\n"
@@ -256,4 +251,3 @@ def read_skill_resource(
         raise ValueError("Path traversal is not allowed in resource paths")
 
     return full_path.read_text(encoding="utf-8")
-

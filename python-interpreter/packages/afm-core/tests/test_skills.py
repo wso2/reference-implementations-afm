@@ -236,9 +236,7 @@ class TestBuildSkillCatalog:
 
 class TestExtractSkillCatalog:
     def test_with_skills(self) -> None:
-        metadata = AgentMetadata(
-            skills=[LocalSkillSource(path="multi_skills")]
-        )
+        metadata = AgentMetadata(skills=[LocalSkillSource(path="multi_skills")])
         result = extract_skill_catalog(metadata, FIXTURES_DIR)
         assert result is not None
         catalog, skills = result
@@ -270,9 +268,7 @@ class TestActivateSkill:
         assert '<skill_content name="pr-summary">' in result
         assert "changelog" in result
 
-    def test_activate_skill_with_resources(
-        self, skills: dict[str, SkillInfo]
-    ) -> None:
+    def test_activate_skill_with_resources(self, skills: dict[str, SkillInfo]) -> None:
         result = activate_skill("security-review", skills)
         assert "<skill_resources>" in result
         assert "references/REFERENCE.md" in result
@@ -284,9 +280,7 @@ class TestActivateSkill:
         result = activate_skill("test-gen", skills)
         assert "<skill_resources>" not in result
 
-    def test_activate_unknown_skill_raises(
-        self, skills: dict[str, SkillInfo]
-    ) -> None:
+    def test_activate_unknown_skill_raises(self, skills: dict[str, SkillInfo]) -> None:
         with pytest.raises(ValueError, match="not found"):
             activate_skill("nonexistent", skills)
 
@@ -308,22 +302,16 @@ class TestReadSkillResource:
         assert "OWASP" in content
 
     def test_read_asset(self, skills: dict[str, SkillInfo]) -> None:
-        content = read_skill_resource(
-            "security-review", "assets/template.json", skills
-        )
+        content = read_skill_resource("security-review", "assets/template.json", skills)
         assert "security-review" in content
 
     def test_unknown_skill_raises(self, skills: dict[str, SkillInfo]) -> None:
         with pytest.raises(ValueError, match="not found"):
             read_skill_resource("nope", "references/REFERENCE.md", skills)
 
-    def test_unlisted_resource_raises(
-        self, skills: dict[str, SkillInfo]
-    ) -> None:
+    def test_unlisted_resource_raises(self, skills: dict[str, SkillInfo]) -> None:
         with pytest.raises(ValueError, match="not found in skill"):
-            read_skill_resource(
-                "security-review", "references/SECRET.md", skills
-            )
+            read_skill_resource("security-review", "references/SECRET.md", skills)
 
     def test_path_traversal_raises(self, skills: dict[str, SkillInfo]) -> None:
         with pytest.raises(ValueError, match="traversal"):

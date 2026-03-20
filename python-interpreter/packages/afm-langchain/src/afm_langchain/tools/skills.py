@@ -31,9 +31,7 @@ class ActivateSkillInput(BaseModel):
 
 
 class ReadSkillResourceInput(BaseModel):
-    skill_name: str = Field(
-        description="The name of the skill that owns the resource"
-    )
+    skill_name: str = Field(description="The name of the skill that owns the resource")
     resource_path: str = Field(
         description="Relative path to the resource file (e.g., 'references/REFERENCE.md' or 'assets/template.json')"
     )
@@ -71,9 +69,7 @@ class ReadSkillResourceTool(BaseTool):
 
     skills: dict[str, SkillInfo]
 
-    def _run(
-        self, skill_name: str, resource_path: str, **kwargs: Any
-    ) -> str:
+    def _run(self, skill_name: str, resource_path: str, **kwargs: Any) -> str:
         try:
             return read_skill_resource(skill_name, resource_path, self.skills)
         except ValueError as e:
