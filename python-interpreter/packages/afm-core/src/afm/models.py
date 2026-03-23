@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -193,6 +194,29 @@ Interface = Annotated[
 ]
 
 
+class LocalSkillSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["local"] = "local"
+    path: str
+
+
+SkillSource = Annotated[
+    LocalSkillSource,
+    Field(discriminator="type"),
+]
+
+
+class SkillInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str
+    body: str
+    base_path: Path = Field(exclude=True)
+    resources: list[str] = Field(default_factory=list)
+
+
 class AgentMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -208,6 +232,7 @@ class AgentMetadata(BaseModel):
     model: Model | None = None
     interfaces: list[Interface] | None = None
     tools: Tools | None = None
+    skills: list[SkillSource] | None = None
     max_iterations: int | None = None
 
 
@@ -217,6 +242,7 @@ class AFMRecord(BaseModel):
     metadata: AgentMetadata
     role: str
     instructions: str
+    source_dir: Path | None = Field(default=None, exclude=True)
 
 
 class LiteralSegment(BaseModel):

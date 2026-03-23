@@ -251,17 +251,17 @@ function testValidateHttpVariablesInStdioTransportEnv() {
 }
 
 @test:Config
-function testParseAfmWithoutFrontmatter() {
+function testParseAfmWithoutFrontmatter() returns error? {
     string content = string `# Role
 This is the role.
 
 # Instructions
 These are instructions.`;
 
-    AFMRecord|error parsed = parseAfm(content);
-    if parsed is AFMRecord {
-        test:assertFail("Expected error when parsing AFM without frontmatter");
-    }
+    AFMRecord parsed = check parseAfm(content);
+    test:assertTrue(parsed?.metadata is (), "metadata should be absent");
+    test:assertEquals(parsed.role, "This is the role.");
+    test:assertEquals(parsed.instructions, "These are instructions.");
 }
 
 @test:Config
@@ -277,7 +277,7 @@ Agent role here.
 Agent instructions here.`;
 
     AFMRecord parsed = check parseAfm(content);
-    test:assertEquals(parsed.metadata.spec_version, "0.3.0");
+    test:assertEquals(parsed?.metadata?.spec_version, "0.3.0");
     test:assertEquals(parsed.role, "Agent role here.");
     test:assertEquals(parsed.instructions, "Agent instructions here.");
 }

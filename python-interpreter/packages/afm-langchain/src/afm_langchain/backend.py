@@ -36,9 +36,12 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from afm.skills import extract_skill_catalog
+
 from .logging_utils import MCPStdioNoiseFilter
 from .providers import create_model_provider
 from .tools.mcp import MCPManager
+from .tools.skills import ActivateSkillTool, ReadSkillResourceTool
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,19 @@ class LangChainRunner:
         self._external_tools = tools or []
         self._mcp_tools: list[BaseTool] = []
         self._connected = False
+
+        # Skills
+        self._skill_catalog: str | None = None
+        self._skill_tools: list[BaseTool] = []
+        if afm.source_dir and afm.metadata.skills:
+            result = extract_skill_catalog(afm.metadata, afm.source_dir)
+            if result is not None:
+                catalog, skills = result
+                self._skill_catalog = catalog
+                self._skill_tools = [
+                    ActivateSkillTool(skills=skills),
+                    ReadSkillResourceTool(skills=skills),
+                ]
 
         # Cache the active interface for signature validation
         self._interface = self._get_primary_interface()
@@ -111,8 +127,7 @@ class LangChainRunner:
             logger.info("Disconnected from MCP servers")
 
     def _get_all_tools(self) -> list[BaseTool]:
-
-        return self._external_tools + self._mcp_tools
+        return self._external_tools + self._mcp_tools + self._skill_tools
 
     @property
     def afm(self) -> AFMRecord:
@@ -128,13 +143,16 @@ class LangChainRunner:
 
     @property
     def system_prompt(self) -> str:
-        return f"""# Role
+        prompt = f"""# Role
 
 {self._afm.role}
 
 # Instructions
 
 {self._afm.instructions}"""
+        if self._skill_catalog:
+            prompt += f"\n\n{self._skill_catalog}"
+        return prompt
 
     @property
     def max_iterations(self) -> int | None:

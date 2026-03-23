@@ -369,7 +369,7 @@ function testArrayOutputSchemaEndToEnd() returns error? {
     AFMRecord afm = check parseAfm(content);
 
     int testPort = 9195;
-    future<error?> _ = start runAgentFromAFM(afm, testPort);
+    future<error?> _ = start runAgentFromAFM(afm, testPort, "tests");
 
     // Wait for agent to start
     runtime:sleep(2);
@@ -396,7 +396,7 @@ function testArrayOutputSchemaInvalidResponse() returns error? {
     AFMRecord afm = check parseAfm(content);
 
     int testPort = 9196;
-    future<error?> _ = start runAgentFromAFM(afm, testPort);
+    future<error?> _ = start runAgentFromAFM(afm, testPort, "tests");
 
     // Wait for agent to start
     runtime:sleep(2);

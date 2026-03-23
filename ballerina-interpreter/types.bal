@@ -65,6 +65,21 @@ type Tools record {|
     MCPServer[] mcp?;
 |};
 
+type LocalSkillSource record {|
+    "local" 'type = "local";
+    string path;
+|};
+
+type SkillSource LocalSkillSource;
+
+type SkillInfo record {|
+    string name;
+    string description;
+    string body;
+    string basePath;
+    string[] resources;
+|};
+
 type Parameter record {| 
     string name;
     string 'type;
@@ -154,11 +169,12 @@ type AgentMetadata record {|
     Model model?;
     Interface[] interfaces?;
     Tools tools?;
+    SkillSource[] skills?;
     int max_iterations?;
 |};
 
 type AFMRecord record {|
-    AgentMetadata metadata;
+    AgentMetadata metadata?;
     string role;
     string instructions;
 |};

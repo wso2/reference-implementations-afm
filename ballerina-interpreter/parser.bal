@@ -19,40 +19,26 @@ import ballerina/os;
 
 function parseAfm(string content) returns AFMRecord|error {
     string resolvedContent = check resolveVariables(content);
-    
-    string[] lines = splitLines(resolvedContent);
-    int length = lines.length();
-    
+
     AgentMetadata? metadata = ();
-    int bodyStart = 0;
-    
-    // Extract and parse YAML frontmatter
-    if length > 0 && lines[0].trim() == FRONTMATTER_DELIMITER {
-        int i = 1;
-        while i < length && lines[i].trim() != FRONTMATTER_DELIMITER {
-            i += 1;
-        }
-        
-        if i < length {
-            string[] fmLines = [];
-            foreach int j in 1 ..< i {
-                fmLines.push(lines[j]);
-            }
-            string yamlContent = string:'join("\n", ...fmLines);
-            map<json> intermediate = check yaml:parseString(yamlContent);
-            metadata = check intermediate.fromJsonWithType();
-            bodyStart = i + 1;
-        }
+    string body;
+    string[] resolvedLines = splitLines(resolvedContent);
+    if resolvedLines.length() > 0 && resolvedLines[0].trim() == FRONTMATTER_DELIMITER {
+        map<json> frontmatterMap;
+        [frontmatterMap, body] = check extractFrontMatter(resolvedContent);
+        metadata = check frontmatterMap.fromJsonWithType();
+    } else {
+        body = resolvedContent;
     }
-    
+
     // Extract Role and Instructions sections
+    string[] bodyLines = splitLines(body);
     string role = "";
     string instructions = "";
     boolean inRole = false;
     boolean inInstructions = false;
-    
-    foreach int k in bodyStart ..< length {
-        string line = lines[k];
+
+    foreach string line in bodyLines {
         string trimmed = line.trim();
         
         if trimmed.startsWith("# ") {
@@ -70,7 +56,7 @@ function parseAfm(string content) returns AFMRecord|error {
     }
     
     AFMRecord afmRecord = {
-        metadata: check metadata.ensureType(),
+        metadata,
         role: role.trim(),
         instructions: instructions.trim()
     };
@@ -161,7 +147,12 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
         return error("http: variables are only supported in webhook prompt fields, found in instructions section");
     }
 
-    AgentMetadata {authors, provider, model, interfaces, tools, max_iterations: _, ...rest} = afmRecord.metadata;
+    AgentMetadata? metadata = afmRecord?.metadata;
+    if metadata is () {
+        return;
+    }
+
+    AgentMetadata {authors, provider, model, interfaces, tools, skills, max_iterations: _, ...rest} = metadata;
 
     string[] erroredKeys = [];
 
@@ -285,6 +276,14 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
         }
     }
 
+    if skills is SkillSource[] {
+        foreach SkillSource skillSource in skills {
+            if containsHttpVariable(skillSource.path) {
+                erroredKeys.push("skills.path");
+            }
+        }
+    }
+
     if erroredKeys.length() > 0 {
         return error(string `http: variables are only supported in webhook prompt fields, found in metadata fields: ${string:'join(", ", ...erroredKeys)}`);
     }
@@ -398,19 +397,43 @@ function toolFilterContainsHttpVariable(ToolFilter? filter) returns boolean {
     return false;
 }
 
+// Extracts YAML frontmatter and the remaining body from a document delimited by `---`.
+// Returns the parsed YAML as a map and the body text after the closing delimiter.
+function extractFrontMatter(string content) returns [map<json>, string]|error {
+    string[] lines = splitLines(content);
+    int length = lines.length();
+
+    if length == 0 || lines[0].trim() != FRONTMATTER_DELIMITER {
+        return error("Document must start with YAML frontmatter (---)");
+    }
+
+    int i = 1;
+    while i < length && lines[i].trim() != FRONTMATTER_DELIMITER {
+        i += 1;
+    }
+
+    if i >= length {
+        return error("Frontmatter is not closed (missing ---)");
+    }
+
+    string yamlContent = string:'join("\n", ...lines.slice(1, i));
+    map<json> frontmatter = check yaml:parseString(yamlContent);
+    string body = string:'join("\n", ...lines.slice(i + 1));
+    return [frontmatter, body];
+}
+
 function splitLines(string content) returns string[] {
     string[] result = [];
-    string remaining = content;
+    int length = content.length();
+    int 'start = 0;
 
-    while true {
-        int? idx = remaining.indexOf("\n");
+    while 'start < length {
+        int? idx = content.indexOf("\n", 'start);
         if idx is int {
-            result.push(remaining.substring(0, idx));
-            remaining = remaining.substring(idx + 1);
+            result.push(content.substring('start, idx));
+            'start = idx + 1;
         } else {
-            if remaining.length() > 0 {
-                result.push(remaining);
-            }
+            result.push(content.substring('start));
             break;
         }
     }

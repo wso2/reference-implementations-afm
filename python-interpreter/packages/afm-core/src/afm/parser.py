@@ -27,6 +27,47 @@ from .variables import resolve_variables, validate_http_variables
 FRONTMATTER_DELIMITER = "---"
 
 
+def extract_raw_frontmatter(content: str) -> tuple[dict | None, str]:
+    """Extract raw YAML frontmatter dict and remaining body from a content string.
+
+    Returns ``(None, content)`` when no opening delimiter is found.
+    Returns ``(dict, body)`` when frontmatter is present and parsed.
+    Raises :class:`ValueError` on malformed frontmatter.
+    """
+    lines = content.splitlines()
+
+    if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
+        return None, content
+
+    end_index = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == FRONTMATTER_DELIMITER:
+            end_index = i
+            break
+
+    if end_index is None:
+        raise ValueError("Unclosed frontmatter - missing closing '---'")
+
+    yaml_content = "\n".join(lines[1:end_index])
+    body = "\n".join(lines[end_index + 1 :])
+
+    if not yaml_content.strip():
+        return {}, body
+
+    try:
+        yaml_data = yaml.safe_load(yaml_content)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in frontmatter: {e}") from e
+
+    if yaml_data is None:
+        return {}, body
+
+    if not isinstance(yaml_data, dict):
+        raise ValueError("Frontmatter must be a YAML mapping")
+
+    return yaml_data, body
+
+
 def parse_afm(content: str, *, resolve_env: bool = True) -> AFMRecord:
     if resolve_env:
         content = resolve_variables(content)
@@ -43,44 +84,32 @@ def parse_afm(content: str, *, resolve_env: bool = True) -> AFMRecord:
 
 
 def parse_afm_file(file_path: str | Path, *, resolve_env: bool = True) -> AFMRecord:
-    path = Path(file_path)
+    path = Path(file_path).resolve()
     content = path.read_text(encoding="utf-8")
-    return parse_afm(content, resolve_env=resolve_env)
+    record = parse_afm(content, resolve_env=resolve_env)
+    record.source_dir = path.parent
+    return record
 
 
 def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
-    if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
-        # No frontmatter - return empty metadata
+    content = "\n".join(lines)
+    try:
+        raw, body = extract_raw_frontmatter(content)
+    except ValueError as e:
+        raise AFMParseError(str(e))
+
+    if raw is None:
         return AgentMetadata(), 0
 
-    end_index = None
-    for i in range(1, len(lines)):
-        if lines[i].strip() == FRONTMATTER_DELIMITER:
-            end_index = i
-            break
+    # Calculate the body start line index
+    # The frontmatter occupies: opening --- + yaml lines + closing ---
+    body_start = len(lines) - len(body.splitlines()) if body else len(lines)
 
-    if end_index is None:
-        raise AFMParseError("Unclosed frontmatter - missing closing '---'")
-
-    yaml_lines = lines[1:end_index]
-    yaml_content = "\n".join(yaml_lines)
-
-    if not yaml_content.strip():
-        return AgentMetadata(), end_index + 1
+    if not raw:
+        return AgentMetadata(), body_start
 
     try:
-        yaml_data = yaml.safe_load(yaml_content)
-    except yaml.YAMLError as e:
-        raise AFMParseError(f"Invalid YAML in frontmatter: {e}")
-
-    if yaml_data is None:
-        return AgentMetadata(), end_index + 1
-
-    if not isinstance(yaml_data, dict):
-        raise AFMParseError("Frontmatter must be a YAML mapping/object")
-
-    try:
-        metadata = AgentMetadata.model_validate(yaml_data)
+        metadata = AgentMetadata.model_validate(raw)
     except ValidationError as e:
         errors = e.errors()
         if errors:
@@ -90,7 +119,7 @@ def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
             raise AFMValidationError(msg, field=field)
         raise AFMValidationError(str(e))
 
-    return metadata, end_index + 1
+    return metadata, body_start
 
 
 def _extract_role_and_instructions(

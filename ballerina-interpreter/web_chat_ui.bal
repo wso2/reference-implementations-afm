@@ -17,7 +17,7 @@
 import ballerina/http;
 import ballerina/io;
 
-function attachWebChatUIService(http:Listener httpListener, string chatPath, AgentMetadata metadata) returns error? {
+function attachWebChatUIService(http:Listener httpListener, string chatPath, AgentMetadata? metadata) returns error? {
     string absoluteChatPath = chatPath.startsWith("/") ? chatPath : "/" + chatPath;
     http:Service webUIService = check new WebUIService(absoluteChatPath, metadata);
     return httpListener.attach(webUIService, "/chat/ui");
@@ -28,11 +28,11 @@ service class WebUIService {
 
     private final string htmlContent;
 
-    function init(string chatPath, AgentMetadata metadata) returns error? {
+    function init(string chatPath, AgentMetadata? metadata) returns error? {
         string template = check io:fileReadString("resources/chat-ui.html");
 
-        string agentName = metadata.name ?: "AFM Agent Chat";
-        string agentDescription = metadata.description ?: "AI Assistant";
+        string agentName = metadata?.name ?: "AFM Agent Chat";
+        string agentDescription = metadata?.description ?: "AI Assistant";
         string escapedPath = escapeForJavaScript(chatPath);
 
         string result = template;

@@ -48,7 +48,16 @@ docker run -v /path/to/agent.afm.md:/app/agent.afm.md \
   -e afmFilePath=/app/agent.afm.md \
   -p 8085:8085 \
   afm-ballerina-interpreter
+
+# Run with skills (mount the skills directory so the agent can discover them)
+docker run -v /path/to/agent.afm.md:/app/agent.afm.md \
+  -v /path/to/skills:/app/skills \
+  -e afmFilePath=/app/agent.afm.md \
+  -p 8085:8085 \
+  afm-ballerina-interpreter
 ```
+
+When using local skills, the `path` in the AFM file should be relative to the AFM file's location. For example, if the AFM file is at `/app/agent.afm.md` and skills are mounted at `/app/skills`, use `path: "./skills"` in the AFM file.
 
 ## Testing
 
@@ -68,6 +77,7 @@ ballerina-interpreter/
 ├── interface_web_chat.bal      # Web chat HTTP API
 ├── interface_web_ui.bal        # Web chat UI
 ├── interface_webhook.bal       # Webhook/WebSub handler
+├── skills.bal                  # Agent Skills discovery & toolkit
 ├── modules/
 │   └── everit.validator/       # JSON Schema validation
 ├── tests/                      # Test files
