@@ -264,8 +264,24 @@ def _subscription_contains_http_variable(subscription: Subscription) -> bool:
         return True
     if subscription.secret and contains_http_variable(subscription.secret):
         return True
+    if subscription.provider and contains_http_variable(subscription.provider):
+        return True
+    if subscription.provider_config and _nested_contains_http_variable(
+        subscription.provider_config
+    ):
+        return True
     if _auth_contains_http_variable(subscription.authentication):
         return True
+    return False
+
+
+def _nested_contains_http_variable(value: Any) -> bool:
+    if isinstance(value, str):
+        return contains_http_variable(value)
+    if isinstance(value, dict):
+        return any(_nested_contains_http_variable(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_nested_contains_http_variable(item) for item in value)
     return False
 
 

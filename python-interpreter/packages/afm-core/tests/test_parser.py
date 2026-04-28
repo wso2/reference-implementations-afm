@@ -121,6 +121,22 @@ class TestParseAfm:
         assert interface.subscription.protocol == "websub"
         assert interface.subscription.hub == "http://localhost:9193/websub/hub"
 
+    def test_parse_provider_webhook_agent(
+        self, sample_provider_webhook_path: Path
+    ) -> None:
+        content = sample_provider_webhook_path.read_text()
+        result = parse_afm(content)
+
+        assert result.metadata.interfaces is not None
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, WebhookInterface)
+        assert interface.subscription.protocol == "provider"
+        assert interface.subscription.provider == "slack"
+        assert interface.subscription.provider_config == {"signing_secret": "test-signing-secret"}
+        assert interface.has_explicit_output_schema is False
+        assert interface.exposure.http is not None
+        assert interface.exposure.http.path == "/slack"
+
     def test_parse_minimal_agent(self, sample_minimal_path: Path) -> None:
         content = sample_minimal_path.read_text()
         result = parse_afm(content)
@@ -182,6 +198,101 @@ Instructions.
 """
         with pytest.raises(AFMValidationError):
             parse_afm(content)
+
+    def test_provider_webhook_requires_provider(self) -> None:
+        content = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webhook
+    subscription:
+      protocol: "provider"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+
+        assert "requires 'provider'" in str(exc_info.value)
+
+    def test_provider_webhook_rejects_hub_and_topic(self) -> None:
+        content = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webhook
+    subscription:
+      protocol: "provider"
+      provider: "someprovider"
+      hub: "https://hub.example.com"
+      topic: "https://example.com/topic"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+
+        assert "only valid when protocol is 'websub'" in str(exc_info.value)
+
+    def test_websub_rejects_provider_specific_fields(self) -> None:
+        content = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webhook
+    subscription:
+      protocol: "websub"
+      provider: "someprovider"
+      provider_config:
+        project_number: "123"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+
+        assert "provider_config" in str(exc_info.value)
+
+    def test_slack_provider_rejects_explicit_output_schema(self) -> None:
+        content = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webhook
+    signature:
+      output:
+        type: object
+        properties:
+          text:
+            type: string
+    subscription:
+      protocol: "provider"
+      provider: "slack"
+      provider_config:
+        signing_secret: "secret"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+
+        assert "does not support synchronous webhook responses" in str(exc_info.value)
 
     def test_parse_multiline_role_and_instructions(self) -> None:
         content = """---

@@ -43,6 +43,13 @@ def sample_webhook_afm() -> Path:
 
 
 @pytest.fixture
+def sample_provider_webhook_afm() -> Path:
+    return (
+        Path(__file__).parent / "fixtures" / "sample_provider_webhook_agent.afm.md"
+    )
+
+
+@pytest.fixture
 def fake_llm() -> FakeListChatModel:
     return FakeListChatModel(
         responses=["Order processed successfully. Order ID: 12345 confirmed."]
@@ -250,3 +257,50 @@ class TestWebhookIntegration:
         # Wait for the background agent to finish and verify it actually ran
         await asyncio.sleep(agent_delay + 0.5)
         assert call_count == 1, "Slow mock LLM should have been invoked exactly once"
+
+    @pytest.mark.asyncio
+    async def test_provider_webhook_acks_and_runs_agent_in_background(
+        self,
+        sample_provider_webhook_afm: Path,
+    ) -> None:
+        received_prompts: list[str] = []
+        prompt_received = asyncio.Event()
+
+        class TrackingFakeLLM(FakeListChatModel):
+            async def _agenerate(
+                self,
+                messages: list[BaseMessage],
+                stop: list[str] | None = None,
+                run_manager: AsyncCallbackManagerForLLMRun | None = None,
+                **kwargs: Any,
+            ) -> ChatResult:
+                received_prompts.append(messages[-1].content)
+                prompt_received.set()
+                return await super()._agenerate(
+                    messages, stop=stop, run_manager=run_manager, **kwargs
+                )
+
+        fake_llm = TrackingFakeLLM(
+            responses=["Hello from Slack"]
+        )
+        afm = parse_afm_file(sample_provider_webhook_afm, resolve_env=False)
+        runner = LangChainRunner(afm, model=fake_llm)
+        app = create_webhook_app(runner, auto_subscribe=False, verify_signatures=False)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/slack",
+                json={
+                    "type": "event_callback",
+                    "event": {"type": "message"},
+                    "message": {"text": "Need help with the build"},
+                },
+                headers={"User-Agent": "Slack"},
+            )
+
+        assert response.status_code == 200
+        assert response.content == b""
+        await asyncio.wait_for(prompt_received.wait(), timeout=5.0)
+        assert len(received_prompts) == 1
+        assert "[event_callback] Reply to Need help with the build" in received_prompts[0]

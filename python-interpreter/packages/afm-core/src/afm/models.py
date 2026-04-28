@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -144,12 +144,33 @@ class Exposure(BaseModel):
 class Subscription(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    protocol: str
+    protocol: Literal["websub", "provider"]
     hub: str | None = None
     topic: str | None = None
     callback: str | None = None
     secret: str | None = None
+    provider: str | None = None
+    provider_config: dict[str, Any] | None = None
     authentication: ClientAuthentication | None = None
+
+    @model_validator(mode="after")
+    def validate_protocol_fields(self) -> Self:
+        if self.protocol == "provider":
+            if self.provider is None:
+                raise ValueError(
+                    "protocol 'provider' requires 'provider' field"
+                )
+            if self.hub is not None or self.topic is not None:
+                raise ValueError(
+                    "fields 'hub' and 'topic' are only valid when protocol is 'websub'"
+                )
+        else:
+            if self.provider is not None or self.provider_config is not None:
+                raise ValueError(
+                    "fields 'provider' and 'provider_config' are only valid when protocol is 'provider'"
+                )
+
+        return self
 
 
 class InterfaceType(str, Enum):
@@ -175,6 +196,11 @@ class WebChatInterface(BaseModel):
     )
 
 
+# Providers that do not support synchronous responses to webhooks.
+# These providers must not define an explicit output schema.
+_ASYNC_ONLY_PROVIDERS: frozenset[str] = frozenset({"slack"})
+
+
 class WebhookInterface(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -185,6 +211,35 @@ class WebhookInterface(BaseModel):
         default_factory=lambda: Exposure(http=HTTPExposure(path="/webhook"))
     )
     subscription: Subscription
+    has_explicit_output_schema: bool = Field(default=False, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def annotate_explicit_output_schema(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        if "has_explicit_output_schema" not in data:
+            signature = data.get("signature")
+            data["has_explicit_output_schema"] = (
+                isinstance(signature, dict) and "output" in signature
+            )
+        return data
+
+    @model_validator(mode="after")
+    def validate_no_output_schema_for_async_providers(self) -> Self:
+        subscription = self.subscription
+        if (
+            subscription.protocol == "provider"
+            and subscription.provider in _ASYNC_ONLY_PROVIDERS
+            and self.has_explicit_output_schema
+        ):
+            raise ValueError(
+                f"provider '{subscription.provider}' does not support "
+                "synchronous webhook responses; 'signature.output' must "
+                "not be specified"
+            )
+        return self
 
 
 # Type alias for any interface type

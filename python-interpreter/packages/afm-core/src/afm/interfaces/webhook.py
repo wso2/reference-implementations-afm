@@ -26,13 +26,14 @@ from typing import TYPE_CHECKING, AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from ..constants import DEFAULT_HTTP_PORT
 from ..exceptions import TemplateEvaluationError
 from ..templates import compile_template, evaluate_template
 from .base import InterfaceNotFoundError, get_http_path, get_webhook_interface
+from .providers import slack as slack_provider
 
 if TYPE_CHECKING:
     from ..runner import AgentRunner
@@ -200,6 +201,15 @@ def verify_webhook_signature(
     return hmac.compare_digest(expected_sig.lower(), provided_sig.lower())
 
 
+def get_provider_session_id(
+    provider: str | None,
+    payload: object,
+) -> str:
+    if provider == "slack":
+        return slack_provider.get_slack_session_id(payload)
+    return "default"
+
+
 def create_webhook_router(
     agent: AgentRunner,
     interface: WebhookInterface,
@@ -217,47 +227,72 @@ def create_webhook_router(
     # Get subscription configuration
     subscription = interface.subscription
     secret = subscription.secret
+    is_provider_webhook = subscription.protocol == "provider"
+    provider_name = subscription.provider
+    use_immediate_provider_response = (
+        is_provider_webhook and interface.has_explicit_output_schema
+    )
 
-    # WebSub verification endpoint
-    @router.get(path)
-    async def websub_verification(
-        request: Request,
-        hub_mode: str = Query(..., alias="hub.mode"),
-        hub_topic: str = Query(..., alias="hub.topic"),
-        hub_challenge: str = Query(..., alias="hub.challenge"),
-        hub_lease_seconds: int | None = Query(None, alias="hub.lease_seconds"),
-    ) -> PlainTextResponse:
-        # Check for subscriber in app state (for topic verification)
-        websub_subscriber = getattr(request.app.state, "websub_subscriber", None)
+    if not is_provider_webhook:
+        # WebSub verification endpoint
+        @router.get(path)
+        async def websub_verification(
+            request: Request,
+            hub_mode: str = Query(..., alias="hub.mode"),
+            hub_topic: str = Query(..., alias="hub.topic"),
+            hub_challenge: str = Query(..., alias="hub.challenge"),
+            hub_lease_seconds: int | None = Query(None, alias="hub.lease_seconds"),
+        ) -> PlainTextResponse:
+            # Check for subscriber in app state (for topic verification)
+            websub_subscriber = getattr(request.app.state, "websub_subscriber", None)
 
-        if hub_mode in ("subscribe", "unsubscribe"):
-            # If we have a subscriber, verify the topic matches
-            if websub_subscriber is not None:
-                # Use subscriber's verification logic
-                challenge = websub_subscriber.verify_challenge(
-                    hub_mode,
-                    hub_topic,
-                    hub_challenge,
-                    lease_seconds=hub_lease_seconds,
-                )
-                if challenge:
-                    return PlainTextResponse(content=challenge)
-                # Verification failed (e.g. topic mismatch)
-                raise HTTPException(status_code=404, detail="Verification failed")
+            if hub_mode in ("subscribe", "unsubscribe"):
+                # If we have a subscriber, verify the topic matches
+                if websub_subscriber is not None:
+                    # Use subscriber's verification logic
+                    challenge = websub_subscriber.verify_challenge(
+                        hub_mode,
+                        hub_topic,
+                        hub_challenge,
+                        lease_seconds=hub_lease_seconds,
+                    )
+                    if challenge:
+                        return PlainTextResponse(content=challenge)
+                    # Verification failed (e.g. topic mismatch)
+                    raise HTTPException(status_code=404, detail="Verification failed")
 
-            elif hasattr(request.app.state, "websub_subscriber"):
-                # Subscriber was explicitly set to None - reject verification
-                raise HTTPException(status_code=404, detail="No subscriber configured")
+                elif hasattr(request.app.state, "websub_subscriber"):
+                    # Subscriber was explicitly set to None - reject verification
+                    raise HTTPException(status_code=404, detail="No subscriber configured")
 
-            return PlainTextResponse(content=hub_challenge)
-        raise HTTPException(status_code=404, detail="Invalid mode")
+                return PlainTextResponse(content=hub_challenge)
+            raise HTTPException(status_code=404, detail="Invalid mode")
 
-    async def _run_agent_in_background(user_prompt: str) -> None:
+    async def _run_agent_in_background(user_prompt: str, session_id: str) -> None:
         try:
-            response = await agent.arun(user_prompt)
+            response = await agent.arun(user_prompt, session_id=session_id)
             logger.debug(f"Agent response: {response}")
         except Exception:
             logger.exception("Agent execution error")
+
+    def _build_user_prompt(payload: object, headers: dict[str, str]) -> str:
+        if compiled_prompt:
+            try:
+                return evaluate_template(compiled_prompt, payload, headers)
+            except TemplateEvaluationError as e:
+                logger.warning(f"Template evaluation error: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to evaluate prompt template",
+                ) from e
+
+        # Default: stringify the payload
+        return json.dumps(payload, indent=2)
+
+    def _create_provider_response(result: str | object) -> Response:
+        if isinstance(result, str):
+            return PlainTextResponse(content=result)
+        return JSONResponse(content=result)
 
     # Webhook receiver endpoint
     @router.post(
@@ -268,20 +303,45 @@ def create_webhook_router(
             401: {"model": ErrorResponse},
         },
     )
-    async def receive_webhook(request: Request) -> JSONResponse:
+    async def receive_webhook(request: Request) -> Response:
         # Get raw body for signature verification
         body = await request.body()
 
         # Verify signature if configured
-        if verify_signatures and secret:
-            signature_header = request.headers.get(
-                "X-Hub-Signature-256"
-            ) or request.headers.get("X-Hub-Signature")
+        if verify_signatures:
+            if provider_name == "slack":
+                signing_secret = slack_provider.get_signing_secret(interface)
+                if signing_secret is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Slack signing secret is not configured",
+                    )
 
-            if not verify_webhook_signature(body, signature_header, secret):
+                if not slack_provider.verify_slack_request_signature(
+                    body,
+                    timestamp=request.headers.get("X-Slack-Request-Timestamp"),
+                    signature_header=request.headers.get("X-Slack-Signature"),
+                    signing_secret=signing_secret,
+                ):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid Slack signature",
+                    )
+            elif secret:
+                signature_header = request.headers.get(
+                    "X-Hub-Signature-256"
+                ) or request.headers.get("X-Hub-Signature")
+
+                if not verify_webhook_signature(body, signature_header, secret):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid signature",
+                    )
+            else:
                 raise HTTPException(
-                    status_code=401,
-                    detail="Invalid signature",
+                    status_code=500,
+                    detail="Signature verification is enabled but no secret "
+                    "is configured",
                 )
 
         try:
@@ -293,22 +353,63 @@ def create_webhook_router(
                 detail="Invalid JSON payload",
             ) from e
 
-        headers = dict(request.headers)
-        # Construct user prompt
-        if compiled_prompt:
-            try:
-                user_prompt = evaluate_template(compiled_prompt, payload, headers)
-            except TemplateEvaluationError as e:
-                logger.warning(f"Template evaluation error: {e}")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to evaluate prompt template",
-                ) from e
-        else:
-            # Default: stringify the payload
-            user_prompt = json.dumps(payload, indent=2)
+        if provider_name == "slack":
+            if isinstance(payload, dict) and payload.get("type") == "url_verification":
+                challenge = payload.get("challenge")
+                if not isinstance(challenge, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Slack URL verification payload must contain a challenge",
+                    )
+                return PlainTextResponse(content=challenge)
 
-        task = asyncio.create_task(_run_agent_in_background(user_prompt))
+            if slack_provider.should_ignore_slack_event(payload):
+                return slack_provider.create_slack_acknowledgement()
+
+        headers = dict(request.headers)
+
+        # For async Slack webhooks, acknowledge immediately and run
+        # template evaluation + agent in the background.  This ensures
+        # Slack always gets a timely 200 even if the template fails,
+        # preventing retries.
+        if provider_name == "slack":
+            session_id = get_provider_session_id(provider_name, payload)
+
+            async def _slack_background(
+                p: object, h: dict[str, str], sid: str
+            ) -> None:
+                try:
+                    prompt = _build_user_prompt(p, h)
+                except HTTPException:
+                    logger.warning(
+                        "Skipping agent execution: prompt template evaluation "
+                        "failed for background Slack webhook"
+                    )
+                    return
+                await _run_agent_in_background(prompt, sid)
+
+            task = asyncio.create_task(
+                _slack_background(payload, headers, session_id)
+            )
+            task.add_done_callback(log_task_exception)
+            return slack_provider.create_slack_acknowledgement()
+
+        user_prompt = _build_user_prompt(payload, headers)
+        session_id = get_provider_session_id(provider_name, payload)
+
+        if use_immediate_provider_response:
+            try:
+                response = await agent.arun(user_prompt, session_id=session_id)
+            except Exception as e:
+                logger.exception("Agent execution error")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Agent execution failed",
+                ) from e
+
+            return _create_provider_response(response)
+
+        task = asyncio.create_task(_run_agent_in_background(user_prompt, session_id))
         task.add_done_callback(log_task_exception)
 
         return JSONResponse(status_code=202, content={"status": "accepted"})
@@ -339,9 +440,33 @@ def create_webhook_app(
     subscription = interface.subscription
     secret = subscription.secret
 
+    if subscription.protocol == "provider":
+        supported_providers = {"slack"}
+        if subscription.provider not in supported_providers:
+            raise ValueError(
+                f"Provider {subscription.provider!r} is not supported yet. "
+                f"Supported providers: {', '.join(sorted(supported_providers))}"
+            )
+
+        if (
+            subscription.provider == "slack"
+            and verify_signatures
+            and slack_provider.get_signing_secret(interface) is None
+        ):
+            raise ValueError(
+                "Slack provider webhooks require "
+                "subscription.provider_config.signing_secret when signature "
+                "verification is enabled."
+            )
+
     # Set up WebSub subscriber if configured
     websub_subscriber: WebSubSubscriber | None = None
-    if auto_subscribe and subscription.hub and subscription.topic:
+    if (
+        subscription.protocol == "websub"
+        and auto_subscribe
+        and subscription.hub
+        and subscription.topic
+    ):
         if subscription.callback:
             callback_url = subscription.callback
         else:
