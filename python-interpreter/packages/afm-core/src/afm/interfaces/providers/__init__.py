@@ -14,4 +14,4 @@
 # specific language governing permissions and limitations
 # under the License.
 
-__all__ = ["slack"]
+__all__ = ["gchat", "slack"]

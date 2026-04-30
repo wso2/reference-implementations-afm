@@ -33,6 +33,7 @@ from ..constants import DEFAULT_HTTP_PORT
 from ..exceptions import TemplateEvaluationError
 from ..templates import compile_template, evaluate_template
 from .base import InterfaceNotFoundError, get_http_path, get_webhook_interface
+from .providers import gchat as gchat_provider
 from .providers import slack as slack_provider
 
 if TYPE_CHECKING:
@@ -207,6 +208,8 @@ def get_provider_session_id(
 ) -> str:
     if provider == "slack":
         return slack_provider.get_slack_session_id(payload)
+    if provider == "gchat":
+        return gchat_provider.get_gchat_session_id(payload)
     return "default"
 
 
@@ -290,6 +293,8 @@ def create_webhook_router(
         return json.dumps(payload, indent=2)
 
     def _create_provider_response(result: str | object) -> Response:
+        if provider_name == "gchat":
+            return gchat_provider.create_gchat_response(result)
         if isinstance(result, str):
             return PlainTextResponse(content=result)
         return JSONResponse(content=result)
@@ -327,6 +332,8 @@ def create_webhook_router(
                         status_code=401,
                         detail="Invalid Slack signature",
                     )
+            elif provider_name == "gchat":
+                pass  # GChat verification happens after JSON parsing
             elif secret:
                 signature_header = request.headers.get(
                     "X-Hub-Signature-256"
@@ -353,6 +360,23 @@ def create_webhook_router(
                 detail="Invalid JSON payload",
             ) from e
 
+        # GChat verification uses payload.token, so it must happen
+        # after JSON parsing (unlike Slack/WebSub which verify raw bytes).
+        if verify_signatures and provider_name == "gchat":
+            verification_token = gchat_provider.get_verification_token(interface)
+            if verification_token is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="GChat verification token is not configured",
+                )
+            if not gchat_provider.verify_gchat_request_token(
+                payload, verification_token
+            ):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid GChat verification token",
+                )
+
         if provider_name == "slack":
             if isinstance(payload, dict) and payload.get("type") == "url_verification":
                 challenge = payload.get("challenge")
@@ -365,6 +389,10 @@ def create_webhook_router(
 
             if slack_provider.should_ignore_slack_event(payload):
                 return slack_provider.create_slack_acknowledgement()
+
+        if provider_name == "gchat":
+            if gchat_provider.should_ignore_gchat_event(payload):
+                return JSONResponse(status_code=200, content={})
 
         headers = dict(request.headers)
 
@@ -441,7 +469,7 @@ def create_webhook_app(
     secret = subscription.secret
 
     if subscription.protocol == "provider":
-        supported_providers = {"slack"}
+        supported_providers = {"gchat", "slack"}
         if subscription.provider not in supported_providers:
             raise ValueError(
                 f"Provider {subscription.provider!r} is not supported yet. "
@@ -457,6 +485,17 @@ def create_webhook_app(
                 "Slack provider webhooks require "
                 "subscription.provider_config.signing_secret when signature "
                 "verification is enabled."
+            )
+
+        if (
+            subscription.provider == "gchat"
+            and verify_signatures
+            and gchat_provider.get_verification_token(interface) is None
+        ):
+            raise ValueError(
+                "GChat provider webhooks require "
+                "subscription.provider_config.verification_token when "
+                "signature verification is enabled."
             )
 
     # Set up WebSub subscriber if configured

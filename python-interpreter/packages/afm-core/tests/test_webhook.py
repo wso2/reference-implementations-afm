@@ -33,6 +33,11 @@ from afm.interfaces.webhook import (
     get_provider_session_id,
     verify_webhook_signature,
 )
+from afm.interfaces.providers.gchat import (
+    get_gchat_session_id,
+    should_ignore_gchat_event,
+    verify_gchat_request_token,
+)
 from afm.interfaces.providers.slack import (
     get_slack_session_id,
     should_ignore_slack_event,
@@ -716,6 +721,15 @@ class TestGetProviderSessionId:
         result = get_provider_session_id("slack", payload)
         assert result == "slack:T123:C1:1234.5678"
 
+    def test_gchat_delegates_to_gchat_session_id(self) -> None:
+        payload = {
+            "type": "MESSAGE",
+            "space": {"name": "spaces/AAAA"},
+            "message": {"thread": {"name": "spaces/AAAA/threads/DDDD"}},
+        }
+        result = get_provider_session_id("gchat", payload)
+        assert result == "gchat:spaces/AAAA:spaces/AAAA/threads/DDDD"
+
     def test_unknown_provider_returns_default(self) -> None:
         assert get_provider_session_id("unknown_provider", {}) == "default"
 
@@ -815,3 +829,368 @@ class TestGetSlackSessionId:
     def test_generic_type_returns_team_default(self) -> None:
         payload = {"type": "some_other_type", "team_id": "T123"}
         assert get_slack_session_id(payload) == "slack:T123:default"
+
+
+# -- GChat provider tests --
+
+
+@pytest.fixture
+def mock_gchat_provider_webhook_agent() -> tuple[MagicMock, asyncio.Event, list[str]]:
+    agent = MagicMock(spec=AgentRunner)
+    agent.name = "GChat Async Agent"
+    agent.description = "GChat provider webhook agent (fire-and-forget)"
+    agent.afm = MagicMock()
+    agent.afm.metadata = MagicMock()
+    agent.afm.metadata.version = "1.0.0"
+
+    interface = WebhookInterface(
+        type="webhook",
+        prompt="GChat event: ${http:payload.message.text}",
+        signature=Signature(input=JSONSchema(type="object")),
+        subscription=Subscription(
+            protocol="provider",
+            provider="gchat",
+            provider_config={"verification_token": "test-gchat-token"},
+        ),
+        exposure=Exposure(http=HTTPExposure(path="/gchat")),
+    )
+    agent.afm.metadata.interfaces = [interface]
+
+    seen_prompts: list[str] = []
+    ran = asyncio.Event()
+
+    async def mock_arun(input_data: str, session_id: str = "default") -> str:
+        seen_prompts.append(input_data)
+        ran.set()
+        return f"Processed gchat prompt: {input_data}"
+
+    agent.arun = mock_arun
+    return agent, ran, seen_prompts
+
+
+@pytest.fixture
+def mock_gchat_provider_webhook_agent_sync() -> MagicMock:
+    agent = MagicMock(spec=AgentRunner)
+    agent.name = "GChat Sync Agent"
+    agent.description = "GChat provider webhook agent (sync response)"
+    agent.afm = MagicMock()
+    agent.afm.metadata = MagicMock()
+    agent.afm.metadata.version = "1.0.0"
+
+    interface = WebhookInterface(
+        type="webhook",
+        prompt="GChat event: ${http:payload.message.text}",
+        signature=Signature(
+            input=JSONSchema(type="object"),
+            output=JSONSchema(type="string"),
+        ),
+        subscription=Subscription(
+            protocol="provider",
+            provider="gchat",
+            provider_config={"verification_token": "test-gchat-token"},
+        ),
+        exposure=Exposure(http=HTTPExposure(path="/gchat")),
+        has_explicit_output_schema=True,
+    )
+    agent.afm.metadata.interfaces = [interface]
+
+    async def mock_arun(input_data: str, session_id: str = "default") -> str:
+        return "Hello from GChat agent"
+
+    agent.arun = mock_arun
+    return agent
+
+
+class TestVerifyGChatRequestToken:
+    def test_valid_token(self) -> None:
+        payload = {"type": "MESSAGE", "token": "my-token"}
+        assert verify_gchat_request_token(payload, "my-token") is True
+
+    def test_invalid_token(self) -> None:
+        payload = {"type": "MESSAGE", "token": "wrong-token"}
+        assert verify_gchat_request_token(payload, "my-token") is False
+
+    def test_missing_token(self) -> None:
+        payload = {"type": "MESSAGE"}
+        assert verify_gchat_request_token(payload, "my-token") is False
+
+    def test_non_string_token(self) -> None:
+        payload = {"type": "MESSAGE", "token": 12345}
+        assert verify_gchat_request_token(payload, "my-token") is False
+
+    def test_non_dict_payload(self) -> None:
+        assert verify_gchat_request_token("not a dict", "my-token") is False
+
+
+class TestShouldIgnoreGChatEvent:
+    def test_message_event_not_ignored(self) -> None:
+        payload = {
+            "type": "MESSAGE",
+            "message": {"sender": {"type": "HUMAN"}},
+        }
+        assert should_ignore_gchat_event(payload) is False
+
+    def test_added_to_space_not_ignored(self) -> None:
+        payload = {"type": "ADDED_TO_SPACE"}
+        assert should_ignore_gchat_event(payload) is False
+
+    def test_removed_from_space_ignored(self) -> None:
+        payload = {"type": "REMOVED_FROM_SPACE"}
+        assert should_ignore_gchat_event(payload) is True
+
+    def test_card_clicked_ignored(self) -> None:
+        payload = {"type": "CARD_CLICKED"}
+        assert should_ignore_gchat_event(payload) is True
+
+    def test_unknown_event_type_ignored(self) -> None:
+        payload = {"type": "SOME_FUTURE_EVENT"}
+        assert should_ignore_gchat_event(payload) is True
+
+    def test_bot_sender_ignored(self) -> None:
+        payload = {
+            "type": "MESSAGE",
+            "message": {"sender": {"type": "BOT"}},
+        }
+        assert should_ignore_gchat_event(payload) is True
+
+    def test_non_dict_payload_not_ignored(self) -> None:
+        assert should_ignore_gchat_event("not a dict") is False
+
+    def test_missing_type_ignored(self) -> None:
+        assert should_ignore_gchat_event({}) is True
+
+
+class TestGetGChatSessionId:
+    def test_space_and_thread(self) -> None:
+        payload = {
+            "type": "MESSAGE",
+            "space": {"name": "spaces/AAAA"},
+            "message": {"thread": {"name": "spaces/AAAA/threads/DDDD"}},
+        }
+        assert (
+            get_gchat_session_id(payload)
+            == "gchat:spaces/AAAA:spaces/AAAA/threads/DDDD"
+        )
+
+    def test_space_and_user_fallback(self) -> None:
+        payload = {
+            "type": "MESSAGE",
+            "space": {"name": "spaces/AAAA"},
+            "message": {"text": "hello"},
+            "user": {"name": "users/CCCC"},
+        }
+        assert get_gchat_session_id(payload) == "gchat:spaces/AAAA:users/CCCC"
+
+    def test_space_only_fallback(self) -> None:
+        payload = {
+            "type": "MESSAGE",
+            "space": {"name": "spaces/AAAA"},
+        }
+        assert get_gchat_session_id(payload) == "gchat:spaces/AAAA:default"
+
+    def test_no_space(self) -> None:
+        payload = {"type": "MESSAGE"}
+        assert get_gchat_session_id(payload) == "gchat:unknown-space:default"
+
+    def test_non_dict_payload(self) -> None:
+        assert get_gchat_session_id("not a dict") == "default"
+
+    def test_empty_space_name(self) -> None:
+        payload = {"type": "MESSAGE", "space": {"name": ""}}
+        assert get_gchat_session_id(payload) == "gchat:unknown-space:default"
+
+
+class TestGChatWebhookEndpoint:
+    @pytest.mark.asyncio
+    async def test_gchat_fire_and_forget_returns_202(
+        self,
+        mock_gchat_provider_webhook_agent: tuple[
+            MagicMock, asyncio.Event, list[str]
+        ],
+    ) -> None:
+        agent, ran, seen_prompts = mock_gchat_provider_webhook_agent
+        app = create_webhook_app(
+            agent, auto_subscribe=False, verify_signatures=False
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/gchat",
+                json={
+                    "type": "MESSAGE",
+                    "message": {
+                        "text": "hello gchat",
+                        "sender": {"type": "HUMAN"},
+                    },
+                },
+            )
+
+        assert response.status_code == 202
+        assert response.json()["status"] == "accepted"
+        await asyncio.wait_for(ran.wait(), timeout=2.0)
+        assert seen_prompts == ["GChat event: hello gchat"]
+
+    @pytest.mark.asyncio
+    async def test_gchat_sync_response_returns_json_text(
+        self,
+        mock_gchat_provider_webhook_agent_sync: MagicMock,
+    ) -> None:
+        app = create_webhook_app(
+            mock_gchat_provider_webhook_agent_sync,
+            auto_subscribe=False,
+            verify_signatures=False,
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/gchat",
+                json={
+                    "type": "MESSAGE",
+                    "message": {
+                        "text": "hello sync",
+                        "sender": {"type": "HUMAN"},
+                    },
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"text": "Hello from GChat agent"}
+
+    @pytest.mark.asyncio
+    async def test_gchat_ignores_removed_from_space(
+        self,
+        mock_gchat_provider_webhook_agent: tuple[
+            MagicMock, asyncio.Event, list[str]
+        ],
+    ) -> None:
+        agent, _, _ = mock_gchat_provider_webhook_agent
+        app = create_webhook_app(
+            agent, auto_subscribe=False, verify_signatures=False
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/gchat",
+                json={"type": "REMOVED_FROM_SPACE"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {}
+
+    @pytest.mark.asyncio
+    async def test_gchat_ignores_bot_sender(
+        self,
+        mock_gchat_provider_webhook_agent: tuple[
+            MagicMock, asyncio.Event, list[str]
+        ],
+    ) -> None:
+        agent, _, _ = mock_gchat_provider_webhook_agent
+        app = create_webhook_app(
+            agent, auto_subscribe=False, verify_signatures=False
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/gchat",
+                json={
+                    "type": "MESSAGE",
+                    "message": {"sender": {"type": "BOT"}},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {}
+
+    @pytest.mark.asyncio
+    async def test_gchat_verification_rejects_bad_token(
+        self,
+        mock_gchat_provider_webhook_agent: tuple[
+            MagicMock, asyncio.Event, list[str]
+        ],
+    ) -> None:
+        agent, _, _ = mock_gchat_provider_webhook_agent
+        app = create_webhook_app(
+            agent, auto_subscribe=False, verify_signatures=True
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/gchat",
+                json={
+                    "type": "MESSAGE",
+                    "token": "wrong-token",
+                    "message": {"text": "hi"},
+                },
+            )
+
+        assert response.status_code == 401
+        assert "Invalid GChat verification token" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_gchat_verification_accepts_valid_token(
+        self,
+        mock_gchat_provider_webhook_agent: tuple[
+            MagicMock, asyncio.Event, list[str]
+        ],
+    ) -> None:
+        agent, ran, _ = mock_gchat_provider_webhook_agent
+        app = create_webhook_app(
+            agent, auto_subscribe=False, verify_signatures=True
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/gchat",
+                json={
+                    "type": "MESSAGE",
+                    "token": "test-gchat-token",
+                    "message": {
+                        "text": "verified msg",
+                        "sender": {"type": "HUMAN"},
+                    },
+                },
+            )
+
+        assert response.status_code == 202
+        await asyncio.wait_for(ran.wait(), timeout=2.0)
+
+    def test_gchat_does_not_register_websub_get_endpoint(
+        self,
+        mock_gchat_provider_webhook_agent: tuple[
+            MagicMock, asyncio.Event, list[str]
+        ],
+    ) -> None:
+        agent, _, _ = mock_gchat_provider_webhook_agent
+        app = create_webhook_app(
+            agent, auto_subscribe=False, verify_signatures=False
+        )
+        client = TestClient(app)
+
+        response = client.get(
+            "/gchat",
+            params={
+                "hub.mode": "subscribe",
+                "hub.topic": "https://example.com/events",
+                "hub.challenge": "test-challenge",
+            },
+        )
+
+        assert response.status_code == 405

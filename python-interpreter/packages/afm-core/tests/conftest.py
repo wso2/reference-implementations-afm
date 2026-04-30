@@ -45,6 +45,11 @@ def sample_provider_webhook_path(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
+def sample_gchat_provider_webhook_path(fixtures_dir: Path) -> Path:
+    return fixtures_dir / "sample_gchat_provider_webhook_agent.afm.md"
+
+
+@pytest.fixture
 def sample_minimal_path(fixtures_dir: Path) -> Path:
     return fixtures_dir / "sample_minimal.afm.md"
 

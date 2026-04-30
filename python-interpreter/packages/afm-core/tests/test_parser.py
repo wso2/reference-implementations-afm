@@ -137,6 +137,24 @@ class TestParseAfm:
         assert interface.exposure.http is not None
         assert interface.exposure.http.path == "/slack"
 
+    def test_parse_gchat_provider_webhook_agent(
+        self, sample_gchat_provider_webhook_path: Path
+    ) -> None:
+        content = sample_gchat_provider_webhook_path.read_text()
+        result = parse_afm(content)
+
+        assert result.metadata.interfaces is not None
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, WebhookInterface)
+        assert interface.subscription.protocol == "provider"
+        assert interface.subscription.provider == "gchat"
+        assert interface.subscription.provider_config == {
+            "verification_token": "test-verification-token"
+        }
+        assert interface.has_explicit_output_schema is False
+        assert interface.exposure.http is not None
+        assert interface.exposure.http.path == "/gchat"
+
     def test_parse_minimal_agent(self, sample_minimal_path: Path) -> None:
         content = sample_minimal_path.read_text()
         result = parse_afm(content)
@@ -293,6 +311,35 @@ Instructions.
             parse_afm(content)
 
         assert "does not support synchronous webhook responses" in str(exc_info.value)
+
+    def test_gchat_provider_allows_explicit_output_schema(self) -> None:
+        content = """---
+spec_version: "0.3.0"
+interfaces:
+  - type: webhook
+    signature:
+      output:
+        type: object
+        properties:
+          text:
+            type: string
+    subscription:
+      protocol: "provider"
+      provider: "gchat"
+      provider_config:
+        verification_token: "secret"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, WebhookInterface)
+        assert interface.has_explicit_output_schema is True
 
     def test_parse_multiline_role_and_instructions(self) -> None:
         content = """---
