@@ -10,7 +10,7 @@ interfaces:
     mode: notification
     prompt: "[${http:payload.type}] Reply to ${http:payload.message.text}"
     platform_config:
-      verification_token: "test-verification-token"
+      project_number: "test-project-number"
     exposure:
       http:
         path: "/gchat"

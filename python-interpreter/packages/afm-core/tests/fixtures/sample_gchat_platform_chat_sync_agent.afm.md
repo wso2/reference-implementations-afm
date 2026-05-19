@@ -16,7 +16,7 @@ interfaces:
           text:
             type: string
     platform_config:
-      verification_token: "test-verification-token"
+      endpoint_url: "http://example.com/gchat"
     exposure:
       http:
         path: "/gchat"

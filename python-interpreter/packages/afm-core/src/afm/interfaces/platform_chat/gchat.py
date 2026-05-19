@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
-import hmac
 import logging
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Self
 
+import jwt
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict
+from jwt import PyJWKClient
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from ._handler import PlatformHandler
 
@@ -34,25 +36,162 @@ logger = logging.getLogger(__name__)
 # Event types that the agent can act on.
 _ACTIONABLE_EVENT_TYPES: frozenset[str] = frozenset({"MESSAGE", "ADDED_TO_SPACE"})
 
+# Google Chat service account that issues bearer tokens.
+_CHAT_ISSUER = "chat@system.gserviceaccount.com"
+
+# Accepted issuers for Google-signed OIDC ID tokens.
+_GOOGLE_OIDC_ISSUERS: frozenset[str] = frozenset(
+    {"accounts.google.com", "https://accounts.google.com"}
+)
+
+# JWKS endpoints used to verify bearer token signatures.
+_GOOGLE_OIDC_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+_GOOGLE_SA_JWKS_URL = (
+    "https://www.googleapis.com/service_accounts/v1/jwk/chat@system.gserviceaccount.com"
+)
+
+# JWKS clients are cached per-URL by PyJWKClient (keys are cached in-process).
+_jwks_clients: dict[str, PyJWKClient] = {}
+
 
 class GChatConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    verification_token: str | None = None
+    project_number: str | int | None = None
+    endpoint_url: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_audience(self) -> Self:
+        has_project = self.project_number is not None and str(self.project_number) != ""
+        has_url = isinstance(self.endpoint_url, str) and self.endpoint_url != ""
+        if has_project and has_url:
+            raise ValueError(
+                "GChat platform_config accepts only one of "
+                "'project_number' or 'endpoint_url', not both."
+            )
+        return self
 
 
-def verify_gchat_request_token(
-    payload: object,
-    verification_token: str,
+@dataclass(frozen=True)
+class HttpEndpointUrlConfig:
+    """Verify bearer tokens as Google-signed OIDC ID tokens.
+
+    Used when the Chat app's Authentication Audience is set to HTTP endpoint URL.
+    The `aud` claim of the incoming JWT must match `endpoint_url`.
+    """
+
+    endpoint_url: str
+
+
+@dataclass(frozen=True)
+class ProjectNumberConfig:
+    """Verify bearer tokens as self-signed JWTs from the Chat service account.
+
+    Used when the Chat app's Authentication Audience is set to Project Number.
+    The `aud` claim of the incoming JWT must match `project_number`.
+    """
+
+    project_number: str
+
+
+HttpConfig = HttpEndpointUrlConfig | ProjectNumberConfig
+
+
+def get_http_config(config: GChatConfig) -> HttpConfig | None:
+    if isinstance(config.endpoint_url, str) and config.endpoint_url:
+        return HttpEndpointUrlConfig(endpoint_url=config.endpoint_url)
+
+    project_number = config.project_number
+    if isinstance(project_number, str) and project_number:
+        return ProjectNumberConfig(project_number=project_number)
+    if isinstance(project_number, int):
+        return ProjectNumberConfig(project_number=str(project_number))
+
+    return None
+
+
+def extract_bearer_token(auth_header: str | None) -> str | None:
+    if not isinstance(auth_header, str) or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[len("Bearer ") :].strip()
+    return token or None
+
+
+def verify_gchat_bearer_token(
+    auth_header: str | None,
+    config: HttpConfig,
 ) -> bool:
-    if not isinstance(payload, dict):
+    token = extract_bearer_token(auth_header)
+    if token is None:
+        logger.warning(
+            "GChat verification failed: missing or malformed Authorization header"
+        )
         return False
 
-    token = payload.get("token")
-    if not isinstance(token, str):
+    try:
+        if isinstance(config, HttpEndpointUrlConfig):
+            return _verify_id_token(token, config.endpoint_url)
+        return _verify_project_number_jwt(token, config.project_number)
+    except Exception:
+        logger.exception("GChat bearer token verification raised an unexpected error")
         return False
 
-    return hmac.compare_digest(token, verification_token)
+
+def _get_jwks_client(url: str) -> PyJWKClient:
+    client = _jwks_clients.get(url)
+    if client is None:
+        client = PyJWKClient(url, cache_keys=True)
+        _jwks_clients[url] = client
+    return client
+
+
+def _verify_id_token(token: str, expected_audience: str) -> bool:
+    try:
+        signing_key = _get_jwks_client(_GOOGLE_OIDC_JWKS_URL).get_signing_key_from_jwt(
+            token
+        )
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=expected_audience,
+            issuer=list(_GOOGLE_OIDC_ISSUERS),
+            options={"require": ["exp", "iat", "iss", "aud"]},
+        )
+    except jwt.PyJWTError as exc:
+        logger.warning("GChat ID token validation failed: %s", exc)
+        return False
+
+    email = payload.get("email")
+    if email != _CHAT_ISSUER:
+        logger.warning("GChat ID token has unexpected email claim: %r", email)
+        return False
+
+    if payload.get("email_verified") is not True:
+        logger.warning("GChat ID token email_verified claim is not true")
+        return False
+
+    return True
+
+
+def _verify_project_number_jwt(token: str, expected_audience: str) -> bool:
+    try:
+        signing_key = _get_jwks_client(_GOOGLE_SA_JWKS_URL).get_signing_key_from_jwt(
+            token
+        )
+        jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=expected_audience,
+            issuer=_CHAT_ISSUER,
+            options={"require": ["exp", "iat", "iss", "aud"]},
+        )
+    except jwt.PyJWTError as exc:
+        logger.warning("GChat project-number JWT validation failed: %s", exc)
+        return False
+
+    return True
 
 
 def get_gchat_session_id(payload: object) -> str:
@@ -116,10 +255,11 @@ class GChatHandler(PlatformHandler):
         if not verify_signatures:
             return
         config = self.parse_config(interface.platform_config)
-        if config.verification_token is None:
+        if get_http_config(config) is None:
             raise ValueError(
                 "GChat platform chat requires "
-                "platform_config.verification_token when "
+                "platform_config.project_number or "
+                "platform_config.endpoint_url when "
                 "signature verification is enabled."
             )
 
@@ -129,25 +269,26 @@ class GChatHandler(PlatformHandler):
         headers: Mapping[str, str],
         interface: PlatformChatInterface,
     ) -> None:
-        # GChat verification is on the parsed payload's `token` field.
-        return
+        config = self.parse_config(interface.platform_config)
+        http_config = get_http_config(config)
+        if http_config is None:
+            raise HTTPException(
+                status_code=500,
+                detail="GChat verification audience is not configured",
+            )
+        auth_header = headers.get("authorization") or headers.get("Authorization")
+        if not verify_gchat_bearer_token(auth_header, http_config):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid GChat bearer token",
+            )
 
     def verify_parsed_payload(
         self,
         payload: Any,
         interface: PlatformChatInterface,
     ) -> None:
-        config = self.parse_config(interface.platform_config)
-        if config.verification_token is None:
-            raise HTTPException(
-                status_code=500,
-                detail="GChat verification token is not configured",
-            )
-        if not verify_gchat_request_token(payload, config.verification_token):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid GChat verification token",
-            )
+        return
 
     def should_ignore(self, payload: Any) -> bool:
         return should_ignore_gchat_event(payload)
