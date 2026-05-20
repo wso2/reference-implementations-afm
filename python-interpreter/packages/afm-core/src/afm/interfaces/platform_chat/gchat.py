@@ -205,14 +205,6 @@ def get_gchat_session_id(payload: object) -> str:
     if space_name is None:
         return "gchat:unknown-space:default"
 
-    message = payload.get("message")
-    if isinstance(message, dict):
-        thread = message.get("thread")
-        if isinstance(thread, dict):
-            thread_name = _non_empty_string(thread.get("name"))
-            if thread_name:
-                return f"gchat:{space_name}:{thread_name}"
-
     user = payload.get("user")
     if isinstance(user, dict):
         user_name = _non_empty_string(user.get("name"))

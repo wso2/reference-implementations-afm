@@ -440,10 +440,10 @@ class TestGetPlatformSessionId:
         payload = {
             "type": "MESSAGE",
             "space": {"name": "spaces/AAAA"},
-            "message": {"thread": {"name": "spaces/AAAA/threads/DDDD"}},
+            "user": {"name": "users/CCCC"},
         }
         result = get_platform_session_id("gchat", payload)
-        assert result == "gchat:spaces/AAAA:spaces/AAAA/threads/DDDD"
+        assert result == "gchat:spaces/AAAA:users/CCCC"
 
     def test_unknown_platform_returns_default(self) -> None:
         assert get_platform_session_id("unknown_platform", {}) == "default"
@@ -652,17 +652,6 @@ class TestShouldIgnoreGChatEvent:
 
 
 class TestGetGChatSessionId:
-    def test_space_and_thread(self) -> None:
-        payload = {
-            "type": "MESSAGE",
-            "space": {"name": "spaces/AAAA"},
-            "message": {"thread": {"name": "spaces/AAAA/threads/DDDD"}},
-        }
-        assert (
-            get_gchat_session_id(payload)
-            == "gchat:spaces/AAAA:spaces/AAAA/threads/DDDD"
-        )
-
     def test_space_and_user_fallback(self) -> None:
         payload = {
             "type": "MESSAGE",
@@ -913,9 +902,7 @@ class TestGChatConfig:
         assert config.endpoint_url is None
 
     def test_valid_endpoint_url(self) -> None:
-        config = GChatConfig.model_validate(
-            {"endpoint_url": "https://example.com/x"}
-        )
+        config = GChatConfig.model_validate({"endpoint_url": "https://example.com/x"})
         assert config.endpoint_url == "https://example.com/x"
         assert config.project_number is None
 
