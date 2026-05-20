@@ -11,8 +11,11 @@ COPY modules ./modules
 
 RUN bal build
 
-# Runtime stage - slim JRE only
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre-alpine-3.23
+
+RUN apk add --no-cache gcompat libc6-compat libgcc
+
+ENV LD_PRELOAD=/lib/libgcompat.so.0
 
 WORKDIR /app
 
