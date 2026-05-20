@@ -31,6 +31,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # VARIANT=full installs Node.js, npm (npx), git, and uv/uvx for MCP server support.
 # VARIANT=slim ships only Python + .venv.
 FROM python:3.13-alpine
+
+# Upgrade OpenSSL libs to pick up security fixes not yet in the base image
+RUN apk upgrade --no-cache libcrypto3 libssl3
 ARG VARIANT=full
 
 # Validate VARIANT early so typos fail loudly instead of silently producing a slim build.
