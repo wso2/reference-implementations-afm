@@ -63,9 +63,7 @@ def verify_slack_request_signature(
     if abs(now - timestamp_int) > SLACK_SIGNATURE_MAX_AGE_SECONDS:
         return False
 
-    sig_basestring = (
-        f"{SLACK_SIGNATURE_VERSION}:{timestamp}:{body.decode('utf-8')}"
-    )
+    sig_basestring = f"{SLACK_SIGNATURE_VERSION}:{timestamp}:{body.decode('utf-8')}"
     expected_sig = (
         f"{SLACK_SIGNATURE_VERSION}="
         + hmac.new(
@@ -93,15 +91,15 @@ def get_slack_session_id(payload: object) -> str:
         event = payload.get("event")
         if isinstance(event, dict):
             channel = _non_empty_string(event.get("channel"))
-            thread_id = _non_empty_string(
-                event.get("thread_ts")
-            ) or _non_empty_string(event.get("ts"))
+            thread_id = _non_empty_string(event.get("thread_ts")) or _non_empty_string(
+                event.get("ts")
+            )
             if channel and thread_id:
                 return f"slack:{team_id}:{channel}:{thread_id}"
 
-            user_id = _non_empty_string(
-                event.get("user")
-            ) or _get_authorization_user(payload)
+            user_id = _non_empty_string(event.get("user")) or _get_authorization_user(
+                payload
+            )
             if channel and user_id:
                 return f"slack:{team_id}:{channel}:{user_id}"
 

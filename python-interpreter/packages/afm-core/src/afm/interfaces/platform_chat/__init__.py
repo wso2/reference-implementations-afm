@@ -22,7 +22,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ...exceptions import TemplateEvaluationError
@@ -177,9 +177,7 @@ def create_platform_chat_router(
         if not is_request_mode:
             # Notification mode: acknowledge immediately and run
             # template evaluation + agent in the background.
-            async def _background(
-                p: object, h: dict[str, str], sid: str
-            ) -> None:
+            async def _background(p: object, h: dict[str, str], sid: str) -> None:
                 try:
                     prompt = _build_user_prompt(p, h)
                 except HTTPException:

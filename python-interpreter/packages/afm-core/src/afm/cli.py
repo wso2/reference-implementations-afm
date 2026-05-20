@@ -465,9 +465,7 @@ def run(
     consolechat, webchat, webhook, platform_chat = extract_interfaces(afm)
 
     # Check if we have anything to run
-    has_http = (
-        webchat is not None or webhook is not None or platform_chat is not None
-    )
+    has_http = webchat is not None or webhook is not None or platform_chat is not None
     has_console = (consolechat is not None or not has_http) and not no_console
 
     # Configure logging

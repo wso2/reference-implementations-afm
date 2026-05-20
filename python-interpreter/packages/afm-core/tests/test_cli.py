@@ -148,9 +148,7 @@ Instructions.
         assert result.exit_code != 0
         assert "signing_secrt" in result.output or "Invalid" in result.output
 
-    def test_validate_flags_unknown_platform(
-        self, runner: CliRunner, tmp_path: Path
-    ):
+    def test_validate_flags_unknown_platform(self, runner: CliRunner, tmp_path: Path):
         bad_file = tmp_path / "bad.afm.md"
         bad_file.write_text(
             """---

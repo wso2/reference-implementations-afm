@@ -44,9 +44,7 @@ def sample_slack_platform_chat_afm() -> Path:
 @pytest.fixture
 def sample_gchat_platform_chat_afm() -> Path:
     return (
-        Path(__file__).parent
-        / "fixtures"
-        / "sample_gchat_platform_chat_agent.afm.md"
+        Path(__file__).parent / "fixtures" / "sample_gchat_platform_chat_agent.afm.md"
     )
 
 
@@ -82,9 +80,7 @@ class TestPlatformChatIntegration:
                     messages, stop=stop, run_manager=run_manager, **kwargs
                 )
 
-        fake_llm = TrackingFakeLLM(
-            responses=["Hello from Slack"]
-        )
+        fake_llm = TrackingFakeLLM(responses=["Hello from Slack"])
         afm = parse_afm_file(sample_slack_platform_chat_afm, resolve_env=False)
         runner = LangChainRunner(afm, model=fake_llm)
         app = create_platform_chat_app(runner, verify_signatures=False)
@@ -105,7 +101,9 @@ class TestPlatformChatIntegration:
         assert response.content == b""
         await asyncio.wait_for(prompt_received.wait(), timeout=5.0)
         assert len(received_prompts) == 1
-        assert "[event_callback] Reply to Need help with the build" in received_prompts[0]
+        assert (
+            "[event_callback] Reply to Need help with the build" in received_prompts[0]
+        )
 
     @pytest.mark.asyncio
     async def test_gchat_platform_chat_notification(
@@ -129,9 +127,7 @@ class TestPlatformChatIntegration:
                     messages, stop=stop, run_manager=run_manager, **kwargs
                 )
 
-        fake_llm = TrackingFakeLLM(
-            responses=["Hello from GChat"]
-        )
+        fake_llm = TrackingFakeLLM(responses=["Hello from GChat"])
         afm = parse_afm_file(sample_gchat_platform_chat_afm, resolve_env=False)
         runner = LangChainRunner(afm, model=fake_llm)
         app = create_platform_chat_app(runner, verify_signatures=False)
@@ -162,9 +158,7 @@ class TestPlatformChatIntegration:
         fake_llm = FakeListChatModel(
             responses=['{"text": "Here is your deployment status."}']
         )
-        afm = parse_afm_file(
-            sample_gchat_platform_chat_sync_afm, resolve_env=False
-        )
+        afm = parse_afm_file(sample_gchat_platform_chat_sync_afm, resolve_env=False)
         runner = LangChainRunner(afm, model=fake_llm)
         app = create_platform_chat_app(runner, verify_signatures=False)
 

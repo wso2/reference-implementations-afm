@@ -179,8 +179,9 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
                     # Note: platformchat.prompt is allowed to contain http: variables
                     if _signature_contains_http_variable(interface.signature):
                         errored_fields.append("interfaces.platformchat.signature")
-                    if interface.exposure is not None and _exposure_contains_http_variable(
-                        interface.exposure
+                    if (
+                        interface.exposure is not None
+                        and _exposure_contains_http_variable(interface.exposure)
                     ):
                         errored_fields.append("interfaces.platformchat.exposure")
                     if contains_http_variable(interface.platform):

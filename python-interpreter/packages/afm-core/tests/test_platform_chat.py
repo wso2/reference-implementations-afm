@@ -158,6 +158,7 @@ class TestVerifySlackRequestSignature:
 
     def _make_signature(self, body: bytes, timestamp: str | None = None) -> str:
         import hmac as _hmac
+
         ts = timestamp or self.TIMESTAMP
         sig_basestring = f"v0:{ts}:{body.decode('utf-8')}"
         return (
@@ -172,87 +173,111 @@ class TestVerifySlackRequestSignature:
     def test_valid_signature(self) -> None:
         body = b'{"event":"test"}'
         sig = self._make_signature(body)
-        assert verify_slack_request_signature(
-            body,
-            timestamp=self.TIMESTAMP,
-            signature_header=sig,
-            signing_secret=self.SIGNING_SECRET,
-            current_time=int(self.TIMESTAMP),
-        ) is True
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=self.TIMESTAMP,
+                signature_header=sig,
+                signing_secret=self.SIGNING_SECRET,
+                current_time=int(self.TIMESTAMP),
+            )
+            is True
+        )
 
     def test_invalid_signature(self) -> None:
         body = b'{"event":"test"}'
-        assert verify_slack_request_signature(
-            body,
-            timestamp=self.TIMESTAMP,
-            signature_header="v0=bad",
-            signing_secret=self.SIGNING_SECRET,
-            current_time=int(self.TIMESTAMP),
-        ) is False
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=self.TIMESTAMP,
+                signature_header="v0=bad",
+                signing_secret=self.SIGNING_SECRET,
+                current_time=int(self.TIMESTAMP),
+            )
+            is False
+        )
 
     def test_missing_timestamp(self) -> None:
         body = b'{"event":"test"}'
         sig = self._make_signature(body)
-        assert verify_slack_request_signature(
-            body,
-            timestamp=None,
-            signature_header=sig,
-            signing_secret=self.SIGNING_SECRET,
-        ) is False
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=None,
+                signature_header=sig,
+                signing_secret=self.SIGNING_SECRET,
+            )
+            is False
+        )
 
     def test_missing_signature_header(self) -> None:
         body = b'{"event":"test"}'
-        assert verify_slack_request_signature(
-            body,
-            timestamp=self.TIMESTAMP,
-            signature_header=None,
-            signing_secret=self.SIGNING_SECRET,
-        ) is False
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=self.TIMESTAMP,
+                signature_header=None,
+                signing_secret=self.SIGNING_SECRET,
+            )
+            is False
+        )
 
     def test_non_numeric_timestamp(self) -> None:
         body = b'{"event":"test"}'
         sig = self._make_signature(body, "not-a-number")
-        assert verify_slack_request_signature(
-            body,
-            timestamp="not-a-number",
-            signature_header=sig,
-            signing_secret=self.SIGNING_SECRET,
-        ) is False
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp="not-a-number",
+                signature_header=sig,
+                signing_secret=self.SIGNING_SECRET,
+            )
+            is False
+        )
 
     def test_expired_timestamp(self) -> None:
         body = b'{"event":"test"}'
         old_ts = "1000000000"
         sig = self._make_signature(body, old_ts)
-        assert verify_slack_request_signature(
-            body,
-            timestamp=old_ts,
-            signature_header=sig,
-            signing_secret=self.SIGNING_SECRET,
-            current_time=1000000000 + 60 * 5 + 1,
-        ) is False
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=old_ts,
+                signature_header=sig,
+                signing_secret=self.SIGNING_SECRET,
+                current_time=1000000000 + 60 * 5 + 1,
+            )
+            is False
+        )
 
     def test_timestamp_within_tolerance(self) -> None:
         body = b'{"event":"test"}'
         ts = "1000000000"
         sig = self._make_signature(body, ts)
-        assert verify_slack_request_signature(
-            body,
-            timestamp=ts,
-            signature_header=sig,
-            signing_secret=self.SIGNING_SECRET,
-            current_time=1000000000 + 60 * 5,
-        ) is True
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=ts,
+                signature_header=sig,
+                signing_secret=self.SIGNING_SECRET,
+                current_time=1000000000 + 60 * 5,
+            )
+            is True
+        )
 
     def test_wrong_secret(self) -> None:
         body = b'{"event":"test"}'
         sig = self._make_signature(body)
-        assert verify_slack_request_signature(
-            body,
-            timestamp=self.TIMESTAMP,
-            signature_header=sig,
-            signing_secret="wrong-secret",
-            current_time=int(self.TIMESTAMP),
-        ) is False
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=self.TIMESTAMP,
+                signature_header=sig,
+                signing_secret="wrong-secret",
+                current_time=int(self.TIMESTAMP),
+            )
+            is False
+        )
 
 
 class TestShouldIgnoreSlackEvent:
@@ -269,77 +294,133 @@ class TestShouldIgnoreSlackEvent:
         assert should_ignore_slack_event({"type": "event_callback"}) is True
 
     def test_event_callback_non_dict_event_ignored(self) -> None:
-        assert should_ignore_slack_event(
-            {"type": "event_callback", "event": "not-a-dict"}
-        ) is True
+        assert (
+            should_ignore_slack_event({"type": "event_callback", "event": "not-a-dict"})
+            is True
+        )
 
     def test_message_event_not_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message"},
-        }) is False
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message"},
+                }
+            )
+            is False
+        )
 
     def test_app_mention_event_not_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "app_mention"},
-        }) is False
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "app_mention"},
+                }
+            )
+            is False
+        )
 
     def test_unknown_event_type_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "reaction_added"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "reaction_added"},
+                }
+            )
+            is True
+        )
 
     def test_bot_message_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message", "bot_id": "B123"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message", "bot_id": "B123"},
+                }
+            )
+            is True
+        )
 
     def test_own_app_message_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "api_app_id": "A111",
-            "event": {"type": "message", "app_id": "A111"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "api_app_id": "A111",
+                    "event": {"type": "message", "app_id": "A111"},
+                }
+            )
+            is True
+        )
 
     def test_other_app_message_not_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "api_app_id": "A111",
-            "event": {"type": "message", "app_id": "A222"},
-        }) is False
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "api_app_id": "A111",
+                    "event": {"type": "message", "app_id": "A222"},
+                }
+            )
+            is False
+        )
 
     def test_message_changed_subtype_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message", "subtype": "message_changed"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message", "subtype": "message_changed"},
+                }
+            )
+            is True
+        )
 
     def test_message_deleted_subtype_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message", "subtype": "message_deleted"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message", "subtype": "message_deleted"},
+                }
+            )
+            is True
+        )
 
     def test_bot_message_subtype_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message", "subtype": "bot_message"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message", "subtype": "bot_message"},
+                }
+            )
+            is True
+        )
 
     def test_message_replied_subtype_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message", "subtype": "message_replied"},
-        }) is True
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message", "subtype": "message_replied"},
+                }
+            )
+            is True
+        )
 
     def test_unknown_subtype_not_ignored(self) -> None:
-        assert should_ignore_slack_event({
-            "type": "event_callback",
-            "event": {"type": "message", "subtype": "file_share"},
-        }) is False
+        assert (
+            should_ignore_slack_event(
+                {
+                    "type": "event_callback",
+                    "event": {"type": "message", "subtype": "file_share"},
+                }
+            )
+            is False
+        )
 
 
 class TestGetPlatformSessionId:
@@ -585,17 +666,13 @@ class TestGChatPlatformChatEndpoint:
     @pytest.mark.asyncio
     async def test_gchat_notification_returns_202(
         self,
-        mock_gchat_notification_agent: tuple[
-            MagicMock, asyncio.Event, list[str]
-        ],
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
         agent, ran, seen_prompts = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=False)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
                 json={
@@ -622,9 +699,7 @@ class TestGChatPlatformChatEndpoint:
         )
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
                 json={
@@ -642,17 +717,13 @@ class TestGChatPlatformChatEndpoint:
     @pytest.mark.asyncio
     async def test_gchat_ignores_removed_from_space(
         self,
-        mock_gchat_notification_agent: tuple[
-            MagicMock, asyncio.Event, list[str]
-        ],
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
         agent, _, _ = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=False)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
                 json={"type": "REMOVED_FROM_SPACE"},
@@ -664,17 +735,13 @@ class TestGChatPlatformChatEndpoint:
     @pytest.mark.asyncio
     async def test_gchat_ignores_bot_sender(
         self,
-        mock_gchat_notification_agent: tuple[
-            MagicMock, asyncio.Event, list[str]
-        ],
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
         agent, _, _ = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=False)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
                 json={
@@ -689,17 +756,13 @@ class TestGChatPlatformChatEndpoint:
     @pytest.mark.asyncio
     async def test_gchat_verification_rejects_bad_token(
         self,
-        mock_gchat_notification_agent: tuple[
-            MagicMock, asyncio.Event, list[str]
-        ],
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
         agent, _, _ = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=True)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
                 json={
@@ -715,17 +778,13 @@ class TestGChatPlatformChatEndpoint:
     @pytest.mark.asyncio
     async def test_gchat_verification_accepts_valid_token(
         self,
-        mock_gchat_notification_agent: tuple[
-            MagicMock, asyncio.Event, list[str]
-        ],
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
         agent, ran, _ = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=True)
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
                 json={
@@ -743,9 +802,7 @@ class TestGChatPlatformChatEndpoint:
 
     def test_gchat_does_not_register_websub_get_endpoint(
         self,
-        mock_gchat_notification_agent: tuple[
-            MagicMock, asyncio.Event, list[str]
-        ],
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
         agent, _, _ = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=False)

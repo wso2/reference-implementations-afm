@@ -221,10 +221,7 @@ class PlatformChatInterface(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_fields(self) -> Self:
-        if (
-            self.mode != PlatformChatMode.REQUEST
-            and self.has_explicit_output_schema
-        ):
+        if self.mode != PlatformChatMode.REQUEST and self.has_explicit_output_schema:
             raise ValueError(
                 f"mode '{self.mode.value}' does not support synchronous "
                 "responses; 'signature.output' must not be specified"
@@ -238,10 +235,7 @@ class PlatformChatInterface(BaseModel):
 
 # Type alias for any interface type
 Interface = Annotated[
-    ConsoleChatInterface
-    | WebChatInterface
-    | PlatformChatInterface
-    | WebhookInterface,
+    ConsoleChatInterface | WebChatInterface | PlatformChatInterface | WebhookInterface,
     Field(discriminator="type"),
 ]
 
