@@ -1,17 +1,22 @@
 ---
 spec_version: '0.3.0'
-name: "GChatWebhookAgent"
-description: "A test agent for GChat provider-style webhook AFM processing."
+name: "GChatSyncPlatformChatAgent"
+description: "A test agent for GChat platform chat with synchronous responses."
 author: "Copilot"
 version: "0.1.0"
 interfaces:
-  - type: webhook
+  - type: platformchat
+    platform: gchat
+    mode: request
     prompt: "[${http:payload.type}] Reply to ${http:payload.message.text}"
-    subscription:
-      protocol: "provider"
-      provider: "gchat"
-      provider_config:
-        verification_token: "test-verification-token"
+    signature:
+      output:
+        type: object
+        properties:
+          text:
+            type: string
+    platform_config:
+      verification_token: "test-verification-token"
     exposure:
       http:
         path: "/gchat"
@@ -25,7 +30,7 @@ model:
 ---
 
 # Role
-You are a Google Chat assistant that responds to incoming events.
+You are a Google Chat assistant that responds to incoming events synchronously.
 
 # Instructions
 - Read the incoming Google Chat event.

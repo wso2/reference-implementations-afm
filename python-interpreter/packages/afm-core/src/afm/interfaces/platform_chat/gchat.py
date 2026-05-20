@@ -18,17 +18,27 @@ from __future__ import annotations
 
 import hmac
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping
 
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict
+
+from ._handler import PlatformHandler
 
 if TYPE_CHECKING:
-    from ...models import WebhookInterface
+    from ...models import PlatformChatInterface
 
 logger = logging.getLogger(__name__)
 
 # Event types that the agent can act on.
 _ACTIONABLE_EVENT_TYPES: frozenset[str] = frozenset({"MESSAGE", "ADDED_TO_SPACE"})
+
+
+class GChatConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verification_token: str | None = None
 
 
 def verify_gchat_request_token(
@@ -73,15 +83,6 @@ def get_gchat_session_id(payload: object) -> str:
     return f"gchat:{space_name}:default"
 
 
-def get_verification_token(interface: WebhookInterface) -> str | None:
-    provider_config = interface.subscription.provider_config
-    if not isinstance(provider_config, dict):
-        return None
-
-    token = provider_config.get("verification_token")
-    return token if isinstance(token, str) else None
-
-
 def should_ignore_gchat_event(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -100,12 +101,72 @@ def should_ignore_gchat_event(payload: object) -> bool:
     return False
 
 
-def create_gchat_response(result: str | object) -> Response:
-    # If the result is already a dict (e.g. from output schema coercion),
-    # return it directly — it should already contain the expected structure.
-    if isinstance(result, dict):
-        return JSONResponse(content=result)
-    return JSONResponse(content={"text": result})
+class GChatHandler(PlatformHandler):
+    name: ClassVar[str] = "gchat"
+
+    def parse_config(self, raw_config: Mapping[str, Any] | None) -> GChatConfig:
+        return GChatConfig.model_validate(dict(raw_config or {}))
+
+    def validate_runtime_config(
+        self,
+        interface: PlatformChatInterface,
+        *,
+        verify_signatures: bool,
+    ) -> None:
+        if not verify_signatures:
+            return
+        config = self.parse_config(interface.platform_config)
+        if config.verification_token is None:
+            raise ValueError(
+                "GChat platform chat requires "
+                "platform_config.verification_token when "
+                "signature verification is enabled."
+            )
+
+    def verify_raw_request(
+        self,
+        body: bytes,
+        headers: Mapping[str, str],
+        interface: PlatformChatInterface,
+    ) -> None:
+        # GChat verification is on the parsed payload's `token` field.
+        return
+
+    def verify_parsed_payload(
+        self,
+        payload: Any,
+        interface: PlatformChatInterface,
+    ) -> None:
+        config = self.parse_config(interface.platform_config)
+        if config.verification_token is None:
+            raise HTTPException(
+                status_code=500,
+                detail="GChat verification token is not configured",
+            )
+        if not verify_gchat_request_token(payload, config.verification_token):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid GChat verification token",
+            )
+
+    def should_ignore(self, payload: Any) -> bool:
+        return should_ignore_gchat_event(payload)
+
+    def create_ignored_response(self) -> Response:
+        return JSONResponse(status_code=200, content={})
+
+    def get_session_id(self, payload: Any) -> str:
+        return get_gchat_session_id(payload)
+
+    def create_notification_ack(self) -> Response:
+        return JSONResponse(status_code=202, content={"status": "accepted"})
+
+    def create_request_response(self, result: str | object) -> Response:
+        # If the result is already a dict (e.g. from output schema coercion),
+        # return it directly — it should already contain the expected structure.
+        if isinstance(result, dict):
+            return JSONResponse(content=result)
+        return JSONResponse(content={"text": result})
 
 
 def _non_empty_string(value: object) -> str | None:

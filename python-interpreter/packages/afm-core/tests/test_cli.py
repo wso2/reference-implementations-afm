@@ -119,6 +119,63 @@ class TestValidateCommand:
         assert "MCP Servers:" in result.output
         assert "TestServer" in result.output
 
+    def test_validate_flags_unknown_platform_chat_config_field(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        bad_file = tmp_path / "bad.afm.md"
+        bad_file.write_text(
+            """---
+spec_version: "0.3.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    platform_config:
+      signing_secrt: "abc"
+    exposure:
+      http:
+        path: "/slack"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["validate", str(bad_file)])
+        assert result.exit_code != 0
+        assert "signing_secrt" in result.output or "Invalid" in result.output
+
+    def test_validate_flags_unknown_platform(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        bad_file = tmp_path / "bad.afm.md"
+        bad_file.write_text(
+            """---
+spec_version: "0.3.0"
+interfaces:
+  - type: platformchat
+    platform: teams
+    mode: notification
+    platform_config: {}
+    exposure:
+      http:
+        path: "/teams"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["validate", str(bad_file)])
+        assert result.exit_code != 0
+        assert "teams" in result.output or "not supported" in result.output
+
     def test_validate_invalid_file(self, runner: CliRunner, tmp_path: Path):
         invalid_file = tmp_path / "invalid.afm.md"
         invalid_file.write_text("""---

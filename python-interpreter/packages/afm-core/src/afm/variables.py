@@ -24,6 +24,7 @@ from .exceptions import AFMValidationError, VariableResolutionError
 from .models import (
     ConsoleChatInterface,
     HttpTransport,
+    PlatformChatInterface,
     StdioTransport,
     WebChatInterface,
     WebhookInterface,
@@ -174,6 +175,22 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
                         errored_fields.append("interfaces.webhook.exposure")
                     if _subscription_contains_http_variable(interface.subscription):
                         errored_fields.append("interfaces.webhook.subscription")
+                case PlatformChatInterface():
+                    # Note: platformchat.prompt is allowed to contain http: variables
+                    if _signature_contains_http_variable(interface.signature):
+                        errored_fields.append("interfaces.platformchat.signature")
+                    if interface.exposure is not None and _exposure_contains_http_variable(
+                        interface.exposure
+                    ):
+                        errored_fields.append("interfaces.platformchat.exposure")
+                    if contains_http_variable(interface.platform):
+                        errored_fields.append("interfaces.platformchat.platform")
+                    if interface.platform_config and _nested_contains_http_variable(
+                        interface.platform_config
+                    ):
+                        errored_fields.append("interfaces.platformchat.platform_config")
+                    if _auth_contains_http_variable(interface.authentication):
+                        errored_fields.append("interfaces.platformchat.authentication")
 
     # Check tools
     if metadata.tools and metadata.tools.mcp:
@@ -263,12 +280,6 @@ def _subscription_contains_http_variable(subscription: Subscription) -> bool:
     if subscription.callback and contains_http_variable(subscription.callback):
         return True
     if subscription.secret and contains_http_variable(subscription.secret):
-        return True
-    if subscription.provider and contains_http_variable(subscription.provider):
-        return True
-    if subscription.provider_config and _nested_contains_http_variable(
-        subscription.provider_config
-    ):
         return True
     if _auth_contains_http_variable(subscription.authentication):
         return True

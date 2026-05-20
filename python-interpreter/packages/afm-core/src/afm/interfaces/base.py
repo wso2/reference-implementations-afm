@@ -22,6 +22,7 @@ from ..models import (
     ConsoleChatInterface,
     Interface,
     InterfaceType,
+    PlatformChatInterface,
     WebChatInterface,
     WebhookInterface,
 )
@@ -60,11 +61,21 @@ def get_webhook_interface(afm: AFMRecord) -> WebhookInterface:
     return interface
 
 
-def get_http_path(interface: WebChatInterface | WebhookInterface) -> str:
+def get_platform_chat_interface(afm: AFMRecord) -> PlatformChatInterface:
+    interface = get_interface_by_type(afm, InterfaceType.PLATFORM_CHAT)
+    assert isinstance(interface, PlatformChatInterface)
+    return interface
+
+
+def get_http_path(
+    interface: WebChatInterface | WebhookInterface | PlatformChatInterface,
+) -> str:
     if interface.exposure and interface.exposure.http:
         return interface.exposure.http.path
 
     # Defaults per spec
     if isinstance(interface, WebChatInterface):
         return "/chat"
+    if isinstance(interface, PlatformChatInterface):
+        return f"/{interface.platform}"
     return "/webhook"

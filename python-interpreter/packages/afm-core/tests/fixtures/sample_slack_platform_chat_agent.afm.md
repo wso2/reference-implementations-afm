@@ -1,17 +1,16 @@
 ---
 spec_version: '0.3.0'
-name: "SlackWebhookAgent"
-description: "A test agent for provider-style webhook AFM processing."
+name: "SlackPlatformChatAgent"
+description: "A test agent for Slack platform chat AFM processing."
 author: "Copilot"
 version: "0.1.0"
 interfaces:
-  - type: webhook
+  - type: platformchat
+    platform: slack
+    mode: notification
     prompt: "[${http:payload.type}] Reply to ${http:payload.message.text}"
-    subscription:
-      protocol: "provider"
-      provider: "slack"
-      provider_config:
-        signing_secret: "test-signing-secret"
+    platform_config:
+      signing_secret: "test-signing-secret"
     exposure:
       http:
         path: "/slack"

@@ -144,39 +144,24 @@ class Exposure(BaseModel):
 class Subscription(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    protocol: Literal["websub", "provider"]
+    protocol: Literal["websub"]
     hub: str | None = None
     topic: str | None = None
     callback: str | None = None
     secret: str | None = None
-    provider: str | None = None
-    provider_config: dict[str, Any] | None = None
     authentication: ClientAuthentication | None = None
-
-    @model_validator(mode="after")
-    def validate_protocol_fields(self) -> Self:
-        if self.protocol == "provider":
-            if self.provider is None:
-                raise ValueError(
-                    "protocol 'provider' requires 'provider' field"
-                )
-            if self.hub is not None or self.topic is not None:
-                raise ValueError(
-                    "fields 'hub' and 'topic' are only valid when protocol is 'websub'"
-                )
-        else:
-            if self.provider is not None or self.provider_config is not None:
-                raise ValueError(
-                    "fields 'provider' and 'provider_config' are only valid when protocol is 'provider'"
-                )
-
-        return self
 
 
 class InterfaceType(str, Enum):
     CONSOLE_CHAT = "consolechat"
     WEB_CHAT = "webchat"
+    PLATFORM_CHAT = "platformchat"
     WEBHOOK = "webhook"
+
+
+class PlatformChatMode(str, Enum):
+    NOTIFICATION = "notification"
+    REQUEST = "request"
 
 
 class ConsoleChatInterface(BaseModel):
@@ -196,11 +181,6 @@ class WebChatInterface(BaseModel):
     )
 
 
-# Providers that do not support synchronous responses to webhooks.
-# These providers must not define an explicit output schema.
-_ASYNC_ONLY_PROVIDERS: frozenset[str] = frozenset({"slack"})
-
-
 class WebhookInterface(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -211,6 +191,19 @@ class WebhookInterface(BaseModel):
         default_factory=lambda: Exposure(http=HTTPExposure(path="/webhook"))
     )
     subscription: Subscription
+
+
+class PlatformChatInterface(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["platformchat"] = "platformchat"
+    platform: str
+    mode: PlatformChatMode
+    platform_config: dict[str, Any] | None = None
+    prompt: str | None = None
+    signature: Signature = Field(default_factory=Signature)
+    exposure: Exposure | None = None
+    authentication: ClientAuthentication | None = None
     has_explicit_output_schema: bool = Field(default=False, exclude=True)
 
     @model_validator(mode="before")
@@ -227,24 +220,28 @@ class WebhookInterface(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def validate_no_output_schema_for_async_providers(self) -> Self:
-        subscription = self.subscription
+    def validate_mode_fields(self) -> Self:
         if (
-            subscription.protocol == "provider"
-            and subscription.provider in _ASYNC_ONLY_PROVIDERS
+            self.mode != PlatformChatMode.REQUEST
             and self.has_explicit_output_schema
         ):
             raise ValueError(
-                f"provider '{subscription.provider}' does not support "
-                "synchronous webhook responses; 'signature.output' must "
-                "not be specified"
+                f"mode '{self.mode.value}' does not support synchronous "
+                "responses; 'signature.output' must not be specified"
+            )
+        if self.exposure is None or self.exposure.http is None:
+            raise ValueError(
+                f"mode '{self.mode.value}' requires 'exposure.http' to be set"
             )
         return self
 
 
 # Type alias for any interface type
 Interface = Annotated[
-    ConsoleChatInterface | WebChatInterface | WebhookInterface,
+    ConsoleChatInterface
+    | WebChatInterface
+    | PlatformChatInterface
+    | WebhookInterface,
     Field(discriminator="type"),
 ]
 

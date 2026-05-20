@@ -20,17 +20,27 @@ import hashlib
 import hmac
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping
 
-from fastapi.responses import Response
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from pydantic import BaseModel, ConfigDict
+
+from ._handler import PlatformHandler
 
 if TYPE_CHECKING:
-    from ...models import WebhookInterface
+    from ...models import PlatformChatInterface
 
 logger = logging.getLogger(__name__)
 
 SLACK_SIGNATURE_VERSION = "v0"
 SLACK_SIGNATURE_MAX_AGE_SECONDS = 60 * 5
+
+
+class SlackConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    signing_secret: str | None = None
 
 
 def verify_slack_request_signature(
@@ -111,15 +121,6 @@ def get_slack_session_id(payload: object) -> str:
     return f"slack:{team_id}:default"
 
 
-def get_signing_secret(interface: WebhookInterface) -> str | None:
-    provider_config = interface.subscription.provider_config
-    if not isinstance(provider_config, dict):
-        return None
-
-    signing_secret = provider_config.get("signing_secret")
-    return signing_secret if isinstance(signing_secret, str) else None
-
-
 def should_ignore_slack_event(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -161,8 +162,91 @@ def should_ignore_slack_event(payload: object) -> bool:
     }
 
 
-def create_slack_acknowledgement() -> Response:
-    return Response(status_code=200)
+class SlackHandler(PlatformHandler):
+    name: ClassVar[str] = "slack"
+
+    def parse_config(self, raw_config: Mapping[str, Any] | None) -> SlackConfig:
+        return SlackConfig.model_validate(dict(raw_config or {}))
+
+    def validate_runtime_config(
+        self,
+        interface: PlatformChatInterface,
+        *,
+        verify_signatures: bool,
+    ) -> None:
+        if not verify_signatures:
+            return
+        config = self.parse_config(interface.platform_config)
+        if config.signing_secret is None:
+            raise ValueError(
+                "Slack platform chat requires "
+                "platform_config.signing_secret when signature "
+                "verification is enabled."
+            )
+
+    def verify_raw_request(
+        self,
+        body: bytes,
+        headers: Mapping[str, str],
+        interface: PlatformChatInterface,
+    ) -> None:
+        config = self.parse_config(interface.platform_config)
+        if config.signing_secret is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Slack signing secret is not configured",
+            )
+
+        if not verify_slack_request_signature(
+            body,
+            timestamp=headers.get("x-slack-request-timestamp")
+            or headers.get("X-Slack-Request-Timestamp"),
+            signature_header=headers.get("x-slack-signature")
+            or headers.get("X-Slack-Signature"),
+            signing_secret=config.signing_secret,
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid Slack signature",
+            )
+
+    def verify_parsed_payload(
+        self,
+        payload: Any,
+        interface: PlatformChatInterface,
+    ) -> None:
+        # Slack signature is verified pre-parse; nothing extra needed here.
+        return
+
+    def handle_pre_dispatch(self, payload: Any) -> Response | None:
+        if isinstance(payload, dict) and payload.get("type") == "url_verification":
+            challenge = payload.get("challenge")
+            if not isinstance(challenge, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Slack URL verification payload must contain a challenge",
+                )
+            return PlainTextResponse(content=challenge)
+        return None
+
+    def should_ignore(self, payload: Any) -> bool:
+        return should_ignore_slack_event(payload)
+
+    def create_ignored_response(self) -> Response:
+        return Response(status_code=200)
+
+    def get_session_id(self, payload: Any) -> str:
+        return get_slack_session_id(payload)
+
+    def create_notification_ack(self) -> Response:
+        return Response(status_code=200)
+
+    def create_request_response(self, result: str | object) -> Response:
+        # Slack request-mode responses are rare (slash command pattern).
+        # Fall back to a sensible default: plain text for strings, JSON otherwise.
+        if isinstance(result, str):
+            return PlainTextResponse(content=result)
+        return JSONResponse(content=result)
 
 
 def _non_empty_string(value: object) -> str | None:

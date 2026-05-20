@@ -52,6 +52,7 @@ interfaces:
         path: "/chat"                    # Default: /chat for webchat
 
   # Webhook Interface
+  # Webhook Interface (WebSub-style event notifications)
   - type: webhook
     prompt: |
       Analyze the following event that was received.
@@ -76,6 +77,26 @@ interfaces:
     exposure:
       http:
         path: "/webhook"                 # Default: /webhook for webhook
+
+  # Platform Chat Interface (third-party chat platforms: Slack, Google Chat, etc.)
+  # mode: notification = ack immediately, run agent in background
+  # mode: request      = run agent synchronously, return result in HTTP response
+  - type: platformchat
+    platform: gchat                      # REQUIRED: gchat, slack, ...
+    mode: request                        # REQUIRED: notification | request
+    prompt: |
+      [${http:payload.type}] Reply to ${http:payload.message.text}
+    platform_config:
+      verification_token: "${env:GCHAT_VERIFICATION_TOKEN}"
+    signature:                           # Only meaningful in 'request' mode
+      output:
+        type: object
+        properties:
+          text:
+            type: string
+    exposure:
+      http:
+        path: "/gchat"                   # REQUIRED
 
 # ============================================================================
 # TOOLS - OPTIONAL

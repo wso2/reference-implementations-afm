@@ -26,11 +26,17 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 import click
 import uvicorn
 from fastapi import FastAPI
+from pydantic import ValidationError
 
 from .constants import DEFAULT_HTTP_PORT
 from .exceptions import AFMError
 from .interfaces.base import get_http_path, get_interfaces
 from .interfaces.console_chat import async_run_console_chat
+from .interfaces.platform_chat import (
+    create_platform_chat_router,
+    validate_platform_chat_interface,
+    validate_platform_chat_interface_schema,
+)
 from .interfaces.web_chat import create_webchat_router
 from .interfaces.webhook import (
     WebSubSubscriber,
@@ -41,6 +47,7 @@ from .interfaces.webhook import (
 from .models import (
     ConsoleChatInterface,
     HttpTransport,
+    PlatformChatInterface,
     WebChatInterface,
     WebhookInterface,
 )
@@ -58,11 +65,16 @@ def create_unified_app(
     *,
     webchat_interface: WebChatInterface | None = None,
     webhook_interface: WebhookInterface | None = None,
+    platform_chat_interface: PlatformChatInterface | None = None,
     startup_event: asyncio.Event | None = None,
     host: str = "0.0.0.0",
     port: int = DEFAULT_HTTP_PORT,
 ) -> FastAPI:
-    if webchat_interface is None and webhook_interface is None:
+    if (
+        webchat_interface is None
+        and webhook_interface is None
+        and platform_chat_interface is None
+    ):
         raise ValueError("At least one HTTP interface must be provided")
 
     # Set up WebSub subscriber if configured
@@ -98,6 +110,11 @@ def create_unified_app(
                 callback=callback_url,
                 secret=secret,
             )
+
+    if platform_chat_interface is not None:
+        validate_platform_chat_interface(
+            platform_chat_interface, verify_signatures=True
+        )
 
     # Create lifespan for MCP connection management and WebSub
     @asynccontextmanager
@@ -147,6 +164,9 @@ def create_unified_app(
     # Determine paths for info endpoint
     webchat_path = get_http_path(webchat_interface) if webchat_interface else None
     webhook_path = get_http_path(webhook_interface) if webhook_interface else None
+    platform_chat_path = (
+        get_http_path(platform_chat_interface) if platform_chat_interface else None
+    )
 
     @app.get("/")
     async def root_info() -> dict[str, Any]:
@@ -158,6 +178,7 @@ def create_unified_app(
             "interfaces": {
                 "webchat": webchat_path,
                 "webhook": webhook_path,
+                "platformchat": platform_chat_path,
             },
         }
 
@@ -184,6 +205,14 @@ def create_unified_app(
         # Store subscriber in app state for verification endpoint
         app.state.websub_subscriber = websub_subscriber
         app.state.secret = secret
+
+    if platform_chat_interface is not None:
+        platform_chat_router = create_platform_chat_router(
+            agent,
+            platform_chat_interface,
+            platform_chat_path,  # type: ignore[arg-type]
+        )
+        app.include_router(platform_chat_router)
 
     return app
 
@@ -228,6 +257,12 @@ def format_validation_output(afm: AFMRecord) -> str:
         elif isinstance(iface, WebhookInterface):
             path = get_http_path(iface)
             lines.append(f"    - webhook at {path} ({sig_str})")
+        elif isinstance(iface, PlatformChatInterface):
+            path = get_http_path(iface)
+            lines.append(
+                f"    - platformchat ({iface.platform}, {iface.mode.value}) "
+                f"at {path} ({sig_str})"
+            )
 
     # Tools
     if afm.metadata.tools and afm.metadata.tools.mcp:
@@ -253,17 +288,22 @@ def format_validation_output(afm: AFMRecord) -> str:
 def extract_interfaces(
     afm: AFMRecord,
 ) -> tuple[
-    ConsoleChatInterface | None, WebChatInterface | None, WebhookInterface | None
+    ConsoleChatInterface | None,
+    WebChatInterface | None,
+    WebhookInterface | None,
+    PlatformChatInterface | None,
 ]:
     interfaces = get_interfaces(afm)
 
     consolechat: ConsoleChatInterface | None = None
     webchat: WebChatInterface | None = None
     webhook: WebhookInterface | None = None
+    platform_chat: PlatformChatInterface | None = None
 
     console_count = 0
     webchat_count = 0
     webhook_count = 0
+    platform_chat_count = 0
 
     for iface in interfaces:
         if isinstance(iface, ConsoleChatInterface):
@@ -275,13 +315,21 @@ def extract_interfaces(
         elif isinstance(iface, WebhookInterface):
             webhook_count += 1
             webhook = iface
+        elif isinstance(iface, PlatformChatInterface):
+            platform_chat_count += 1
+            platform_chat = iface
 
-    if console_count > 1 or webchat_count > 1 or webhook_count > 1:
+    if (
+        console_count > 1
+        or webchat_count > 1
+        or webhook_count > 1
+        or platform_chat_count > 1
+    ):
         raise click.ClickException(
             "Multiple interfaces of the same type are not supported"
         )
 
-    return consolechat, webchat, webhook
+    return consolechat, webchat, webhook, platform_chat
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +381,15 @@ def validate(file: Path) -> None:
         raise click.ClickException(f"Failed to parse AFM file: {e}") from e
     except Exception as e:
         raise click.ClickException(f"Unexpected error parsing AFM file: {e}") from e
+
+    for iface in get_interfaces(afm):
+        if isinstance(iface, PlatformChatInterface):
+            try:
+                validate_platform_chat_interface_schema(iface)
+            except (ValueError, ValidationError) as e:
+                raise click.ClickException(
+                    f"Invalid platformchat interface ({iface.platform}): {e}"
+                ) from e
 
     click.echo(f"Loading: {file}")
     click.echo(format_validation_output(afm))
@@ -405,10 +462,12 @@ def run(
         raise click.ClickException(f"Unexpected error parsing AFM file: {e}") from e
 
     # Extract interfaces
-    consolechat, webchat, webhook = extract_interfaces(afm)
+    consolechat, webchat, webhook, platform_chat = extract_interfaces(afm)
 
     # Check if we have anything to run
-    has_http = webchat is not None or webhook is not None
+    has_http = (
+        webchat is not None or webhook is not None or platform_chat is not None
+    )
     has_console = (consolechat is not None or not has_http) and not no_console
 
     # Configure logging
@@ -475,6 +534,18 @@ def run(
         click.echo(f"  - webchat at http://{host}:{port}{webchat_path}")
         click.echo(f"  - webchat UI at http://{host}:{port}/chat/ui")
 
+    if webhook:
+        webhook_path = get_http_path(webhook)
+        click.echo(f"  - webhook at http://{host}:{port}{webhook_path}")
+
+    if platform_chat:
+        platform_chat_path = get_http_path(platform_chat)
+        click.echo(
+            f"  - platformchat ({platform_chat.platform}, "
+            f"{platform_chat.mode.value}) at "
+            f"http://{host}:{port}{platform_chat_path}"
+        )
+
     if has_console:
         click.echo("  - consolechat (interactive)")
 
@@ -485,12 +556,22 @@ def run(
         # Both HTTP and console: run HTTP in background, console in foreground
         asyncio.run(
             _run_http_and_console(
-                agent, webchat, webhook, host, port, verbose, has_console, log_file
+                agent,
+                webchat,
+                webhook,
+                platform_chat,
+                host,
+                port,
+                verbose,
+                has_console,
+                log_file,
             )
         )
     elif has_http:
         # HTTP only: run uvicorn blocking
-        _run_http_only(agent, webchat, webhook, host, port, verbose, log_file)
+        _run_http_only(
+            agent, webchat, webhook, platform_chat, host, port, verbose, log_file
+        )
     else:
         # Console only: run console blocking
         asyncio.run(_run_console_only(agent))
@@ -535,6 +616,7 @@ async def _run_http_and_console(
     agent: AgentRunner,
     webchat: WebChatInterface | None,
     webhook: WebhookInterface | None,
+    platform_chat: PlatformChatInterface | None,
     host: str,
     port: int,
     verbose: bool,
@@ -549,6 +631,7 @@ async def _run_http_and_console(
         agent,
         webchat_interface=webchat,
         webhook_interface=webhook,
+        platform_chat_interface=platform_chat,
         startup_event=startup_event,
         host=host,
         port=port,
@@ -627,6 +710,7 @@ def _run_http_only(
     agent: AgentRunner,
     webchat: WebChatInterface | None,
     webhook: WebhookInterface | None,
+    platform_chat: PlatformChatInterface | None,
     host: str,
     port: int,
     verbose: bool,
@@ -637,6 +721,7 @@ def _run_http_only(
         agent,
         webchat_interface=webchat,
         webhook_interface=webhook,
+        platform_chat_interface=platform_chat,
         host=host,
         port=port,
     )
