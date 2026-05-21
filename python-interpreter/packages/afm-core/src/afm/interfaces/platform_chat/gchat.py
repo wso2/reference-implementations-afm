@@ -111,16 +111,24 @@ def get_http_config(config: GChatConfig) -> HttpConfig | None:
 
 
 def extract_bearer_token(auth_header: str | None) -> str | None:
-    if not isinstance(auth_header, str) or not auth_header.startswith("Bearer "):
+    if not isinstance(auth_header, str):
         return None
-    token = auth_header[len("Bearer ") :].strip()
-    return token or None
+    scheme, sep, token = auth_header.partition(" ")
+    if not sep or scheme.lower() != "bearer":
+        return None
+    return token.strip() or None
 
 
 def verify_gchat_bearer_token(
     auth_header: str | None,
     config: HttpConfig,
 ) -> bool:
+    """Return True if the bearer token validates, False if it does not.
+
+    Only token-validation failures are reported as False. Operational errors
+    (e.g., JWKS fetch failures) are allowed to propagate so callers can surface
+    them as 5xx rather than masking outages as 401s.
+    """
     token = extract_bearer_token(auth_header)
     if token is None:
         logger.warning(
@@ -128,13 +136,9 @@ def verify_gchat_bearer_token(
         )
         return False
 
-    try:
-        if isinstance(config, HttpEndpointUrlConfig):
-            return _verify_id_token(token, config.endpoint_url)
-        return _verify_project_number_jwt(token, config.project_number)
-    except Exception:
-        logger.exception("GChat bearer token verification raised an unexpected error")
-        return False
+    if isinstance(config, HttpEndpointUrlConfig):
+        return _verify_id_token(token, config.endpoint_url)
+    return _verify_project_number_jwt(token, config.project_number)
 
 
 def _get_jwks_client(url: str) -> PyJWKClient:
@@ -158,7 +162,7 @@ def _verify_id_token(token: str, expected_audience: str) -> bool:
             issuer=list(_GOOGLE_OIDC_ISSUERS),
             options={"require": ["exp", "iat", "iss", "aud"]},
         )
-    except jwt.PyJWTError as exc:
+    except jwt.InvalidTokenError as exc:
         logger.warning("GChat ID token validation failed: %s", exc)
         return False
 
@@ -187,7 +191,7 @@ def _verify_project_number_jwt(token: str, expected_audience: str) -> bool:
             issuer=_CHAT_ISSUER,
             options={"require": ["exp", "iat", "iss", "aud"]},
         )
-    except jwt.PyJWTError as exc:
+    except jwt.InvalidTokenError as exc:
         logger.warning("GChat project-number JWT validation failed: %s", exc)
         return False
 

@@ -570,6 +570,11 @@ class TestExtractBearerToken:
     def test_valid_bearer(self) -> None:
         assert extract_bearer_token("Bearer abc123") == "abc123"
 
+    def test_scheme_is_case_insensitive(self) -> None:
+        assert extract_bearer_token("bearer abc123") == "abc123"
+        assert extract_bearer_token("BEARER abc123") == "abc123"
+        assert extract_bearer_token("BeArEr abc123") == "abc123"
+
     def test_trims_whitespace(self) -> None:
         assert extract_bearer_token("Bearer   abc123  ") == "abc123"
 
