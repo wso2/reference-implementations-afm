@@ -35,9 +35,12 @@ from afm.interfaces.platform_chat import (
 from afm.interfaces.platform_chat.gchat import (
     GChatConfig,
     GChatHandler,
+    HttpEndpointUrlConfig,
+    ProjectNumberConfig,
+    extract_bearer_token,
     get_gchat_session_id,
+    get_http_config,
     should_ignore_gchat_event,
-    verify_gchat_request_token,
 )
 from afm.interfaces.platform_chat.slack import (
     SlackConfig,
@@ -104,7 +107,7 @@ def mock_gchat_notification_agent() -> tuple[MagicMock, asyncio.Event, list[str]
         mode=PlatformChatMode.NOTIFICATION,
         prompt="GChat event: ${http:payload.message.text}",
         signature=Signature(input=JSONSchema(type="object")),
-        platform_config={"verification_token": "test-gchat-token"},
+        platform_config={"project_number": "test-project-number"},
         exposure=Exposure(http=HTTPExposure(path="/gchat")),
     )
     agent.afm.metadata.interfaces = [interface]
@@ -139,7 +142,7 @@ def mock_gchat_request_agent() -> MagicMock:
             input=JSONSchema(type="object"),
             output=JSONSchema(type="string"),
         ),
-        platform_config={"verification_token": "test-gchat-token"},
+        platform_config={"project_number": "test-project-number"},
         exposure=Exposure(http=HTTPExposure(path="/gchat")),
         has_explicit_output_schema=True,
     )
@@ -437,10 +440,10 @@ class TestGetPlatformSessionId:
         payload = {
             "type": "MESSAGE",
             "space": {"name": "spaces/AAAA"},
-            "message": {"thread": {"name": "spaces/AAAA/threads/DDDD"}},
+            "user": {"name": "users/CCCC"},
         }
         result = get_platform_session_id("gchat", payload)
-        assert result == "gchat:spaces/AAAA:spaces/AAAA/threads/DDDD"
+        assert result == "gchat:spaces/AAAA:users/CCCC"
 
     def test_unknown_platform_returns_default(self) -> None:
         assert get_platform_session_id("unknown_platform", {}) == "default"
@@ -563,25 +566,56 @@ class TestSlackPlatformChatEndpoint:
         assert seen_prompts == ["Async reply to hello async"]
 
 
-class TestVerifyGChatRequestToken:
-    def test_valid_token(self) -> None:
-        payload = {"type": "MESSAGE", "token": "my-token"}
-        assert verify_gchat_request_token(payload, "my-token") is True
+class TestExtractBearerToken:
+    def test_valid_bearer(self) -> None:
+        assert extract_bearer_token("Bearer abc123") == "abc123"
 
-    def test_invalid_token(self) -> None:
-        payload = {"type": "MESSAGE", "token": "wrong-token"}
-        assert verify_gchat_request_token(payload, "my-token") is False
+    def test_scheme_is_case_insensitive(self) -> None:
+        assert extract_bearer_token("bearer abc123") == "abc123"
+        assert extract_bearer_token("BEARER abc123") == "abc123"
+        assert extract_bearer_token("BeArEr abc123") == "abc123"
 
-    def test_missing_token(self) -> None:
-        payload = {"type": "MESSAGE"}
-        assert verify_gchat_request_token(payload, "my-token") is False
+    def test_trims_whitespace(self) -> None:
+        assert extract_bearer_token("Bearer   abc123  ") == "abc123"
 
-    def test_non_string_token(self) -> None:
-        payload = {"type": "MESSAGE", "token": 12345}
-        assert verify_gchat_request_token(payload, "my-token") is False
+    def test_missing_header(self) -> None:
+        assert extract_bearer_token(None) is None
 
-    def test_non_dict_payload(self) -> None:
-        assert verify_gchat_request_token("not a dict", "my-token") is False
+    def test_wrong_scheme(self) -> None:
+        assert extract_bearer_token("Basic abc123") is None
+
+    def test_empty_token(self) -> None:
+        assert extract_bearer_token("Bearer ") is None
+
+
+class TestGetHttpConfig:
+    def test_endpoint_url(self) -> None:
+        config = GChatConfig.model_validate({"endpoint_url": "https://example.com/x"})
+        http = get_http_config(config)
+        assert isinstance(http, HttpEndpointUrlConfig)
+        assert http.endpoint_url == "https://example.com/x"
+
+    def test_project_number_string(self) -> None:
+        config = GChatConfig.model_validate({"project_number": "1234567890"})
+        http = get_http_config(config)
+        assert isinstance(http, ProjectNumberConfig)
+        assert http.project_number == "1234567890"
+
+    def test_project_number_int_is_coerced(self) -> None:
+        config = GChatConfig.model_validate({"project_number": 1234567890})
+        http = get_http_config(config)
+        assert isinstance(http, ProjectNumberConfig)
+        assert http.project_number == "1234567890"
+
+    def test_missing_returns_none(self) -> None:
+        config = GChatConfig.model_validate({})
+        assert get_http_config(config) is None
+
+    def test_both_set_rejected_at_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            GChatConfig.model_validate(
+                {"endpoint_url": "https://example.com/x", "project_number": "12345"}
+            )
 
 
 class TestShouldIgnoreGChatEvent:
@@ -623,17 +657,6 @@ class TestShouldIgnoreGChatEvent:
 
 
 class TestGetGChatSessionId:
-    def test_space_and_thread(self) -> None:
-        payload = {
-            "type": "MESSAGE",
-            "space": {"name": "spaces/AAAA"},
-            "message": {"thread": {"name": "spaces/AAAA/threads/DDDD"}},
-        }
-        assert (
-            get_gchat_session_id(payload)
-            == "gchat:spaces/AAAA:spaces/AAAA/threads/DDDD"
-        )
-
     def test_space_and_user_fallback(self) -> None:
         payload = {
             "type": "MESSAGE",
@@ -754,7 +777,7 @@ class TestGChatPlatformChatEndpoint:
         assert response.json() == {}
 
     @pytest.mark.asyncio
-    async def test_gchat_verification_rejects_bad_token(
+    async def test_gchat_verification_rejects_missing_auth_header(
         self,
         mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
     ) -> None:
@@ -765,21 +788,46 @@ class TestGChatPlatformChatEndpoint:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
-                json={
-                    "type": "MESSAGE",
-                    "token": "wrong-token",
-                    "message": {"text": "hi"},
-                },
+                json={"type": "MESSAGE", "message": {"text": "hi"}},
             )
 
         assert response.status_code == 401
-        assert "Invalid GChat verification token" in response.json()["detail"]
+        assert "Invalid GChat bearer token" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_gchat_verification_accepts_valid_token(
+    async def test_gchat_verification_rejects_bad_bearer(
         self,
         mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(
+            "afm.interfaces.platform_chat.gchat._verify_project_number_jwt",
+            lambda *_args, **_kwargs: False,
+        )
+        agent, _, _ = mock_gchat_notification_agent
+        app = create_platform_chat_app(agent, verify_signatures=True)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/gchat",
+                headers={"Authorization": "Bearer bad-jwt"},
+                json={"type": "MESSAGE", "message": {"text": "hi"}},
+            )
+
+        assert response.status_code == 401
+        assert "Invalid GChat bearer token" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_gchat_verification_accepts_valid_bearer(
+        self,
+        mock_gchat_notification_agent: tuple[MagicMock, asyncio.Event, list[str]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "afm.interfaces.platform_chat.gchat._verify_project_number_jwt",
+            lambda *_args, **_kwargs: True,
+        )
         agent, ran, _ = mock_gchat_notification_agent
         app = create_platform_chat_app(agent, verify_signatures=True)
 
@@ -787,9 +835,9 @@ class TestGChatPlatformChatEndpoint:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/gchat",
+                headers={"Authorization": "Bearer pretend-jwt"},
                 json={
                     "type": "MESSAGE",
-                    "token": "test-gchat-token",
                     "message": {
                         "text": "verified msg",
                         "sender": {"type": "HUMAN"},
@@ -853,18 +901,33 @@ class TestSlackConfig:
 
 
 class TestGChatConfig:
-    def test_valid_config(self) -> None:
-        config = GChatConfig.model_validate({"verification_token": "abc"})
-        assert config.verification_token == "abc"
+    def test_valid_project_number(self) -> None:
+        config = GChatConfig.model_validate({"project_number": "abc"})
+        assert config.project_number == "abc"
+        assert config.endpoint_url is None
+
+    def test_valid_endpoint_url(self) -> None:
+        config = GChatConfig.model_validate({"endpoint_url": "https://example.com/x"})
+        assert config.endpoint_url == "https://example.com/x"
+        assert config.project_number is None
 
     def test_unknown_field_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            GChatConfig.model_validate({"verifcation_token": "abc"})
-        assert "verifcation_token" in str(exc_info.value)
+            GChatConfig.model_validate({"verification_token": "abc"})
+        assert "verification_token" in str(exc_info.value)
 
-    def test_wrong_type_rejected(self) -> None:
+    def test_both_audience_fields_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            GChatConfig.model_validate({"verification_token": 123})
+            GChatConfig.model_validate(
+                {"endpoint_url": "https://example.com/x", "project_number": "12345"}
+            )
+
+    def test_empty_config_allowed(self) -> None:
+        # Schema-level: both fields are optional. Runtime check enforces
+        # presence of at least one when signature verification is enabled.
+        config = GChatConfig.model_validate({})
+        assert config.project_number is None
+        assert config.endpoint_url is None
 
 
 class TestValidatePlatformChatInterfaceSchema:
@@ -894,6 +957,14 @@ class TestValidatePlatformChatInterfaceSchema:
             validate_platform_chat_interface_schema(iface)
 
     def test_typo_in_gchat_config_raises(self) -> None:
-        iface = self._interface("gchat", {"verifcation_token": "abc"})
+        iface = self._interface("gchat", {"project_numbr": "abc"})
         with pytest.raises(ValidationError):
             validate_platform_chat_interface_schema(iface)
+
+    def test_valid_gchat_project_number_passes(self) -> None:
+        iface = self._interface("gchat", {"project_number": "1234567890"})
+        validate_platform_chat_interface_schema(iface)
+
+    def test_valid_gchat_endpoint_url_passes(self) -> None:
+        iface = self._interface("gchat", {"endpoint_url": "https://example.com/x"})
+        validate_platform_chat_interface_schema(iface)

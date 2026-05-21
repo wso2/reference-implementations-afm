@@ -191,7 +191,7 @@ def create_unified_app(
         webchat_router = create_webchat_router(
             agent,
             webchat_interface.signature,
-            webchat_path,  # type: ignore[arg-type]
+            webchat_path,  # type: ignore
         )
         app.include_router(webchat_router)
 
@@ -199,7 +199,7 @@ def create_unified_app(
         webhook_router = create_webhook_router(
             agent,
             webhook_interface,
-            webhook_path,  # type: ignore[arg-type]
+            webhook_path,  # type: ignore
         )
         app.include_router(webhook_router)
         # Store subscriber in app state for verification endpoint
@@ -210,7 +210,7 @@ def create_unified_app(
         platform_chat_router = create_platform_chat_router(
             agent,
             platform_chat_interface,
-            platform_chat_path,  # type: ignore[arg-type]
+            platform_chat_path,  # type: ignore
         )
         app.include_router(platform_chat_router)
 

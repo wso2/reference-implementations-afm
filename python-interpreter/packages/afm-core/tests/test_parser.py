@@ -151,9 +151,7 @@ class TestParseAfm:
         assert isinstance(interface, PlatformChatInterface)
         assert interface.platform == "gchat"
         assert interface.mode == PlatformChatMode.NOTIFICATION
-        assert interface.platform_config == {
-            "verification_token": "test-verification-token"
-        }
+        assert interface.platform_config == {"project_number": "test-project-number"}
         assert interface.has_explicit_output_schema is False
         assert interface.exposure is not None
         assert interface.exposure.http is not None
@@ -285,7 +283,7 @@ interfaces:
           text:
             type: string
     platform_config:
-      verification_token: "secret"
+      project_number: "1234567890"
     exposure:
       http:
         path: "/gchat"
