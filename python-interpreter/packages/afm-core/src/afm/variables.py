@@ -179,10 +179,7 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
                     # Note: platformchat.prompt is allowed to contain http: variables
                     if _signature_contains_http_variable(interface.signature):
                         errored_fields.append("interfaces.platformchat.signature")
-                    if (
-                        interface.exposure is not None
-                        and _exposure_contains_http_variable(interface.exposure)
-                    ):
+                    if _exposure_contains_http_variable(interface.exposure):
                         errored_fields.append("interfaces.platformchat.exposure")
                     if contains_http_variable(interface.platform):
                         errored_fields.append("interfaces.platformchat.platform")
@@ -220,8 +217,8 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
     if errored_fields:
         fields_str = ", ".join(errored_fields)
         raise AFMValidationError(
-            f"http: variables are only supported in webhook prompt fields, "
-            f"found in: {fields_str}"
+            f"http: variables are only supported in webhook/platformchat "
+            f"prompt fields, found in: {fields_str}"
         )
 
 
@@ -265,7 +262,9 @@ def _json_schema_contains_http_variable(schema: JSONSchema) -> bool:
     return _check_value(schema_dict)
 
 
-def _exposure_contains_http_variable(exposure: Exposure) -> bool:
+def _exposure_contains_http_variable(exposure: Exposure | None) -> bool:
+    if exposure is None:
+        return False
     if exposure.http and contains_http_variable(exposure.http.path):
         return True
     return False

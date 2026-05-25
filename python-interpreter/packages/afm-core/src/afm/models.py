@@ -162,6 +162,17 @@ class InterfaceType(str, Enum):
 class PlatformChatMode(str, Enum):
     NOTIFICATION = "notification"
     REQUEST = "request"
+    POLLING = "polling"
+
+
+DEFAULT_POLLING_INTERVAL_SECONDS = 30
+
+
+class Polling(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    interval: int = DEFAULT_POLLING_INTERVAL_SECONDS
+    timeout: int | None = None
 
 
 class ConsoleChatInterface(BaseModel):
@@ -176,9 +187,7 @@ class WebChatInterface(BaseModel):
 
     type: Literal["webchat"] = "webchat"
     signature: Signature = Field(default_factory=Signature)
-    exposure: Exposure = Field(
-        default_factory=lambda: Exposure(http=HTTPExposure(path="/chat"))
-    )
+    exposure: Exposure | None = None
 
 
 class WebhookInterface(BaseModel):
@@ -187,9 +196,7 @@ class WebhookInterface(BaseModel):
     type: Literal["webhook"] = "webhook"
     prompt: str | None = None
     signature: Signature = Field(default_factory=Signature)
-    exposure: Exposure = Field(
-        default_factory=lambda: Exposure(http=HTTPExposure(path="/webhook"))
-    )
+    exposure: Exposure | None = None
     subscription: Subscription
 
 
@@ -203,6 +210,7 @@ class PlatformChatInterface(BaseModel):
     prompt: str | None = None
     signature: Signature = Field(default_factory=Signature)
     exposure: Exposure | None = None
+    polling: Polling | None = None
     authentication: ClientAuthentication | None = None
     has_explicit_output_schema: bool = Field(default=False, exclude=True)
 
@@ -226,10 +234,24 @@ class PlatformChatInterface(BaseModel):
                 f"mode '{self.mode.value}' does not support synchronous "
                 "responses; 'signature.output' must not be specified"
             )
-        if self.exposure is None or self.exposure.http is None:
-            raise ValueError(
-                f"mode '{self.mode.value}' requires 'exposure.http' to be set"
-            )
+
+        if self.mode == PlatformChatMode.POLLING:
+            if self.exposure is not None:
+                raise ValueError(
+                    "mode 'polling' has no inbound HTTP endpoint; "
+                    "'exposure' must not be set"
+                )
+        else:
+            if self.polling is not None:
+                raise ValueError(
+                    f"mode '{self.mode.value}' does not support 'polling'; "
+                    "this field applies only to mode 'polling'"
+                )
+            if self.authentication is not None:
+                raise ValueError(
+                    f"mode '{self.mode.value}' does not support "
+                    "'authentication'; this field applies only to mode 'polling'"
+                )
         return self
 
 

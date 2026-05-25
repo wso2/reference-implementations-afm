@@ -125,7 +125,7 @@ class TestValidateCommand:
         bad_file = tmp_path / "bad.afm.md"
         bad_file.write_text(
             """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 interfaces:
   - type: platformchat
     platform: slack
@@ -152,7 +152,7 @@ Instructions.
         bad_file = tmp_path / "bad.afm.md"
         bad_file.write_text(
             """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 interfaces:
   - type: platformchat
     platform: teams
@@ -173,6 +173,30 @@ Instructions.
         result = runner.invoke(cli, ["validate", str(bad_file)])
         assert result.exit_code != 0
         assert "teams" in result.output or "not supported" in result.output
+
+    def test_validate_accepts_polling_mode(self, runner: CliRunner, tmp_path: Path):
+        afm_file = tmp_path / "agent.afm.md"
+        afm_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+    polling:
+      interval: 30
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["validate", str(afm_file)])
+        assert result.exit_code == 0
+        assert "validated successfully" in result.output.lower()
 
     def test_validate_invalid_file(self, runner: CliRunner, tmp_path: Path):
         invalid_file = tmp_path / "invalid.afm.md"
@@ -200,6 +224,29 @@ class TestDryRun:
         result = runner.invoke(cli, ["run", str(sample_minimal_path), "--dry-run"])
         assert result.exit_code == 0
         assert "validated successfully" in result.output.lower()
+
+    def test_dry_run_rejects_polling_mode(self, runner: CliRunner, tmp_path: Path):
+        afm_file = tmp_path / "agent.afm.md"
+        afm_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["run", str(afm_file), "--dry-run"])
+        assert result.exit_code != 0
+        assert "polling" in result.output
+        assert "not yet supported" in result.output
 
     def test_dry_run_invalid_file(self, runner: CliRunner, tmp_path: Path):
         invalid_file = tmp_path / "invalid.afm.md"
@@ -475,7 +522,7 @@ class TestValidateWithEnvVariables:
         afm_with_env_var = tmp_path / "agent_with_env.afm.md"
         afm_with_env_var.write_text(
             """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 name: "EnvTestAgent"
 model:
   provider: "openai"
@@ -507,7 +554,7 @@ Test instructions
         afm_with_env_var = tmp_path / "agent_with_env.afm.md"
         afm_with_env_var.write_text(
             """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 name: "EnvTestAgent"
 model:
   provider: "openai"

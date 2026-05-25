@@ -42,8 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorResponse(BaseModel):
-    error: str = Field(..., description="Error message")
-    detail: str | None = Field(None, description="Detailed error information")
+    detail: str = Field(..., description="Error message")
 
 
 class HealthResponse(BaseModel):
@@ -207,15 +206,21 @@ def create_webhook_router(
     *,
     verify_signatures: bool = True,
 ) -> APIRouter:
+    subscription = interface.subscription
+    secret = subscription.secret
+
+    if verify_signatures and not secret:
+        logger.warning(
+            "Webhook 'subscription.secret' is not set; incoming requests "
+            "will not be signature-verified."
+        )
+
     router = APIRouter()
 
     # Compile the prompt template if provided
     compiled_prompt: CompiledTemplate | None = None
     if interface.prompt:
         compiled_prompt = compile_template(interface.prompt)
-
-    subscription = interface.subscription
-    secret = subscription.secret
 
     # WebSub verification endpoint
     @router.get(path)
@@ -284,22 +289,15 @@ def create_webhook_router(
     async def receive_webhook(request: Request) -> Response:
         body = await request.body()
 
-        if verify_signatures:
-            if secret:
-                signature_header = request.headers.get(
-                    "X-Hub-Signature-256"
-                ) or request.headers.get("X-Hub-Signature")
+        if verify_signatures and secret:
+            signature_header = request.headers.get(
+                "X-Hub-Signature-256"
+            ) or request.headers.get("X-Hub-Signature")
 
-                if not verify_webhook_signature(body, signature_header, secret):
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Invalid signature",
-                    )
-            else:
+            if not verify_webhook_signature(body, signature_header, secret):
                 raise HTTPException(
-                    status_code=500,
-                    detail="Signature verification is enabled but no secret "
-                    "is configured",
+                    status_code=401,
+                    detail="Invalid signature",
                 )
 
         try:

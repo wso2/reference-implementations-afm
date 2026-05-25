@@ -201,6 +201,23 @@ class TestVerifyWebhookSignature:
 
 
 class TestCreateWebhookApp:
+    def test_no_secret_skips_verification(
+        self, mock_webhook_agent_no_secret: MagicMock
+    ) -> None:
+        app = create_webhook_app(
+            mock_webhook_agent_no_secret,
+            auto_subscribe=False,
+            verify_signatures=True,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/webhook",
+            json={"type": "notification"},
+        )
+
+        assert response.status_code == 202
+
     def test_creates_fastapi_app(self, mock_webhook_agent: MagicMock) -> None:
         app = create_webhook_app(mock_webhook_agent, auto_subscribe=False)
 

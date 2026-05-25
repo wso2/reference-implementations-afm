@@ -48,6 +48,7 @@ from .models import (
     ConsoleChatInterface,
     HttpTransport,
     PlatformChatInterface,
+    PlatformChatMode,
     WebChatInterface,
     WebhookInterface,
 )
@@ -258,11 +259,16 @@ def format_validation_output(afm: AFMRecord) -> str:
             path = get_http_path(iface)
             lines.append(f"    - webhook at {path} ({sig_str})")
         elif isinstance(iface, PlatformChatInterface):
-            path = get_http_path(iface)
-            lines.append(
-                f"    - platformchat ({iface.platform}, {iface.mode.value}) "
-                f"at {path} ({sig_str})"
-            )
+            if iface.mode == PlatformChatMode.POLLING:
+                lines.append(
+                    f"    - platformchat ({iface.platform}, polling) ({sig_str})"
+                )
+            else:
+                path = get_http_path(iface)
+                lines.append(
+                    f"    - platformchat ({iface.platform}, {iface.mode.value}) "
+                    f"at {path} ({sig_str})"
+                )
 
     # Tools
     if afm.metadata.tools and afm.metadata.tools.mcp:
@@ -384,6 +390,9 @@ def validate(file: Path) -> None:
 
     for iface in get_interfaces(afm):
         if isinstance(iface, PlatformChatInterface):
+            if iface.mode == PlatformChatMode.POLLING:
+                # Polling platforms are not yet implemented; skip handler check.
+                continue
             try:
                 validate_platform_chat_interface_schema(iface)
             except (ValueError, ValidationError) as e:
@@ -463,6 +472,12 @@ def run(
 
     # Extract interfaces
     consolechat, webchat, webhook, platform_chat = extract_interfaces(afm)
+
+    if platform_chat is not None and platform_chat.mode == PlatformChatMode.POLLING:
+        raise click.ClickException(
+            f"platformchat mode 'polling' (platform: {platform_chat.platform}) "
+            "is not yet supported by this implementation"
+        )
 
     # Check if we have anything to run
     has_http = webchat is not None or webhook is not None or platform_chat is not None

@@ -1,5 +1,5 @@
 ---
-spec_version: '0.3.0'
+spec_version: '0.4.0'
 name: "GChatPlatformChatAgent"
 description: "A test agent for GChat platform chat AFM processing."
 author: "Copilot"

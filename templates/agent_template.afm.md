@@ -2,7 +2,7 @@
 # ============================================================================
 # AGENT DETAILS - All fields OPTIONAL
 # ============================================================================
-spec_version: "0.3.0"                    # AFM specification version
+spec_version: "0.4.0"                    # AFM specification version
 name: "Agent Name"                       # Human-readable agent name
 description: "Brief description of the agent's purpose and functionality"
 version: "1.0.0"                         # Semantic version (MAJOR.MINOR.PATCH)
@@ -87,7 +87,7 @@ interfaces:
     prompt: |
       [${http:payload.type}] Reply to ${http:payload.message.text}
     platform_config:
-      verification_token: "${env:GCHAT_VERIFICATION_TOKEN}"
+      project_number: "${env:GCHAT_PROJECT_NUMBER}"
     signature:                           # Only meaningful in 'request' mode
       output:
         type: object

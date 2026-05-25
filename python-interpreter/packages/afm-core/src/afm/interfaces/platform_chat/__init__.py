@@ -62,8 +62,7 @@ def get_platform_handler(platform: str) -> PlatformHandler:
 
 
 class ErrorResponse(BaseModel):
-    error: str = Field(..., description="Error message")
-    detail: str | None = Field(None, description="Detailed error information")
+    detail: str = Field(..., description="Error message")
 
 
 class HealthResponse(BaseModel):

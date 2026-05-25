@@ -63,7 +63,12 @@ def verify_slack_request_signature(
     if abs(now - timestamp_int) > SLACK_SIGNATURE_MAX_AGE_SECONDS:
         return False
 
-    sig_basestring = f"{SLACK_SIGNATURE_VERSION}:{timestamp}:{body.decode('utf-8')}"
+    try:
+        body_str = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+
+    sig_basestring = f"{SLACK_SIGNATURE_VERSION}:{timestamp}:{body_str}"
     expected_sig = (
         f"{SLACK_SIGNATURE_VERSION}="
         + hmac.new(

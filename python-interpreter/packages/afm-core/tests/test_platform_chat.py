@@ -225,6 +225,19 @@ class TestVerifySlackRequestSignature:
             is False
         )
 
+    def test_invalid_utf8_body(self) -> None:
+        body = b"\xff\xfe\xfd"
+        assert (
+            verify_slack_request_signature(
+                body,
+                timestamp=self.TIMESTAMP,
+                signature_header="v0=anything",
+                signing_secret=self.SIGNING_SECRET,
+                current_time=int(self.TIMESTAMP),
+            )
+            is False
+        )
+
     def test_non_numeric_timestamp(self) -> None:
         body = b'{"event":"test"}'
         sig = self._make_signature(body, "not-a-number")
