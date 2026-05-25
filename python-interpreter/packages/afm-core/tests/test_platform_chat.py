@@ -981,3 +981,24 @@ class TestValidatePlatformChatInterfaceSchema:
     def test_valid_gchat_endpoint_url_passes(self) -> None:
         iface = self._interface("gchat", {"endpoint_url": "https://example.com/x"})
         validate_platform_chat_interface_schema(iface)
+
+    def test_slack_request_mode_rejected(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="slack",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"signing_secret": "abc"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        with pytest.raises(ValueError, match="does not support mode 'request'"):
+            validate_platform_chat_interface_schema(iface)
+
+    def test_gchat_request_mode_passes(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="gchat",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"project_number": "1234567890"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        validate_platform_chat_interface_schema(iface)

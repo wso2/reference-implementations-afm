@@ -86,6 +86,12 @@ def validate_platform_chat_interface_schema(
     """
     handler = get_platform_handler(interface.platform)
     handler.parse_config(interface.platform_config)
+    if interface.mode not in handler.supported_modes:
+        supported = ", ".join(sorted(m.value for m in handler.supported_modes))
+        raise ValueError(
+            f"Platform {interface.platform!r} does not support mode "
+            f"{interface.mode.value!r}. Supported modes: {supported}"
+        )
 
 
 def validate_platform_chat_interface(
@@ -97,8 +103,8 @@ def validate_platform_chat_interface(
 
     Called at app-creation time.
     """
+    validate_platform_chat_interface_schema(interface)
     handler = get_platform_handler(interface.platform)
-    handler.parse_config(interface.platform_config)
     handler.validate_runtime_config(interface, verify_signatures=verify_signatures)
 
 
