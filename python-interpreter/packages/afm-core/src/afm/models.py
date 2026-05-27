@@ -63,6 +63,8 @@ class Model(BaseModel):
     provider: str | None = None
     url: str | None = None
     authentication: ClientAuthentication | None = None
+    project: str | None = None
+    location: str | None = None
 
 
 class HttpTransport(BaseModel):

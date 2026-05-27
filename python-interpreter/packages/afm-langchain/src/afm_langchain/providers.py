@@ -27,10 +27,12 @@ from afm.models import ClientAuthentication, Model
 if TYPE_CHECKING:
     from langchain_anthropic import ChatAnthropic
     from langchain_openai import ChatOpenAI
+    from langchain_google_genai import ChatGoogleGenerativeAI
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
@@ -38,6 +40,7 @@ DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
 # Environment variable names for API keys
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
 
 
 def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
@@ -51,6 +54,8 @@ def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
             return _create_openai_model(afm_model)
         case "anthropic":
             return _create_anthropic_model(afm_model)
+        case "gemini":
+            return _create_gemini_model(afm_model)
         case _:
             raise ProviderError(f"Unsupported provider: {provider}", provider=provider)
 
@@ -112,6 +117,42 @@ def _create_anthropic_model(afm_model: Model) -> ChatAnthropic:
 
     return ChatAnthropic(**kwargs)
 
+def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as e:
+        raise ProviderError(
+            "langchain-google-genai package is required for Gemini models. "
+            "Install it with: pip install langchain-google-genai",
+            provider="gemini",
+        ) from e
+    
+    model_name = afm_model.name if afm_model.name else DEFAULT_GEMINI_MODEL
+    base_url = afm_model.url if afm_model.url else None
+
+    kwargs: dict = {
+        "model": model_name,
+    }
+    
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    if afm_model.project:
+        kwargs["project"] = afm_model.project
+        kwargs["vertexai"] = True
+    if afm_model.location:
+        kwargs["location"] = afm_model.location
+    
+    if not afm_model.project or afm_model.authentication:
+        api_key = _get_api_key(
+            afm_model.authentication,
+            GOOGLE_API_KEY_ENV,
+            "gemini",
+        )
+        if api_key:
+            kwargs["api_key"] = api_key
+
+    return ChatGoogleGenerativeAI(**kwargs)
 
 def _get_api_key(
     auth: ClientAuthentication | None,
