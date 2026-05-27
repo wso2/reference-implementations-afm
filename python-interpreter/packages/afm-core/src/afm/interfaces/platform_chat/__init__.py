@@ -37,6 +37,7 @@ from ..webhook import log_task_exception
 from ._handler import PlatformHandler
 from .gchat import GChatHandler
 from .slack import SlackHandler
+from .telegram import TelegramHandler
 
 if TYPE_CHECKING:
     from ...models import CompiledTemplate, PlatformChatInterface
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 _HANDLERS: dict[str, PlatformHandler] = {
     SlackHandler.name: SlackHandler(),
     GChatHandler.name: GChatHandler(),
+    TelegramHandler.name: TelegramHandler(),
 }
 
 

@@ -81,9 +81,10 @@ interfaces:
   # Platform Chat Interface (third-party chat platforms: Slack, Google Chat, etc.)
   # mode: notification = ack immediately, run agent in background
   # mode: request      = run agent synchronously, return result in HTTP response
+  # Each platform supports a subset of modes; see platform docs.
   - type: platformchat
-    platform: gchat                      # REQUIRED: gchat, slack, ...
-    mode: request                        # REQUIRED: notification | request
+    platform: gchat                      # REQUIRED: gchat, slack, telegram, ...
+    mode: request                        # gchat supports: notification | request
     prompt: |
       [${http:payload.type}] Reply to ${http:payload.message.text}
     platform_config:
@@ -97,6 +98,21 @@ interfaces:
     exposure:
       http:
         path: "/gchat"                   # REQUIRED
+
+  # Telegram (notification mode only).
+  - type: platformchat
+    platform: telegram
+    mode: notification                   # telegram supports: notification
+    prompt: |
+      Reply to ${http:payload.message.text}
+    platform_config:
+      # Pass the same value to Telegram's setWebhook `secret_token`
+      # parameter. Telegram echoes it in the
+      # X-Telegram-Bot-Api-Secret-Token header on every delivery.
+      secret_token: "${env:TELEGRAM_SECRET_TOKEN}"
+    exposure:
+      http:
+        path: "/telegram"
 
 # ============================================================================
 # TOOLS - OPTIONAL

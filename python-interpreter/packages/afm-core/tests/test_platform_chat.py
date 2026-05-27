@@ -21,6 +21,7 @@ import hashlib
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
@@ -48,6 +49,14 @@ from afm.interfaces.platform_chat.slack import (
     get_slack_session_id,
     should_ignore_slack_event,
     verify_slack_request_signature,
+)
+from afm.interfaces.platform_chat.telegram import (
+    TELEGRAM_SECRET_TOKEN_HEADER,
+    TelegramConfig,
+    TelegramHandler,
+    get_telegram_session_id,
+    should_ignore_telegram_update,
+    verify_telegram_secret_token,
 )
 from afm.models import (
     Exposure,
@@ -885,6 +894,7 @@ class TestPlatformHandlerRegistry:
     def test_get_known_platform_returns_handler(self) -> None:
         assert isinstance(get_platform_handler("slack"), SlackHandler)
         assert isinstance(get_platform_handler("gchat"), GChatHandler)
+        assert isinstance(get_platform_handler("telegram"), TelegramHandler)
 
     def test_get_unknown_platform_raises(self) -> None:
         with pytest.raises(ValueError) as exc_info:
@@ -1002,3 +1012,229 @@ class TestValidatePlatformChatInterfaceSchema:
             exposure=Exposure(http=HTTPExposure(path="/x")),
         )
         validate_platform_chat_interface_schema(iface)
+
+    def test_telegram_notification_mode_passes(self) -> None:
+        iface = self._interface("telegram", {"secret_token": "shh"})
+        validate_platform_chat_interface_schema(iface)
+
+    def test_telegram_request_mode_rejected(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"secret_token": "shh"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        with pytest.raises(ValueError, match="does not support mode 'request'"):
+            validate_platform_chat_interface_schema(iface)
+
+
+class TestTelegramConfig:
+    def test_empty_config_allowed(self) -> None:
+        # Schema-level: secret_token is optional. Runtime check enforces
+        # its presence only when signature verification is enabled.
+        config = TelegramConfig.model_validate({})
+        assert config.secret_token is None
+
+    def test_valid_config_with_secret_token(self) -> None:
+        config = TelegramConfig.model_validate({"secret_token": "xyz"})
+        assert config.secret_token == "xyz"
+
+    def test_unknown_field_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TelegramConfig.model_validate({"api_id": "1"})
+        assert "api_id" in str(exc_info.value)
+
+    def test_wrong_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TelegramConfig.model_validate({"secret_token": 123})
+
+
+class TestVerifyTelegramSecretToken:
+    def test_matching_token_passes(self) -> None:
+        assert verify_telegram_secret_token("abc", "abc") is True
+
+    def test_mismatched_token_fails(self) -> None:
+        assert verify_telegram_secret_token("abc", "xyz") is False
+
+    def test_missing_header_fails(self) -> None:
+        assert verify_telegram_secret_token(None, "abc") is False
+
+    def test_empty_received_fails(self) -> None:
+        assert verify_telegram_secret_token("", "abc") is False
+
+
+class TestShouldIgnoreTelegramUpdate:
+    def test_non_dict_payload_not_ignored(self) -> None:
+        assert should_ignore_telegram_update("not a dict") is False
+
+    def test_message_from_user_not_ignored(self) -> None:
+        payload = {
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "is_bot": False},
+                "chat": {"id": 42, "type": "private"},
+                "text": "hi",
+            },
+        }
+        assert should_ignore_telegram_update(payload) is False
+
+    def test_message_from_bot_ignored(self) -> None:
+        payload = {
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "is_bot": True},
+                "chat": {"id": 42, "type": "private"},
+                "text": "hi",
+            },
+        }
+        assert should_ignore_telegram_update(payload) is True
+
+    def test_edited_message_ignored(self) -> None:
+        # Updates without a "message" field (edited_message, channel_post,
+        # callback_query, etc.) are not handled by the default flow.
+        payload = {
+            "update_id": 1,
+            "edited_message": {
+                "message_id": 1,
+                "from": {"id": 42, "is_bot": False},
+                "chat": {"id": 42, "type": "private"},
+                "text": "hi (edited)",
+            },
+        }
+        assert should_ignore_telegram_update(payload) is True
+
+    def test_callback_query_ignored(self) -> None:
+        payload = {"update_id": 1, "callback_query": {"id": "1"}}
+        assert should_ignore_telegram_update(payload) is True
+
+
+class TestGetTelegramSessionId:
+    def test_non_dict_payload(self) -> None:
+        assert get_telegram_session_id("not a dict") == "default"
+
+    def test_private_chat_with_user(self) -> None:
+        payload = {
+            "message": {
+                "from": {"id": 42},
+                "chat": {"id": 42, "type": "private"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:42:42"
+
+    def test_group_chat_with_user(self) -> None:
+        payload = {
+            "message": {
+                "from": {"id": 99},
+                "chat": {"id": -1001234, "type": "supergroup"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:-1001234:99"
+
+    def test_missing_user_falls_back_to_default(self) -> None:
+        payload = {
+            "message": {
+                "chat": {"id": -1001234, "type": "channel"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:-1001234:default"
+
+    def test_missing_chat_uses_unknown(self) -> None:
+        payload = {"message": {"from": {"id": 42}}}
+        assert get_telegram_session_id(payload) == "telegram:unknown-chat:42"
+
+    def test_missing_message_returns_unknown(self) -> None:
+        assert get_telegram_session_id({}) == "telegram:unknown-chat:default"
+
+    def test_string_id_passes_through(self) -> None:
+        payload = {
+            "message": {
+                "from": {"id": "user-42"},
+                "chat": {"id": "chat-42"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:chat-42:user-42"
+
+
+class TestTelegramHandlerVerifyRawRequest:
+    def _interface(self, secret_token: str | None) -> PlatformChatInterface:
+        config: dict = {}
+        if secret_token is not None:
+            config["secret_token"] = secret_token
+        return PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.NOTIFICATION,
+            platform_config=config,
+            exposure=Exposure(http=HTTPExposure(path="/telegram")),
+        )
+
+    def test_valid_secret_token_passes(self) -> None:
+        handler = TelegramHandler()
+        handler.verify_raw_request(
+            body=b"{}",
+            headers={TELEGRAM_SECRET_TOKEN_HEADER: "shh"},
+            interface=self._interface("shh"),
+        )
+
+    def test_invalid_secret_token_rejected(self) -> None:
+        handler = TelegramHandler()
+        with pytest.raises(HTTPException) as exc_info:
+            handler.verify_raw_request(
+                body=b"{}",
+                headers={TELEGRAM_SECRET_TOKEN_HEADER: "wrong"},
+                interface=self._interface("shh"),
+            )
+        assert exc_info.value.status_code == 401
+
+    def test_missing_secret_token_header_rejected(self) -> None:
+        handler = TelegramHandler()
+        with pytest.raises(HTTPException) as exc_info:
+            handler.verify_raw_request(
+                body=b"{}",
+                headers={},
+                interface=self._interface("shh"),
+            )
+        assert exc_info.value.status_code == 401
+
+    def test_handler_without_configured_secret_returns_500(self) -> None:
+        handler = TelegramHandler()
+        with pytest.raises(HTTPException) as exc_info:
+            handler.verify_raw_request(
+                body=b"{}",
+                headers={TELEGRAM_SECRET_TOKEN_HEADER: "shh"},
+                interface=self._interface(None),
+            )
+        assert exc_info.value.status_code == 500
+
+
+class TestTelegramHandlerValidateRuntimeConfig:
+    def _interface(self, secret_token: str | None) -> PlatformChatInterface:
+        config: dict = {}
+        if secret_token is not None:
+            config["secret_token"] = secret_token
+        return PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.NOTIFICATION,
+            platform_config=config,
+            exposure=Exposure(http=HTTPExposure(path="/telegram")),
+        )
+
+    def test_secret_required_when_verifying(self) -> None:
+        with pytest.raises(ValueError, match="secret_token"):
+            TelegramHandler().validate_runtime_config(
+                self._interface(None), verify_signatures=True
+            )
+
+    def test_secret_not_required_when_not_verifying(self) -> None:
+        TelegramHandler().validate_runtime_config(
+            self._interface(None), verify_signatures=False
+        )
+
+    def test_secret_present_passes(self) -> None:
+        TelegramHandler().validate_runtime_config(
+            self._interface("shh"), verify_signatures=True
+        )
