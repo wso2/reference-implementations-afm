@@ -28,14 +28,17 @@ if TYPE_CHECKING:
     from langchain_anthropic import ChatAnthropic
     from langchain_openai import ChatOpenAI
     from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_ollama import ChatOllama
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_OLLAMA_MODEL = "llama3"
 
 DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 # Environment variable names for API keys
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
@@ -56,6 +59,8 @@ def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
             return _create_anthropic_model(afm_model)
         case "gemini":
             return _create_gemini_model(afm_model)
+        case "ollama":
+            return _create_ollama_model(afm_model)
         case _:
             raise ProviderError(f"Unsupported provider: {provider}", provider=provider)
 
@@ -153,6 +158,26 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
             kwargs["api_key"] = api_key
 
     return ChatGoogleGenerativeAI(**kwargs)
+
+def _create_ollama_model(afm_model: Model) -> ChatOllama:
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError as e:
+        raise ProviderError(
+            "langchain-ollama package is required for Ollama models. "
+            "Install it with: pip install langchain-ollama",
+            provider="ollama",
+        ) from e
+
+    model_name = afm_model.name if afm_model.name else DEFAULT_OLLAMA_MODEL
+    base_url = afm_model.url if afm_model.url else DEFAULT_OLLAMA_URL
+
+    kwargs: dict = {
+        "model": model_name,
+        "base_url": base_url,
+    }
+
+    return ChatOllama(**kwargs)
 
 def _get_api_key(
     auth: ClientAuthentication | None,
