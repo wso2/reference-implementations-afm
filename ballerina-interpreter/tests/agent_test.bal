@@ -14,11 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/http;
 import ballerina/io;
 import ballerina/lang.runtime;
 import ballerina/test;
-import ballerina/ai;
 
 @test:Config
 function testValidateJsonSchemaNullSchema() returns error? {
@@ -359,7 +359,9 @@ function testExtractJsonFromCodeBlock(string description, string response, strin
     test:assertEquals(result, expected);
 }
 
-
+// ============================================
+// Array Schema End-to-End Tests
+// ============================================
 
 @test:Config
 function testArrayOutputSchemaEndToEnd() returns error? {

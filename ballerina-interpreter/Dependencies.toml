@@ -570,3 +570,4 @@ modules = [
 	{org = "wso2", packageName = "afm_ballerina", moduleName = "afm_ballerina"},
 	{org = "wso2", packageName = "afm_ballerina", moduleName = "afm_ballerina.everit.validator"}
 ]
+

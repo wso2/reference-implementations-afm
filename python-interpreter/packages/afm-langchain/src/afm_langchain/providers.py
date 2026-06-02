@@ -142,13 +142,17 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
     if base_url:
         kwargs["base_url"] = base_url
 
-    if afm_model.project:
-        kwargs["project"] = afm_model.project
+    extra_attrs = afm_model.model_extra or {}
+    project = extra_attrs.get("project")
+    location = extra_attrs.get("location")
+
+    if project:
+        kwargs["project"] = project
         kwargs["vertexai"] = True
-    if afm_model.location:
-        kwargs["location"] = afm_model.location
-    
-    if not afm_model.project or afm_model.authentication:
+    if location:
+        kwargs["location"] = location
+
+    if not project or afm_model.authentication:
         api_key = _get_api_key(
             afm_model.authentication,
             GOOGLE_API_KEY_ENV,
