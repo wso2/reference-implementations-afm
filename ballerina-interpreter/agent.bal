@@ -22,7 +22,7 @@ import ballerina/os;
 import ballerina/http;
 import ballerinax/ai.anthropic;
 import ballerinax/ai.openai;
-
+import ballerinax/ai.ollama;
 function createAgent(AFMRecord afmRecord, string afmFileDir) returns ai:Agent|error {
     AFMRecord {metadata, role, instructions} = afmRecord;
 
@@ -126,6 +126,15 @@ function getModel(Model? model) returns ai:ModelProvider|error {
                 check name.ensureType(),
                 model.url ?: "https://api.anthropic.com/v1"
             );
+        }
+        "ollama" => {
+            return new ollama:ModelProvider(
+                check name.ensureType(),
+                model.url ?: "http://localhost:11434"
+            );
+        }
+        "gemini" => {
+            return error("Gemini model is not yet supported by the Ballerina interpreter");
         }
     }
     return error(string `Model provider: ${provider} not yet supported`);
