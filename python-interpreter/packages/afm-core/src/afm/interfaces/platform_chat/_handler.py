@@ -117,3 +117,23 @@ class PlatformHandler(ABC):
         raise NotImplementedError(
             f"Platform {self.name!r} does not support request mode"
         )
+
+    async def poll_updates(
+        self,
+        interface: PlatformChatInterface,
+        state: dict[str, Any],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        """Fetch one batch of updates from the platform.
+
+        Returns ``(updates, next_state)``. ``state`` is passed through
+        opaquely between calls so the handler can track cursors / offsets;
+        the framework persists it across iterations within a single
+        process (no disk persistence in this implementation).
+
+        Default raises: only platforms that include
+        ``PlatformChatMode.POLLING`` in ``supported_modes`` need to override
+        this.
+        """
+        raise NotImplementedError(
+            f"Platform {self.name!r} does not support polling mode"
+        )

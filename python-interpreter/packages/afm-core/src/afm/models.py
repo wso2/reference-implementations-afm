@@ -171,8 +171,11 @@ DEFAULT_POLLING_INTERVAL_SECONDS = 30
 class Polling(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    interval: int = DEFAULT_POLLING_INTERVAL_SECONDS
-    timeout: int | None = None
+    # Seconds to wait between polling cycles. 0 means "no sleep" (typical
+    # when ``timeout`` is set and the platform long-polls). Negative values
+    # would busy-spin the loop, so they are rejected at parse time.
+    interval: int = Field(default=DEFAULT_POLLING_INTERVAL_SECONDS, ge=0)
+    timeout: int | None = Field(default=None, ge=0)
 
 
 class ConsoleChatInterface(BaseModel):

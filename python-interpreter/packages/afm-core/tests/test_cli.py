@@ -14,17 +14,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import asyncio
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as meta_version
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
+
 from afm.cli import (
+    _raise_unexpected_task_exceptions,
     cli,
     create_unified_app,
 )
 from afm.models import (
+    Exposure,
+    HTTPExposure,
+    PlatformChatInterface,
+    PlatformChatMode,
     Subscription,
     WebChatInterface,
     WebhookInterface,
@@ -48,6 +56,26 @@ def _make_mock_agent() -> MagicMock:
     agent.afm.metadata.version = "0.1.0"
     agent.afm.metadata.tools = None
     return agent
+
+
+def _slack_platform_chat(path: str = "/slack") -> PlatformChatInterface:
+    return PlatformChatInterface(
+        type="platformchat",
+        platform="slack",
+        mode=PlatformChatMode.NOTIFICATION,
+        platform_config={"signing_secret": "abc"},
+        exposure=Exposure(http=HTTPExposure(path=path)),
+    )
+
+
+def _telegram_platform_chat(path: str = "/telegram") -> PlatformChatInterface:
+    return PlatformChatInterface(
+        type="platformchat",
+        platform="telegram",
+        mode=PlatformChatMode.NOTIFICATION,
+        platform_config={"secret_token": "abc"},
+        exposure=Exposure(http=HTTPExposure(path=path)),
+    )
 
 
 class TestCLIBasics:
@@ -89,6 +117,25 @@ class TestCLIBasics:
             "does not exist" in result.output.lower()
             or "error" in result.output.lower()
         )
+
+    def test_expected_shutdown_task_exceptions_are_ignored(self):
+        cancelled_task = MagicMock()
+        cancelled_task.exception.side_effect = asyncio.CancelledError
+        interrupt_task = MagicMock()
+        interrupt_task.exception.return_value = KeyboardInterrupt()
+        system_exit_task = MagicMock()
+        system_exit_task.exception.return_value = SystemExit()
+
+        _raise_unexpected_task_exceptions(
+            [cancelled_task, interrupt_task, system_exit_task]
+        )
+
+    def test_unexpected_task_exceptions_are_raised(self):
+        failed_task = MagicMock()
+        failed_task.exception.return_value = RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            _raise_unexpected_task_exceptions([failed_task])
 
 
 class TestValidateCommand:
@@ -225,7 +272,9 @@ class TestDryRun:
         assert result.exit_code == 0
         assert "validated successfully" in result.output.lower()
 
-    def test_dry_run_rejects_polling_mode(self, runner: CliRunner, tmp_path: Path):
+    def test_dry_run_accepts_polling_mode_without_runtime_config(
+        self, runner: CliRunner, tmp_path: Path
+    ):
         afm_file = tmp_path / "agent.afm.md"
         afm_file.write_text(
             """---
@@ -243,10 +292,162 @@ Role.
 Instructions.
 """
         )
+        # Dry-run is schema-only; runtime requirements like bot_token are
+        # checked when the interface actually starts.
+        result = runner.invoke(cli, ["run", str(afm_file), "--dry-run"])
+        assert result.exit_code == 0
+        assert "validated successfully" in result.output.lower()
+        assert "platformchat (telegram, polling)" in result.output
+
+    def test_dry_run_accepts_multiple_platformchat_interfaces(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        afm_file = tmp_path / "agent.afm.md"
+        afm_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    platform_config:
+      signing_secret: "abc"
+    exposure:
+      http:
+        path: "/slack"
+  - type: platformchat
+    platform: telegram
+    mode: polling
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["run", str(afm_file), "--dry-run"])
+        assert result.exit_code == 0
+        assert "platformchat (slack, notification) at /slack" in result.output
+        assert "platformchat (telegram, polling)" in result.output
+
+    def test_dry_run_rejects_duplicate_http_paths(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        afm_file = tmp_path / "agent.afm.md"
+        afm_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: webchat
+    exposure:
+      http:
+        path: "/chat"
+  - type: platformchat
+    platform: slack
+    mode: notification
+    platform_config:
+      signing_secret: "abc"
+    exposure:
+      http:
+        path: "/chat"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
         result = runner.invoke(cli, ["run", str(afm_file), "--dry-run"])
         assert result.exit_code != 0
-        assert "polling" in result.output
-        assert "not yet supported" in result.output
+        assert "HTTP path '/chat'" in result.output
+
+    def test_dry_run_rejects_unknown_platform_chat_config_field(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        bad_file = tmp_path / "bad.afm.md"
+        bad_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    platform_config:
+      signing_secrt: "abc"
+    exposure:
+      http:
+        path: "/slack"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["run", str(bad_file), "--dry-run"])
+        assert result.exit_code != 0
+        assert "signing_secrt" in result.output or "Invalid" in result.output
+
+    def test_dry_run_rejects_unknown_platform(self, runner: CliRunner, tmp_path: Path):
+        bad_file = tmp_path / "bad.afm.md"
+        bad_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: teams
+    mode: notification
+    platform_config: {}
+    exposure:
+      http:
+        path: "/teams"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["run", str(bad_file), "--dry-run"])
+        assert result.exit_code != 0
+        assert "teams" in result.output or "not supported" in result.output
+
+    def test_dry_run_rejects_unsupported_platform_mode(
+        self, runner: CliRunner, tmp_path: Path
+    ):
+        bad_file = tmp_path / "bad.afm.md"
+        bad_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: request
+    platform_config: {}
+    exposure:
+      http:
+        path: "/telegram"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+        result = runner.invoke(cli, ["run", str(bad_file), "--dry-run"])
+        assert result.exit_code != 0
+        assert "telegram" in result.output
+        assert "request" in result.output
 
     def test_dry_run_invalid_file(self, runner: CliRunner, tmp_path: Path):
         invalid_file = tmp_path / "invalid.afm.md"
@@ -320,8 +521,97 @@ class TestCreateUnifiedApp:
         assert "/chat" in routes
         assert "/webhook" in routes
 
+    def test_creates_app_with_multiple_platformchat_interfaces(self) -> None:
+        agent = _make_mock_agent()
+
+        app = create_unified_app(
+            agent,
+            platform_chat_interface=[
+                _slack_platform_chat(),
+                _telegram_platform_chat(),
+            ],
+        )
+
+        routes = [getattr(route, "path", None) for route in app.routes]
+        assert "/slack" in routes
+        assert "/telegram" in routes
+
+        response = TestClient(app).get("/")
+        assert response.status_code == 200
+        interfaces = response.json()["interfaces"]
+        assert interfaces["platformchat"] == "/slack"
+        assert interfaces["platformchats"] == ["/slack", "/telegram"]
+
+    def test_rejects_duplicate_http_paths(self) -> None:
+        agent = _make_mock_agent()
+
+        with pytest.raises(ValueError, match="/chat"):
+            create_unified_app(
+                agent,
+                webchat_interface=WebChatInterface(),
+                platform_chat_interface=[_slack_platform_chat(path="/chat")],
+            )
+
+    def test_rejects_polling_platformchat_routes(self) -> None:
+        agent = _make_mock_agent()
+        polling_interface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"bot_token": "123:abc"},
+        )
+
+        with pytest.raises(ValueError, match="run_polling_loop"):
+            create_unified_app(agent, platform_chat_interface=[polling_interface])
+
 
 class TestCLIIntegration:
+    @patch("afm.cli.load_runner")
+    def test_cli_run_polling_without_bot_token_fails_at_runtime(
+        self,
+        mock_load_runner: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ):
+        afm_file = tmp_path / "agent.afm.md"
+        afm_file.write_text(
+            """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        )
+
+        class FakeRunner:
+            name = "TestAgent"
+            description = None
+
+            def __init__(self, afm):
+                self.afm = afm
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        mock_load_runner.return_value = FakeRunner
+
+        result = runner.invoke(cli, ["run", str(afm_file)])
+
+        assert result.exit_code != 0
+        assert isinstance(result.exception, ValueError)
+        assert "bot_token" in str(result.exception)
+
     @patch("afm.cli.uvicorn")
     @patch("afm.cli.load_runner")
     def test_cli_starts_http_server_for_webchat(
