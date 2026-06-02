@@ -18,6 +18,7 @@ import ballerina/http;
 import ballerina/io;
 import ballerina/lang.runtime;
 import ballerina/test;
+import ballerina/ai;
 
 @test:Config
 function testValidateJsonSchemaNullSchema() returns error? {
@@ -358,9 +359,7 @@ function testExtractJsonFromCodeBlock(string description, string response, strin
     test:assertEquals(result, expected);
 }
 
-// ============================================
-// Array Schema End-to-End Tests
-// ============================================
+
 
 @test:Config
 function testArrayOutputSchemaEndToEnd() returns error? {
@@ -409,4 +408,25 @@ function testArrayOutputSchemaInvalidResponse() returns error? {
 
     // Should return 500 error due to schema validation failure
     test:assertEquals(response.statusCode, 500, "Should return 500 for schema validation failure");
+}
+
+@test:Config
+function testGetModelOllamaLocalLoopback() returns error? {
+    Model model = {
+        provider: "ollama",
+        name: "llama3"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is ai:ModelProvider);
+}
+
+@test:Config
+function testGetModelOllamaCustomEndpoint() returns error? {
+    Model model = {
+        provider: "ollama",
+        name: "mistral",
+        url: "http://192.168.1.15:11434"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is ai:ModelProvider);
 }
