@@ -141,6 +141,31 @@ class TestParseAfm:
         assert result.role == "This is the role without frontmatter."
         assert result.instructions == "These are instructions without frontmatter."
 
+    def test_parse_frontmatter_with_leading_blank_lines(self) -> None:
+        content = """
+
+---
+spec_version: "0.3.0"
+model:
+  provider: "ollama"
+  name: "llama3"
+---
+
+# Role
+The role.
+
+# Instructions
+The instructions.
+"""
+        result = parse_afm(content)
+
+        assert result.metadata.spec_version == "0.3.0"
+        assert result.metadata.model is not None
+        assert result.metadata.model.provider == "ollama"
+        assert result.metadata.model.name == "llama3"
+        assert result.role == "The role."
+        assert result.instructions == "The instructions."
+
     def test_parse_unclosed_frontmatter(self) -> None:
         content = """---
 spec_version: "0.3.0"
