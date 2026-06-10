@@ -18,6 +18,7 @@ import ballerina/ai;
 import ballerina/http;
 import ballerina/io;
 import ballerina/lang.runtime;
+import ballerina/os;
 import ballerina/test;
 
 @test:Config
@@ -410,6 +411,31 @@ function testArrayOutputSchemaInvalidResponse() returns error? {
 
     // Should return 500 error due to schema validation failure
     test:assertEquals(response.statusCode, 500, "Should return 500 for schema validation failure");
+}
+
+@test:Config
+function testGetModelGeminiMissingProject() returns error? {
+    Model model = {
+        provider: "gemini",
+        name: "gemini-2.5-flash"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("'project'"));
+}
+
+@test:Config
+function testGetModelGeminiMissingCredentials() returns error? {
+    check os:unsetEnv(GOOGLE_APP_CREDENTIALS_ENV);
+    Model model = {
+        provider: "gemini",
+        name: "gemini-2.5-flash",
+        project: "test-project",
+        location: "us-central1"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes(GOOGLE_APP_CREDENTIALS_ENV));
 }
 
 @test:Config

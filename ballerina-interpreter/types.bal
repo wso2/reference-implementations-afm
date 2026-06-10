@@ -23,6 +23,8 @@ type Model record {|
     string name?;
     string provider?;
     string url?;
+    string project?;
+    string location?;
     ClientAuthentication authentication?;
 |};
 
