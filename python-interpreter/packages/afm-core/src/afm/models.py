@@ -30,6 +30,21 @@ class Provider(BaseModel):
     url: str | None = None
 
 
+RECOGNIZED_AUTH_TYPES = ("bearer", "basic", "api-key", "jwt", "oauth2")
+
+_AUTH_REQUIRED_FIELDS: dict[str, set[str]] = {
+    "bearer": {"token"},
+    "basic": {"username", "password"},
+    "api-key": {"api_key"},
+}
+_AUTH_ALLOWED_FIELDS: dict[str, set[str]] = {
+    "bearer": {"token"},
+    "basic": {"username", "password"},
+    "api-key": {"api_key", "header_name"},
+}
+_AUTH_CREDENTIAL_FIELDS = ("token", "username", "password", "api_key", "header_name")
+
+
 class ClientAuthentication(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -38,21 +53,40 @@ class ClientAuthentication(BaseModel):
     username: str | None = None
     password: str | None = None
     api_key: str | None = None
+    header_name: str | None = None
 
     @model_validator(mode="after")
     def validate_type_fields(self) -> Self:
-        match self.type.lower():
-            case "bearer":
-                if self.token is None:
-                    raise ValueError("type 'bearer' requires 'token' field")
-            case "basic":
-                if self.username is None or self.password is None:
-                    raise ValueError(
-                        "type 'basic' requires 'username' and 'password' fields"
-                    )
-            case "api-key":
-                if self.api_key is None:
-                    raise ValueError("type 'api-key' requires 'api_key' field")
+        auth_type = self.type.lower()
+
+        if auth_type not in RECOGNIZED_AUTH_TYPES:
+            supported = ", ".join(RECOGNIZED_AUTH_TYPES)
+            raise ValueError(
+                f"unknown authentication type '{self.type}'. "
+                f"Supported types: {supported}"
+            )
+
+        allowed = _AUTH_ALLOWED_FIELDS.get(auth_type)
+        if allowed is None:
+            return self
+
+        provided = {
+            name for name in _AUTH_CREDENTIAL_FIELDS if getattr(self, name) is not None
+        }
+        provided |= set(self.model_extra or {})
+
+        missing = _AUTH_REQUIRED_FIELDS[auth_type] - provided
+        if missing:
+            fields = ", ".join(f"'{name}'" for name in sorted(missing))
+            suffix = "field" if len(missing) == 1 else "fields"
+            raise ValueError(f"type '{auth_type}' requires {fields} {suffix}")
+
+        unknown = provided - allowed
+        if unknown:
+            fields = ", ".join(f"'{name}'" for name in sorted(unknown))
+            suffix = "field" if len(unknown) == 1 else "fields"
+            raise ValueError(f"type '{auth_type}' does not support {fields} {suffix}")
+
         return self
 
 

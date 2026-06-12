@@ -79,7 +79,7 @@ def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
     elif auth_type == "api-key":
         if auth.api_key is None:
             raise MCPAuthenticationError("API key auth requires 'api_key' field")
-        return ApiKeyAuth(auth.api_key)
+        return ApiKeyAuth(auth.api_key, header_name=auth.header_name or "Authorization")
 
     elif auth_type in ("oauth2", "jwt"):
         raise MCPAuthenticationError(

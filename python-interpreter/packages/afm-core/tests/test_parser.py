@@ -17,9 +17,11 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from afm.exceptions import AFMParseError, AFMValidationError, VariableResolutionError
 from afm.models import (
+    ClientAuthentication,
     ConsoleChatInterface,
     HttpTransport,
     StdioTransport,
@@ -493,3 +495,81 @@ Test instructions
         assert result.metadata.model is not None
         assert result.metadata.model.authentication is not None
         assert result.metadata.model.authentication.token == "secret-token-123"
+
+
+class TestClientAuthenticationValidation:
+
+    def test_bearer_valid(self) -> None:
+        auth = ClientAuthentication(type="bearer", token="t")
+        assert auth.type == "bearer"
+        assert auth.token == "t"
+
+    def test_basic_valid(self) -> None:
+        auth = ClientAuthentication(type="basic", username="u", password="p")
+        assert auth.username == "u"
+        assert auth.password == "p"
+
+    def test_api_key_valid(self) -> None:
+        auth = ClientAuthentication(type="api-key", api_key="k")
+        assert auth.api_key == "k"
+        assert auth.header_name is None
+
+    def test_api_key_with_header_name(self) -> None:
+        auth = ClientAuthentication(type="api-key", api_key="k", header_name="X-API-Key")
+        assert auth.header_name == "X-API-Key"
+
+    def test_type_is_case_insensitive(self) -> None:
+        auth = ClientAuthentication(type="Bearer", token="t")
+        assert auth.token == "t"
+
+    def test_jwt_recognized_without_field_validation(self) -> None:
+        auth = ClientAuthentication(type="jwt")
+        assert auth.type == "jwt"
+
+    def test_oauth2_recognized_without_field_validation(self) -> None:
+        auth = ClientAuthentication(type="oauth2")
+        assert auth.type == "oauth2"
+
+    def test_unknown_type_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="unknown authentication type 'token'"):
+            ClientAuthentication(type="token", token="t")
+
+    def test_bearer_missing_token_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="type 'bearer' requires 'token'"):
+            ClientAuthentication(type="bearer")
+
+    def test_basic_missing_password_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="type 'basic' requires 'password'"):
+            ClientAuthentication(type="basic", username="u")
+
+    def test_api_key_missing_key_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="type 'api-key' requires 'api_key'"):
+            ClientAuthentication(type="api-key")
+
+    def test_unknown_field_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError, match="type 'bearer' does not support 'username'"
+        ):
+            ClientAuthentication(type="bearer", token="t", username="u")
+
+    def test_typo_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ClientAuthentication(type="api-key", api_key="k", headername="X")
+
+    def test_invalid_auth_fails_at_parse_time(self) -> None:
+        content = """---
+model:
+  provider: openai
+  name: gpt-4
+  authentication:
+    type: bearer
+---
+
+# Role
+Role
+
+# Instructions
+Instructions
+"""
+        with pytest.raises(AFMValidationError):
+            parse_afm(content)

@@ -133,6 +133,21 @@ class TestBuildHttpxAuth:
         assert isinstance(result, ApiKeyAuth)
         assert result.api_key == "my-api-key"
 
+    def test_api_key_auth_defaults_to_authorization_header(self):
+        auth = ClientAuthentication(type="api-key", api_key="my-api-key")
+        result = build_httpx_auth(auth)
+        assert isinstance(result, ApiKeyAuth)
+        assert result.header_name == "Authorization"
+
+    def test_api_key_auth_uses_custom_header_name(self):
+        auth = ClientAuthentication(
+            type="api-key", api_key="my-api-key", header_name="X-API-Key"
+        )
+        result = build_httpx_auth(auth)
+        assert isinstance(result, ApiKeyAuth)
+        assert result.api_key == "my-api-key"
+        assert result.header_name == "X-API-Key"
+
 
 class TestFilterTools:
     def test_no_filter_returns_all_tools(self):
