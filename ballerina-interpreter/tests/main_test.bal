@@ -1199,3 +1199,99 @@ function testMapToHttpClientAuthUnsupportedType() {
     }
     test:assertEquals(result.message(), "Unsupported authentication type: custom-auth");
 }
+
+@test:Config
+function testMapToHttpClientAuthApiKeyNotSupported() {
+    ClientAuthentication auth = {
+        'type: "api-key",
+        "api_key": "test-key"
+    };
+
+    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
+    if result is http:ClientAuthConfig? {
+        test:assertFail("Expected error for api-key on HTTP transport");
+    }
+    test:assertEquals(result.message(),
+        "API key authentication is not yet supported for MCP/webhook transport in the Ballerina interpreter");
+}
+
+
+@test:Config
+function testValidateAuthenticationNull() returns error? {
+    error? result = validateAuthentication(());
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationBearerValid() returns error? {
+    ClientAuthentication auth = {'type: "bearer", "token": "t"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationBasicValid() returns error? {
+    ClientAuthentication auth = {'type: "basic", "username": "u", "password": "p"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationApiKeyValid() returns error? {
+    ClientAuthentication auth = {'type: "api-key", "api_key": "k", "header_name": "X-API-Key"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationCaseInsensitive() returns error? {
+    ClientAuthentication auth = {'type: "Bearer", "token": "t"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationJwtDeferred() returns error? {
+    ClientAuthentication auth = {'type: "jwt"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationUnknownType() {
+    ClientAuthentication auth = {'type: "token", "token": "t"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("unknown authentication type 'token'"));
+}
+
+@test:Config
+function testValidateAuthenticationBearerMissingToken() {
+    ClientAuthentication auth = {'type: "bearer"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "type 'bearer' requires 'token' field");
+}
+
+@test:Config
+function testValidateAuthenticationUnknownField() {
+    ClientAuthentication auth = {'type: "bearer", "token": "t", "username": "u"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "type 'bearer' does not support 'username' field");
+}
+
+@test:Config
+function testParseAfmRejectsInvalidAuthentication() {
+    string content = "---\n" +
+        "model:\n" +
+        "  provider: openai\n" +
+        "  name: gpt-4\n" +
+        "  authentication:\n" +
+        "    type: bearer\n" +
+        "---\n\n" +
+        "# Role\nRole\n\n# Instructions\nInstructions\n";
+    AFMRecord|error result = parseAfm(content);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "type 'bearer' requires 'token' field");
+}

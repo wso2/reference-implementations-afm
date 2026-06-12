@@ -31,6 +31,8 @@ function parseAfm(string content) returns AFMRecord|error {
         body = resolvedContent;
     }
 
+    check validateMetadataAuthentication(metadata);
+
     // Extract Role and Instructions sections
     string[] bodyLines = splitLines(body);
     string role = "";
@@ -303,6 +305,101 @@ function authenticationContainsHttpVariable(ClientAuthentication? authentication
         }
     }
     return false;
+}
+
+final readonly & string[] RECOGNIZED_AUTH_TYPES = ["bearer", "basic", "api-key", "jwt", "oauth2"];
+
+function validateMetadataAuthentication(AgentMetadata? metadata) returns error? {
+    if metadata is () {
+        return;
+    }
+
+    Model? model = metadata.model;
+    if model is Model {
+        check validateAuthentication(model.authentication);
+    }
+
+    Tools? tools = metadata.tools;
+    if tools is Tools {
+        MCPServer[]? mcp = tools.mcp;
+        if mcp is MCPServer[] {
+            foreach MCPServer server in mcp {
+                Transport transport = server.transport;
+                if transport is HttpTransport {
+                    check validateAuthentication(transport.authentication);
+                }
+            }
+        }
+    }
+
+    Interface[]? interfaces = metadata.interfaces;
+    if interfaces is Interface[] {
+        foreach Interface interface in interfaces {
+            if interface is WebhookInterface {
+                check validateAuthentication(interface.subscription.authentication);
+            }
+        }
+    }
+}
+
+function validateAuthentication(ClientAuthentication? auth) returns error? {
+    if auth is () {
+        return;
+    }
+
+    string authType = auth.'type.toLowerAscii();
+    if RECOGNIZED_AUTH_TYPES.indexOf(authType) is () {
+        return error(string `unknown authentication type '${auth.'type}'. Supported types: bearer, basic, api-key, jwt, oauth2`);
+    }
+
+    string[]? allowed = allowedAuthFields(authType);
+    if allowed is () {
+        return;
+    }
+
+    string[] provided = from string key in auth.keys() where key != "type" select key;
+
+    foreach string required in requiredAuthFields(authType) {
+        if provided.indexOf(required) is () {
+            return error(string `type '${authType}' requires '${required}' field`);
+        }
+    }
+
+    foreach string fieldName in provided {
+        if allowed.indexOf(fieldName) is () {
+            return error(string `type '${authType}' does not support '${fieldName}' field`);
+        }
+    }
+}
+
+function allowedAuthFields(string authType) returns string[]? {
+    match authType {
+        "bearer" => {
+            return ["token"];
+        }
+        "basic" => {
+            return ["username", "password"];
+        }
+        "api-key" => {
+            return ["api_key", "header_name"];
+        }
+    }
+    return ();
+}
+
+function requiredAuthFields(string authType) returns string[] {
+    match authType {
+        "bearer" => {
+            return ["token"];
+        }
+        "basic" => {
+            return ["username", "password"];
+        }
+        "api-key" => {
+            return ["api_key"];
+        }
+    }
+    return [];
 }
 
 function signatureContainsHttpVariable(Signature signature) returns boolean =>

@@ -350,6 +350,9 @@ function mapToHttpClientAuth(ClientAuthentication? auth) returns http:ClientAuth
         "bearer" => {
             return rest.cloneWithType(http:BearerTokenConfig);
         }
+        "api-key" => {
+            return error("API key authentication is not yet supported for MCP/webhook transport in the Ballerina interpreter");
+        }
         "oauth2" => {
             // record {string grantType;}|error oauth2Config = check rest.cloneWithType();
             // if oauth2Config is error {
