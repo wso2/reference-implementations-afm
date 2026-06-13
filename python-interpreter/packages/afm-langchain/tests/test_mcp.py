@@ -18,6 +18,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import jwt
 import pytest
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.sessions import StdioConnection
@@ -36,6 +37,7 @@ from afm.models import (
 from afm_langchain.tools.mcp import (
     ApiKeyAuth,
     BearerAuth,
+    JwtAuth,
     MCPClient,
     MCPManager,
     build_httpx_auth,
@@ -59,7 +61,13 @@ def make_mcp_server(
     elif auth_type == "oauth2":
         auth = ClientAuthentication(type="oauth2")
     elif auth_type == "jwt":
-        auth = ClientAuthentication(type="jwt")
+        auth = ClientAuthentication(
+            type="jwt",
+            issuer="afm-agent",
+            audience="https://api.example.com",
+            signing_key="secret",
+            algorithm="HS256",
+        )
 
     return MCPServer(
         name=name,
@@ -147,6 +155,89 @@ class TestBuildHttpxAuth:
         assert isinstance(result, ApiKeyAuth)
         assert result.api_key == "my-api-key"
         assert result.header_name == "X-API-Key"
+
+    def test_jwt_auth_returns_jwt_auth_instance(self):
+        auth = ClientAuthentication(
+            type="jwt",
+            issuer="afm-agent",
+            audience="https://api.example.com",
+            signing_key="secret",
+            algorithm="HS256",
+        )
+        result = build_httpx_auth(auth)
+        assert isinstance(result, JwtAuth)
+        assert result.issuer == "afm-agent"
+        assert result.algorithm == "HS256"
+
+    def test_jwt_auth_defaults_to_rs256(self):
+        auth = ClientAuthentication(
+            type="jwt", issuer="i", audience="a", signing_key="s"
+        )
+        result = build_httpx_auth(auth)
+        assert isinstance(result, JwtAuth)
+        assert result.algorithm == "RS256"
+
+    def test_jwt_auth_signs_valid_hmac_token(self):
+        auth = ClientAuthentication(
+            type="jwt",
+            issuer="afm-agent",
+            audience="https://api.example.com",
+            signing_key="topsecret-key-that-is-32-bytes-or-more",
+            algorithm="HS256",
+            subject="agent-1",
+            custom_claims={"scope": "read"},
+            expiry_seconds=600,
+        )
+        jwt_auth = build_httpx_auth(auth)
+        assert isinstance(jwt_auth, JwtAuth)
+        token = jwt_auth.sign()
+        decoded = jwt.decode(
+            token,
+            "topsecret-key-that-is-32-bytes-or-more",
+            algorithms=["HS256"],
+            audience="https://api.example.com",
+        )
+        assert decoded["iss"] == "afm-agent"
+        assert decoded["sub"] == "agent-1"
+        assert decoded["scope"] == "read"
+        assert decoded["exp"] - decoded["iat"] == 600
+
+    def test_jwt_auth_signs_rs256_with_key_file(self, tmp_path):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        key_file = tmp_path / "jwt_key.pem"
+        key_file.write_bytes(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+
+        auth = ClientAuthentication(
+            type="jwt",
+            issuer="afm-agent",
+            audience="https://api.example.com",
+            signing_key=str(key_file),  # asymmetric: signing_key is a file path
+            algorithm="RS256",
+        )
+        jwt_auth = build_httpx_auth(auth)
+        assert isinstance(jwt_auth, JwtAuth)
+        token = jwt_auth.sign()
+
+        public_pem = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        decoded = jwt.decode(
+            token,
+            public_pem,
+            algorithms=["RS256"],
+            audience="https://api.example.com",
+        )
+        assert decoded["iss"] == "afm-agent"
 
 
 class TestFilterTools:

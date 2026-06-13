@@ -83,6 +83,7 @@ dependencies = [
     { name = "langchain-mcp-adapters" },
     { name = "langchain-openai" },
     { name = "mcp" },
+    { name = "pyjwt", extra = ["crypto"] },
 ]
 
 [package.metadata]
@@ -93,6 +94,7 @@ requires-dist = [
     { name = "langchain-mcp-adapters", specifier = ">=0.2.1" },
     { name = "langchain-openai", specifier = ">=1.1.7" },
     { name = "mcp", specifier = ">=1.26.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.0" },
 ]
 
 [[package]]

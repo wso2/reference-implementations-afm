@@ -17,8 +17,11 @@
 from __future__ import annotations
 
 import logging
+import time
+from pathlib import Path
 
 import httpx
+import jwt
 from afm.exceptions import (
     MCPAuthenticationError,
     MCPConnectionError,
@@ -58,6 +61,69 @@ class ApiKeyAuth(httpx.Auth):
         yield request
 
 
+_HMAC_JWT_ALGORITHMS = {"HS256", "HS384", "HS512"}
+
+
+class JwtAuth(httpx.Auth):
+
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        audience: str | list[str],
+        signing_key: str,
+        algorithm: str = "RS256",
+        key_id: str | None = None,
+        subject: str | None = None,
+        custom_claims: dict | None = None,
+        expiry_seconds: int = 300,
+    ) -> None:
+        self.issuer = issuer
+        self.audience = audience
+        self.signing_key = signing_key
+        self.algorithm = algorithm
+        self.key_id = key_id
+        self.subject = subject
+        self.custom_claims = custom_claims or {}
+        self.expiry_seconds = expiry_seconds
+
+    def _resolve_key(self) -> str:
+        if self.algorithm.upper() in _HMAC_JWT_ALGORITHMS:
+            return self.signing_key
+        try:
+            return Path(self.signing_key).read_text()
+        except OSError as e:
+            raise MCPAuthenticationError(
+                f"Could not read JWT signing key file '{self.signing_key}': {e}"
+            ) from e
+
+    def sign(self) -> str:
+        now = int(time.time())
+        claims: dict = {
+            "iss": self.issuer,
+            "aud": self.audience,
+            "iat": now,
+            "nbf": now,
+            "exp": now + self.expiry_seconds,
+        }
+        if self.subject is not None:
+            claims["sub"] = self.subject
+        claims.update(self.custom_claims)
+        headers = {"kid": self.key_id} if self.key_id else None
+        try:
+            return jwt.encode(
+                claims, self._resolve_key(), algorithm=self.algorithm, headers=headers
+            )
+        except MCPAuthenticationError:
+            raise
+        except Exception as e:
+            raise MCPAuthenticationError(f"Failed to sign JWT: {e}") from e
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self.sign()}"
+        yield request
+
+
 def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
     if auth is None:
         return None
@@ -81,9 +147,27 @@ def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
             raise MCPAuthenticationError("API key auth requires 'api_key' field")
         return ApiKeyAuth(auth.api_key, header_name=auth.header_name or "Authorization")
 
-    elif auth_type in ("oauth2", "jwt"):
+    elif auth_type == "jwt":
+        if auth.issuer is None or auth.audience is None or auth.signing_key is None:
+            raise MCPAuthenticationError(
+                "JWT auth requires 'issuer', 'audience', and 'signing_key' fields"
+            )
+        return JwtAuth(
+            issuer=auth.issuer,
+            audience=auth.audience,
+            signing_key=auth.signing_key,
+            algorithm=auth.algorithm or "RS256",
+            key_id=auth.key_id,
+            subject=auth.subject,
+            custom_claims=auth.custom_claims,
+            expiry_seconds=(
+                auth.expiry_seconds if auth.expiry_seconds is not None else 300
+            ),
+        )
+
+    elif auth_type == "oauth2":
         raise MCPAuthenticationError(
-            f"Authentication type '{auth_type}' not yet supported"
+            "Authentication type 'oauth2' not yet supported"
         )
 
     else:
