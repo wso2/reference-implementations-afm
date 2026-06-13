@@ -383,6 +383,9 @@ function allowedAuthFields(string authType) returns string[]? {
         "api-key" => {
             return ["api_key", "header_name"];
         }
+        "jwt" => {
+            return ["issuer", "audience", "signing_key", "algorithm", "key_id", "subject", "custom_claims", "expiry_seconds"];
+        }
     }
     return ();
 }
@@ -397,6 +400,9 @@ function requiredAuthFields(string authType) returns string[] {
         }
         "api-key" => {
             return ["api_key"];
+        }
+        "jwt" => {
+            return ["issuer", "audience", "signing_key"];
         }
     }
     return [];

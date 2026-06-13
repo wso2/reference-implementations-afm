@@ -1175,16 +1175,33 @@ function testMapToHttpClientAuthOAuth2NotSupported() {
 }
 
 @test:Config
-function testMapToHttpClientAuthJWTNotSupported() {
+function testMapToHttpClientAuthJwtHmac() returns error? {
     ClientAuthentication auth = {
-        'type: "jwt"
+        'type: "jwt",
+        "issuer": "afm-agent",
+        "audience": "https://api.example.com",
+        "signing_key": "shared-secret",
+        "algorithm": "HS256"
     };
 
-    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
-    if result is http:ClientAuthConfig? {
-        test:assertFail("Expected error for JWT authentication");
-    }
-    test:assertEquals(result.message(), "JWT authentication not yet supported");
+    http:ClientAuthConfig? result = check mapToHttpClientAuth(auth);
+    test:assertTrue(result is http:JwtIssuerConfig);
+    http:JwtIssuerConfig issuerConfig = <http:JwtIssuerConfig>result;
+    test:assertEquals(issuerConfig.issuer, "afm-agent");
+    test:assertEquals(issuerConfig.audience, "https://api.example.com");
+}
+
+@test:Config
+function testMapToHttpClientAuthJwtRs256() returns error? {
+    ClientAuthentication auth = {
+        'type: "jwt",
+        "issuer": "afm-agent",
+        "audience": "https://api.example.com",
+        "signing_key": "/path/to/key.pem"
+    };
+
+    http:ClientAuthConfig? result = check mapToHttpClientAuth(auth);
+    test:assertTrue(result is http:JwtIssuerConfig);
 }
 
 @test:Config
@@ -1251,10 +1268,23 @@ function testValidateAuthenticationCaseInsensitive() returns error? {
 }
 
 @test:Config
-function testValidateAuthenticationJwtDeferred() returns error? {
-    ClientAuthentication auth = {'type: "jwt"};
+function testValidateAuthenticationJwtValid() returns error? {
+    ClientAuthentication auth = {
+        'type: "jwt",
+        "issuer": "afm-agent",
+        "audience": "https://api.example.com",
+        "signing_key": "secret"
+    };
     error? result = validateAuthentication(auth);
     test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationJwtMissingField() {
+    ClientAuthentication auth = {'type: "jwt", "issuer": "afm-agent"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "type 'jwt' requires 'audience' field");
 }
 
 @test:Config

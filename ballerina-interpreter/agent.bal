@@ -379,11 +379,60 @@ function mapToHttpClientAuth(ClientAuthentication? auth) returns http:ClientAuth
             return error("OAuth2 authentication not yet supported");
         }
         "jwt" => {
-            // return rest.cloneWithType(http:JwtIssuerConfig);
-            return error("JWT authentication not yet supported");
+            JwtAuthConfig|error jwtConfig = rest.cloneWithType();
+            if jwtConfig is error {
+                return error("Invalid JWT authentication configuration", jwtConfig);
+            }
+            return buildJwtIssuerConfig(jwtConfig);
         }
         _ => {
             return error(string `Unsupported authentication type: ${'type}`);
         }
     }
+}
+
+type JwtAuthConfig record {|
+    string issuer;
+    string|string[] audience;
+    string signing_key;
+    string algorithm = "RS256";
+    string key_id?;
+    string subject?;
+    map<json> custom_claims?;
+    decimal expiry_seconds = 300;
+|};
+
+function buildJwtIssuerConfig(JwtAuthConfig jwtConfig) returns http:JwtIssuerConfig|error {
+    string algorithm = jwtConfig.algorithm;
+    boolean isHmac = algorithm == "HS256" || algorithm == "HS384" || algorithm == "HS512";
+    json signatureKeyConfig = isHmac ? jwtConfig.signing_key : {keyFile: jwtConfig.signing_key};
+
+    map<json> issuerConfig = {
+        issuer: jwtConfig.issuer,
+        audience: jwtConfig.audience,
+        expTime: jwtConfig.expiry_seconds,
+        signatureConfig: {
+            algorithm,
+            config: signatureKeyConfig
+        }
+    };
+
+    string? keyId = jwtConfig?.key_id;
+    if keyId is string {
+        issuerConfig["keyId"] = keyId;
+    }
+    string? subject = jwtConfig?.subject;
+    if subject is string {
+        issuerConfig["username"] = subject;
+    }
+    map<json>? customClaims = jwtConfig?.custom_claims;
+    if customClaims is map<json> {
+        issuerConfig["customClaims"] = customClaims;
+    }
+
+    http:JwtIssuerConfig|error result = issuerConfig.cloneWithType();
+    if result is error {
+        return error("Invalid JWT authentication configuration", result);
+    }
+    return result;
 }
