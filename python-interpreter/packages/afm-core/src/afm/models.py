@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -32,17 +32,43 @@ class Provider(BaseModel):
 
 RECOGNIZED_AUTH_TYPES = ("bearer", "basic", "api-key", "jwt", "oauth2")
 
+_JWT_ALLOWED_FIELDS = {
+    "issuer",
+    "audience",
+    "signing_key",
+    "algorithm",
+    "key_id",
+    "subject",
+    "custom_claims",
+    "expiry_seconds",
+}
 _AUTH_REQUIRED_FIELDS: dict[str, set[str]] = {
     "bearer": {"token"},
     "basic": {"username", "password"},
     "api-key": {"api_key"},
+    "jwt": {"issuer", "audience", "signing_key"},
 }
 _AUTH_ALLOWED_FIELDS: dict[str, set[str]] = {
     "bearer": {"token"},
     "basic": {"username", "password"},
     "api-key": {"api_key", "header_name"},
+    "jwt": _JWT_ALLOWED_FIELDS,
 }
-_AUTH_CREDENTIAL_FIELDS = ("token", "username", "password", "api_key", "header_name")
+_AUTH_CREDENTIAL_FIELDS = (
+    "token",
+    "username",
+    "password",
+    "api_key",
+    "header_name",
+    "issuer",
+    "audience",
+    "signing_key",
+    "algorithm",
+    "key_id",
+    "subject",
+    "custom_claims",
+    "expiry_seconds",
+)
 
 
 class ClientAuthentication(BaseModel):
@@ -54,6 +80,14 @@ class ClientAuthentication(BaseModel):
     password: str | None = None
     api_key: str | None = None
     header_name: str | None = None
+    issuer: str | None = None
+    audience: str | list[str] | None = None
+    signing_key: str | None = None
+    algorithm: str | None = None
+    key_id: str | None = None
+    subject: str | None = None
+    custom_claims: dict[str, Any] | None = None
+    expiry_seconds: int | None = None
 
     @model_validator(mode="after")
     def validate_type_fields(self) -> Self:

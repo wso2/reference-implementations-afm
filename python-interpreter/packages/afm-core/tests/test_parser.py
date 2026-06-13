@@ -522,9 +522,33 @@ class TestClientAuthenticationValidation:
         auth = ClientAuthentication(type="Bearer", token="t")
         assert auth.token == "t"
 
-    def test_jwt_recognized_without_field_validation(self) -> None:
-        auth = ClientAuthentication(type="jwt")
-        assert auth.type == "jwt"
+    def test_jwt_valid(self) -> None:
+        auth = ClientAuthentication(
+            type="jwt",
+            issuer="afm-agent",
+            audience="https://api.example.com",
+            signing_key="secret",
+        )
+        assert auth.issuer == "afm-agent"
+        assert auth.audience == "https://api.example.com"
+
+    def test_jwt_audience_list(self) -> None:
+        auth = ClientAuthentication(
+            type="jwt", issuer="i", audience=["a", "b"], signing_key="s"
+        )
+        assert auth.audience == ["a", "b"]
+
+    def test_jwt_missing_signing_key_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError, match="type 'jwt' requires 'signing_key'"
+        ):
+            ClientAuthentication(type="jwt", issuer="i", audience="a")
+
+    def test_jwt_unknown_field_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="does not support"):
+            ClientAuthentication(
+                type="jwt", issuer="i", audience="a", signing_key="s", token="x"
+            )
 
     def test_oauth2_recognized_without_field_validation(self) -> None:
         auth = ClientAuthentication(type="oauth2")
