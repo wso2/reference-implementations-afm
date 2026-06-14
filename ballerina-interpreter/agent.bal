@@ -354,29 +354,11 @@ function mapToHttpClientAuth(ClientAuthentication? auth) returns http:ClientAuth
             return error("API key authentication is not yet supported for MCP/webhook transport in the Ballerina interpreter");
         }
         "oauth2" => {
-            // record {string grantType;}|error oauth2Config = check rest.cloneWithType();
-            // if oauth2Config is error {
-            //     return error("OAuth2 authentication requires 'grantType' field", oauth2Config);
-            // }
-            
-            // var {grantType, ...oauth2ConfigRest} = oauth2Config;
-
-            // match grantType.toLowerAscii() {
-            //     "client_credentials" => {
-            //         return oauth2ConfigRest.cloneWithType(http:OAuth2ClientCredentialsGrantConfig);
-            //     }
-            //     "password" => {
-            //         return oauth2ConfigRest.cloneWithType(http:OAuth2PasswordGrantConfig);
-            //     }
-            //     "refresh_token" => {
-            //         return oauth2ConfigRest.cloneWithType(http:OAuth2RefreshTokenGrantConfig);
-            //     }
-            //     "jwt" => {
-            //         return oauth2Config.cloneWithType(http:OAuth2JwtBearerGrantConfig);
-            //     }
-            // }
-            // panic error(string `Unsupported OAuth2 grant type: ${grantType}`);
-            return error("OAuth2 authentication not yet supported");
+            OAuth2Config|error oauth2Config = rest.cloneWithType();
+            if oauth2Config is error {
+                return error("Invalid OAuth2 authentication configuration", oauth2Config);
+            }
+            return buildOAuth2GrantConfig(oauth2Config);
         }
         "jwt" => {
             JwtAuthConfig|error jwtConfig = rest.cloneWithType();
@@ -435,4 +417,67 @@ function buildJwtIssuerConfig(JwtAuthConfig jwtConfig) returns http:JwtIssuerCon
         return error("Invalid JWT authentication configuration", result);
     }
     return result;
+}
+
+type OAuth2Config record {|
+    string grant_type;
+    string token_url?;
+    string refresh_url?;
+    string client_id?;
+    string client_secret?;
+    string username?;
+    string password?;
+    string refresh_token?;
+    string assertion?;
+    string[] scopes?;
+|};
+
+function buildOAuth2GrantConfig(OAuth2Config cfg) returns http:OAuth2GrantConfig|error {
+    string grant = cfg.grant_type.toLowerAscii();
+    match grant {
+        "client_credentials" => {
+            map<json> grantConfig = {tokenUrl: cfg?.token_url, clientId: cfg?.client_id, clientSecret: cfg?.client_secret};
+            addScopes(grantConfig, cfg?.scopes);
+            return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2ClientCredentialsGrantConfig));
+        }
+        "password" => {
+            map<json> grantConfig = {tokenUrl: cfg?.token_url, username: cfg?.username, password: cfg?.password};
+            addOptional(grantConfig, "clientId", cfg?.client_id);
+            addOptional(grantConfig, "clientSecret", cfg?.client_secret);
+            addScopes(grantConfig, cfg?.scopes);
+            return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2PasswordGrantConfig));
+        }
+        "refresh_token" => {
+            map<json> grantConfig = {refreshUrl: cfg?.refresh_url, refreshToken: cfg?.refresh_token, clientId: cfg?.client_id, clientSecret: cfg?.client_secret};
+            addScopes(grantConfig, cfg?.scopes);
+            return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2RefreshTokenGrantConfig));
+        }
+        "jwt_bearer" => {
+            map<json> grantConfig = {tokenUrl: cfg?.token_url, assertion: cfg?.assertion};
+            addOptional(grantConfig, "clientId", cfg?.client_id);
+            addOptional(grantConfig, "clientSecret", cfg?.client_secret);
+            addScopes(grantConfig, cfg?.scopes);
+            return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2JwtBearerGrantConfig));
+        }
+    }
+    return error(string `Unsupported OAuth2 grant type: ${cfg.grant_type}`);
+}
+
+function wrapOAuth2(http:OAuth2GrantConfig|error result) returns http:OAuth2GrantConfig|error {
+    if result is error {
+        return error("Invalid OAuth2 authentication configuration", result);
+    }
+    return result;
+}
+
+function addScopes(map<json> target, string[]? scopes) {
+    if scopes is string[] {
+        target["scopes"] = scopes;
+    }
+}
+
+function addOptional(map<json> target, string key, string? value) {
+    if value is string {
+        target[key] = value;
+    }
 }

@@ -352,6 +352,10 @@ function validateAuthentication(ClientAuthentication? auth) returns error? {
         return error(string `unknown authentication type '${auth.'type}'. Supported types: bearer, basic, api-key, jwt, oauth2`);
     }
 
+    if authType == "oauth2" {
+        return validateOAuth2(auth);
+    }
+
     string[]? allowed = allowedAuthFields(authType);
     if allowed is () {
         return;
@@ -406,6 +410,53 @@ function requiredAuthFields(string authType) returns string[] {
         }
     }
     return [];
+}
+
+function validateOAuth2(ClientAuthentication auth) returns error? {
+    anydata grantTypeValue = auth["grant_type"];
+    if grantTypeValue !is string {
+        return error("type 'oauth2' requires 'grant_type' field");
+    }
+
+    string grant = grantTypeValue.toLowerAscii();
+    [string[], string[]]? grantFields = oauth2GrantFields(grant);
+    if grantFields is () {
+        return error("oauth2 grant_type '" + grantTypeValue + "' is not supported. Supported grant types: client_credentials, password, refresh_token, jwt_bearer");
+    }
+
+    [string[], string[]] [required, optional] = grantFields;
+    string[] allowed = ["grant_type", ...required, ...optional];
+    string[] provided = from string key in auth.keys() where key != "type" select key;
+
+    foreach string req in required {
+        if provided.indexOf(req) is () {
+            return error("oauth2 grant_type '" + grant + "' requires '" + req + "' field");
+        }
+    }
+
+    foreach string fieldName in provided {
+        if allowed.indexOf(fieldName) is () {
+            return error("oauth2 grant_type '" + grant + "' does not support '" + fieldName + "' field");
+        }
+    }
+}
+
+function oauth2GrantFields(string grant) returns [string[], string[]]? {
+    match grant {
+        "client_credentials" => {
+            return [["token_url", "client_id", "client_secret"], ["scopes"]];
+        }
+        "password" => {
+            return [["token_url", "username", "password", "client_id", "client_secret"], ["scopes"]];
+        }
+        "refresh_token" => {
+            return [["refresh_url", "refresh_token", "client_id", "client_secret"], ["scopes"]];
+        }
+        "jwt_bearer" => {
+            return [["token_url", "assertion"], ["client_id", "client_secret", "scopes"]];
+        }
+    }
+    return ();
 }
 
 function signatureContainsHttpVariable(Signature signature) returns boolean =>
