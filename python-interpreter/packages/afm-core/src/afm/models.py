@@ -32,6 +32,7 @@ class Provider(BaseModel):
 
 RECOGNIZED_AUTH_TYPES = ("bearer", "basic", "api-key", "jwt", "oauth2")
 
+
 _JWT_ALLOWED_FIELDS = {
     "issuer",
     "audience",
@@ -54,6 +55,25 @@ _AUTH_ALLOWED_FIELDS: dict[str, set[str]] = {
     "api-key": {"api_key", "header_name"},
     "jwt": _JWT_ALLOWED_FIELDS,
 }
+
+_OAUTH2_GRANTS: dict[str, dict[str, set[str]]] = {
+    "client_credentials": {
+        "required": {"token_url", "client_id", "client_secret"},
+        "optional": {"scopes"},
+    },
+    "password": {
+        "required": {"token_url", "username", "password", "client_id", "client_secret"},
+        "optional": {"scopes"},
+    },
+    "refresh_token": {
+        "required": {"refresh_url", "refresh_token", "client_id", "client_secret"},
+        "optional": {"scopes"},
+    },
+    "jwt_bearer": {
+        "required": {"token_url", "assertion"},
+        "optional": {"client_id", "client_secret", "scopes"},
+    },
+}
 _AUTH_CREDENTIAL_FIELDS = (
     "token",
     "username",
@@ -68,6 +88,14 @@ _AUTH_CREDENTIAL_FIELDS = (
     "subject",
     "custom_claims",
     "expiry_seconds",
+    "grant_type",
+    "token_url",
+    "refresh_url",
+    "client_id",
+    "client_secret",
+    "refresh_token",
+    "assertion",
+    "scopes",
 )
 
 
@@ -88,6 +116,14 @@ class ClientAuthentication(BaseModel):
     subject: str | None = None
     custom_claims: dict[str, Any] | None = None
     expiry_seconds: int | None = None
+    grant_type: str | None = None
+    token_url: str | None = None
+    refresh_url: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    refresh_token: str | None = None
+    assertion: str | None = None
+    scopes: list[str] | None = None
 
     @model_validator(mode="after")
     def validate_type_fields(self) -> Self:
@@ -100,14 +136,14 @@ class ClientAuthentication(BaseModel):
                 f"Supported types: {supported}"
             )
 
-        allowed = _AUTH_ALLOWED_FIELDS.get(auth_type)
-        if allowed is None:
-            return self
-
         provided = {
             name for name in _AUTH_CREDENTIAL_FIELDS if getattr(self, name) is not None
         }
         provided |= set(self.model_extra or {})
+
+        if auth_type == "oauth2":
+            self._validate_oauth2_fields(provided)
+            return self
 
         missing = _AUTH_REQUIRED_FIELDS[auth_type] - provided
         if missing:
@@ -115,13 +151,41 @@ class ClientAuthentication(BaseModel):
             suffix = "field" if len(missing) == 1 else "fields"
             raise ValueError(f"type '{auth_type}' requires {fields} {suffix}")
 
-        unknown = provided - allowed
+        unknown = provided - _AUTH_ALLOWED_FIELDS[auth_type]
         if unknown:
             fields = ", ".join(f"'{name}'" for name in sorted(unknown))
             suffix = "field" if len(unknown) == 1 else "fields"
             raise ValueError(f"type '{auth_type}' does not support {fields} {suffix}")
 
         return self
+
+    def _validate_oauth2_fields(self, provided: set[str]) -> None:
+        if self.grant_type is None:
+            raise ValueError("type 'oauth2' requires 'grant_type' field")
+
+        grant = self.grant_type.lower()
+        spec = _OAUTH2_GRANTS.get(grant)
+        if spec is None:
+            supported = ", ".join(_OAUTH2_GRANTS)
+            raise ValueError(
+                f"oauth2 grant_type '{self.grant_type}' is not supported. "
+                f"Supported grant types: {supported}"
+            )
+
+        missing = spec["required"] - provided
+        if missing:
+            fields = ", ".join(f"'{name}'" for name in sorted(missing))
+            suffix = "field" if len(missing) == 1 else "fields"
+            raise ValueError(f"oauth2 grant_type '{grant}' requires {fields} {suffix}")
+
+        allowed = {"grant_type"} | spec["required"] | spec["optional"]
+        unknown = provided - allowed
+        if unknown:
+            fields = ", ".join(f"'{name}'" for name in sorted(unknown))
+            suffix = "field" if len(unknown) == 1 else "fields"
+            raise ValueError(
+                f"oauth2 grant_type '{grant}' does not support {fields} {suffix}"
+            )
 
 
 class Model(BaseModel):

@@ -124,6 +124,141 @@ class JwtAuth(httpx.Auth):
         yield request
 
 
+_JWT_BEARER_GRANT_URN = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+
+class OAuth2Auth(httpx.Auth):
+
+    def __init__(
+        self,
+        *,
+        grant_type: str,
+        token_url: str | None = None,
+        refresh_url: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        refresh_token: str | None = None,
+        assertion: str | None = None,
+        scopes: list[str] | None = None,
+    ) -> None:
+        self.grant_type = grant_type.lower()
+        self.token_url = token_url
+        self.refresh_url = refresh_url
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.username = username
+        self.password = password
+        self.refresh_token = refresh_token
+        self.assertion = assertion
+        self.scopes = scopes
+        self._token: str | None = None
+        self._expires_at: float = 0.0
+
+    def _token_request(self) -> tuple[str, dict[str, str], tuple[str, str] | None]:
+        url: str | None
+        data: dict[str, str]
+        if self.grant_type == "client_credentials":
+            url = self.token_url
+            data = {"grant_type": "client_credentials"}
+        elif self.grant_type == "password":
+            url = self.token_url
+            data = {
+                "grant_type": "password",
+                "username": self.username or "",
+                "password": self.password or "",
+            }
+        elif self.grant_type == "refresh_token":
+            url = self.refresh_url
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token or "",
+            }
+        elif self.grant_type == "jwt_bearer":
+            url = self.token_url
+            data = {
+                "grant_type": _JWT_BEARER_GRANT_URN,
+                "assertion": self.assertion or "",
+            }
+        else:
+            raise MCPAuthenticationError(
+                f"Unsupported oauth2 grant_type: {self.grant_type}"
+            )
+
+        if url is None:
+            raise MCPAuthenticationError(
+                f"oauth2 grant_type '{self.grant_type}' is missing its token URL"
+            )
+        if self.scopes:
+            data["scope"] = " ".join(self.scopes)
+
+        basic = (
+            (self.client_id, self.client_secret)
+            if self.client_id is not None and self.client_secret is not None
+            else None
+        )
+        return url, data, basic
+
+    def _store_token(self, payload: dict) -> str:
+        token = payload.get("access_token")
+        if not token:
+            raise MCPAuthenticationError(
+                "OAuth2 token response did not contain 'access_token'"
+            )
+        expires_in = float(payload.get("expires_in", 3600))
+        self._expires_at = time.time() + expires_in - 30
+        self._token = token
+        return token
+
+    def _cached_token(self) -> str | None:
+        if self._token is not None and time.time() < self._expires_at:
+            return self._token
+        return None
+
+    def _fetch_token_sync(self) -> str:
+        url, data, basic = self._token_request()
+        try:
+            resp = httpx.post(
+                url,
+                data=data,
+                auth=basic,
+                headers={"Accept": "application/json"},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as e:
+            raise MCPAuthenticationError(f"OAuth2 token request failed: {e}") from e
+        return self._store_token(payload)
+
+    async def _fetch_token_async(self) -> str:
+        url, data, basic = self._token_request()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    url,
+                    data=data,
+                    auth=basic,
+                    headers={"Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as e:
+            raise MCPAuthenticationError(f"OAuth2 token request failed: {e}") from e
+        return self._store_token(payload)
+
+    def sync_auth_flow(self, request: httpx.Request):
+        token = self._cached_token() or self._fetch_token_sync()
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+    async def async_auth_flow(self, request: httpx.Request):
+        token = self._cached_token() or await self._fetch_token_async()
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+
 def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
     if auth is None:
         return None
@@ -166,8 +301,19 @@ def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
         )
 
     elif auth_type == "oauth2":
-        raise MCPAuthenticationError(
-            "Authentication type 'oauth2' not yet supported"
+        if auth.grant_type is None:
+            raise MCPAuthenticationError("OAuth2 auth requires 'grant_type' field")
+        return OAuth2Auth(
+            grant_type=auth.grant_type,
+            token_url=auth.token_url,
+            refresh_url=auth.refresh_url,
+            client_id=auth.client_id,
+            client_secret=auth.client_secret,
+            username=auth.username,
+            password=auth.password,
+            refresh_token=auth.refresh_token,
+            assertion=auth.assertion,
+            scopes=auth.scopes,
         )
 
     else:
