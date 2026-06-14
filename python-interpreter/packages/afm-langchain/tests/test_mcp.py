@@ -14,6 +14,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import time
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -40,6 +41,7 @@ from afm_langchain.tools.mcp import (
     JwtAuth,
     MCPClient,
     MCPManager,
+    OAuth2Auth,
     build_httpx_auth,
     filter_tools,
 )
@@ -59,7 +61,13 @@ def make_mcp_server(
     elif auth_type == "api-key":
         auth = ClientAuthentication(type="api-key", api_key="test-api-key")
     elif auth_type == "oauth2":
-        auth = ClientAuthentication(type="oauth2")
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="client_credentials",
+            token_url="https://auth.example.com/token",
+            client_id="id",
+            client_secret="secret",
+        )
     elif auth_type == "jwt":
         auth = ClientAuthentication(
             type="jwt",
@@ -238,6 +246,87 @@ class TestBuildHttpxAuth:
             audience="https://api.example.com",
         )
         assert decoded["iss"] == "afm-agent"
+
+    def test_oauth2_returns_oauth2_auth_instance(self):
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="client_credentials",
+            token_url="https://auth.example.com/token",
+            client_id="id",
+            client_secret="secret",
+            scopes=["read"],
+        )
+        result = build_httpx_auth(auth)
+        assert isinstance(result, OAuth2Auth)
+        assert result.grant_type == "client_credentials"
+
+    def test_oauth2_client_credentials_token_request(self):
+        result = build_httpx_auth(
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="client_credentials",
+                token_url="https://auth.example.com/token",
+                client_id="id",
+                client_secret="secret",
+                scopes=["read", "write"],
+            )
+        )
+        assert isinstance(result, OAuth2Auth)
+        url, data, basic = result._token_request()
+        assert url == "https://auth.example.com/token"
+        assert data["grant_type"] == "client_credentials"
+        assert data["scope"] == "read write"
+        assert basic == ("id", "secret")
+
+    def test_oauth2_refresh_token_uses_refresh_url(self):
+        result = build_httpx_auth(
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="refresh_token",
+                refresh_url="https://auth.example.com/refresh",
+                refresh_token="rt",
+                client_id="id",
+                client_secret="secret",
+            )
+        )
+        assert isinstance(result, OAuth2Auth)
+        url, data, _basic = result._token_request()
+        assert url == "https://auth.example.com/refresh"
+        assert data["grant_type"] == "refresh_token"
+        assert data["refresh_token"] == "rt"
+
+    def test_oauth2_jwt_bearer_token_request(self):
+        result = build_httpx_auth(
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="jwt_bearer",
+                token_url="https://auth.example.com/token",
+                assertion="signed.jwt",
+            )
+        )
+        assert isinstance(result, OAuth2Auth)
+        _url, data, basic = result._token_request()
+        assert data["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        assert data["assertion"] == "signed.jwt"
+        assert basic is None  # no client credentials provided
+
+    def test_oauth2_uses_cached_token(self):
+        result = build_httpx_auth(
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="client_credentials",
+                token_url="u",
+                client_id="id",
+                client_secret="secret",
+            )
+        )
+        assert isinstance(result, OAuth2Auth)
+        result._token = "cached-token"
+        result._expires_at = time.time() + 1000
+        request = httpx.Request("GET", "https://api.example.com/resource")
+        flow = result.sync_auth_flow(request)
+        next(flow)
+        assert request.headers["Authorization"] == "Bearer cached-token"
 
 
 class TestFilterTools:

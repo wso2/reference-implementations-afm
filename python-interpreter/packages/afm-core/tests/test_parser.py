@@ -550,9 +550,96 @@ class TestClientAuthenticationValidation:
                 type="jwt", issuer="i", audience="a", signing_key="s", token="x"
             )
 
-    def test_oauth2_recognized_without_field_validation(self) -> None:
-        auth = ClientAuthentication(type="oauth2")
-        assert auth.type == "oauth2"
+    def test_oauth2_client_credentials_valid(self) -> None:
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="client_credentials",
+            token_url="https://auth.example.com/token",
+            client_id="id",
+            client_secret="secret",
+            scopes=["read", "write"],
+        )
+        assert auth.grant_type == "client_credentials"
+        assert auth.scopes == ["read", "write"]
+
+    def test_oauth2_password_valid(self) -> None:
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="password",
+            token_url="https://auth.example.com/token",
+            username="u",
+            password="p",
+            client_id="id",
+            client_secret="secret",
+        )
+        assert auth.grant_type == "password"
+
+    def test_oauth2_refresh_token_valid(self) -> None:
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="refresh_token",
+            refresh_url="https://auth.example.com/token",
+            refresh_token="rt",
+            client_id="id",
+            client_secret="secret",
+        )
+        assert auth.grant_type == "refresh_token"
+
+    def test_oauth2_jwt_bearer_valid(self) -> None:
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="jwt_bearer",
+            token_url="https://auth.example.com/token",
+            assertion="signed.jwt.token",
+        )
+        assert auth.grant_type == "jwt_bearer"
+
+    def test_oauth2_grant_type_case_insensitive(self) -> None:
+        auth = ClientAuthentication(
+            type="oauth2",
+            grant_type="Client_Credentials",
+            token_url="u",
+            client_id="id",
+            client_secret="secret",
+        )
+        assert auth.grant_type == "Client_Credentials"
+
+    def test_oauth2_missing_grant_type_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError, match="type 'oauth2' requires 'grant_type'"
+        ):
+            ClientAuthentication(type="oauth2", token_url="u")
+
+    def test_oauth2_unknown_grant_type_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError, match="grant_type 'device_code' is not supported"
+        ):
+            ClientAuthentication(
+                type="oauth2", grant_type="device_code", token_url="u"
+            )
+
+    def test_oauth2_missing_required_field_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError,
+            match="grant_type 'client_credentials' requires 'client_secret'",
+        ):
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="client_credentials",
+                token_url="u",
+                client_id="id",
+            )
+
+    def test_oauth2_field_not_allowed_for_grant_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="does not support 'refresh_token'"):
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="client_credentials",
+                token_url="u",
+                client_id="id",
+                client_secret="secret",
+                refresh_token="rt",
+            )
 
     def test_unknown_type_rejected(self) -> None:
         with pytest.raises(ValidationError, match="unknown authentication type 'token'"):

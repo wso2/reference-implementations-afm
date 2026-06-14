@@ -1162,16 +1162,39 @@ function testMapToHttpClientAuthBearer() returns error? {
 }
 
 @test:Config
-function testMapToHttpClientAuthOAuth2NotSupported() {
+function testMapToHttpClientAuthOAuth2ClientCredentials() returns error? {
     ClientAuthentication auth = {
-        'type: "oauth2"
+        'type: "oauth2",
+        "grant_type": "client_credentials",
+        "token_url": "https://auth.example.com/token",
+        "client_id": "id",
+        "client_secret": "secret",
+        "scopes": ["read", "write"]
     };
 
-    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
-    if result is http:ClientAuthConfig? {
-        test:assertFail("Expected error for OAuth2 authentication");
-    }
-    test:assertEquals(result.message(), "OAuth2 authentication not yet supported");
+    http:ClientAuthConfig? result = check mapToHttpClientAuth(auth);
+    test:assertTrue(result is http:OAuth2ClientCredentialsGrantConfig);
+    http:OAuth2ClientCredentialsGrantConfig grantConfig = <http:OAuth2ClientCredentialsGrantConfig>result;
+    test:assertEquals(grantConfig.tokenUrl, "https://auth.example.com/token");
+    test:assertEquals(grantConfig.clientId, "id");
+}
+
+@test:Config
+function testMapToHttpClientAuthOAuth2RefreshToken() returns error? {
+    ClientAuthentication auth = {
+        'type: "oauth2",
+        "grant_type": "refresh_token",
+        "refresh_url": "https://auth.example.com/token",
+        "refresh_token": "rt",
+        "client_id": "id",
+        "client_secret": "secret"
+    };
+
+    http:ClientAuthConfig? result = check mapToHttpClientAuth(auth);
+    test:assertTrue(result is http:OAuth2RefreshTokenGrantConfig);
+    http:OAuth2RefreshTokenGrantConfig grantConfig = <http:OAuth2RefreshTokenGrantConfig>result;
+    test:assertEquals(grantConfig.refreshUrl, "https://auth.example.com/token");
+    test:assertEquals(grantConfig.refreshToken, "rt");
 }
 
 @test:Config
@@ -1285,6 +1308,64 @@ function testValidateAuthenticationJwtMissingField() {
     error? result = validateAuthentication(auth);
     test:assertTrue(result is error);
     test:assertEquals((<error>result).message(), "type 'jwt' requires 'audience' field");
+}
+
+@test:Config
+function testValidateAuthenticationOAuth2Valid() returns error? {
+    ClientAuthentication auth = {
+        'type: "oauth2",
+        "grant_type": "client_credentials",
+        "token_url": "https://auth.example.com/token",
+        "client_id": "id",
+        "client_secret": "secret",
+        "scopes": ["read"]
+    };
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateAuthenticationOAuth2MissingGrantType() {
+    ClientAuthentication auth = {'type: "oauth2", "token_url": "u"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "type 'oauth2' requires 'grant_type' field");
+}
+
+@test:Config
+function testValidateAuthenticationOAuth2UnknownGrantType() {
+    ClientAuthentication auth = {'type: "oauth2", "grant_type": "device_code", "token_url": "u"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("grant_type 'device_code' is not supported"));
+}
+
+@test:Config
+function testValidateAuthenticationOAuth2MissingRequiredField() {
+    ClientAuthentication auth = {
+        'type: "oauth2",
+        "grant_type": "client_credentials",
+        "token_url": "u",
+        "client_id": "id"
+    };
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "oauth2 grant_type 'client_credentials' requires 'client_secret' field");
+}
+
+@test:Config
+function testValidateAuthenticationOAuth2FieldNotAllowed() {
+    ClientAuthentication auth = {
+        'type: "oauth2",
+        "grant_type": "client_credentials",
+        "token_url": "u",
+        "client_id": "id",
+        "client_secret": "secret",
+        "refresh_token": "rt"
+    };
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertEquals((<error>result).message(), "oauth2 grant_type 'client_credentials' does not support 'refresh_token' field");
 }
 
 @test:Config
