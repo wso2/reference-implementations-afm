@@ -289,19 +289,21 @@ Agent instructions here.`;
 @test:Config
 function testValidateAndExtractInterfacesSingleConsoleChat() returns error? {
     Interface[] interfaces = [<ConsoleChatInterface>{}];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ConsoleChatInterface);
     test:assertTrue(web is ());
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
 function testValidateAndExtractInterfacesSingleWebChat() returns error? {
     Interface[] interfaces = [<WebChatInterface>{}];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ());
     test:assertTrue(web is WebChatInterface);
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
@@ -310,10 +312,11 @@ function testValidateAndExtractInterfacesMixed() returns error? {
         <ConsoleChatInterface>{},
         <WebChatInterface>{}
     ];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ConsoleChatInterface);
     test:assertTrue(web is WebChatInterface);
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
@@ -326,7 +329,8 @@ function testValidateAndExtractInterfacesDuplicateConsoleChat() {
     if result !is error {
         test:assertFail("Expected error for duplicate console chat interfaces");
     }
-    test:assertEquals(result.message(), "Multiple interfaces of the same type are not supported");
+    test:assertEquals(result.message(),
+        "Multiple consolechat, webchat, or webhook interfaces are not supported");
 }
 
 @test:Config
@@ -339,7 +343,21 @@ function testValidateAndExtractInterfacesDuplicateWebChat() {
     if result !is error {
         test:assertFail("Expected error for duplicate web chat interfaces");
     }
-    test:assertEquals(result.message(), "Multiple interfaces of the same type are not supported");
+    test:assertEquals(result.message(),
+        "Multiple consolechat, webchat, or webhook interfaces are not supported");
+}
+
+@test:Config
+function testValidateAndExtractInterfacesMultiplePlatformChats() returns error? {
+    Interface[] interfaces = [
+        <PlatformChatInterface>{platform: "slack", mode: NOTIFICATION},
+        <PlatformChatInterface>{platform: "gchat", mode: NOTIFICATION}
+    ];
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
+    test:assertTrue(console is ());
+    test:assertTrue(web is ());
+    test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 2);
 }
 
 // ============================================
