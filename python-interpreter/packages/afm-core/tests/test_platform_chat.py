@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from unittest.mock import MagicMock
+import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import httpx
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
@@ -28,8 +31,10 @@ from pydantic import ValidationError
 
 from afm.interfaces.platform_chat import (
     create_platform_chat_app,
+    dispatch_update,
     get_platform_handler,
     get_platform_session_id,
+    run_polling_loop,
     validate_platform_chat_interface_schema,
 )
 from afm.interfaces.platform_chat.gchat import (
@@ -49,12 +54,21 @@ from afm.interfaces.platform_chat.slack import (
     should_ignore_slack_event,
     verify_slack_request_signature,
 )
+from afm.interfaces.platform_chat.telegram import (
+    TELEGRAM_SECRET_TOKEN_HEADER,
+    TelegramConfig,
+    TelegramHandler,
+    get_telegram_session_id,
+    should_ignore_telegram_update,
+    verify_telegram_secret_token,
+)
 from afm.models import (
     Exposure,
     HTTPExposure,
     JSONSchema,
     PlatformChatInterface,
     PlatformChatMode,
+    Polling,
     Signature,
 )
 from afm.runner import AgentRunner
@@ -885,6 +899,7 @@ class TestPlatformHandlerRegistry:
     def test_get_known_platform_returns_handler(self) -> None:
         assert isinstance(get_platform_handler("slack"), SlackHandler)
         assert isinstance(get_platform_handler("gchat"), GChatHandler)
+        assert isinstance(get_platform_handler("telegram"), TelegramHandler)
 
     def test_get_unknown_platform_raises(self) -> None:
         with pytest.raises(ValueError) as exc_info:
@@ -981,3 +996,1253 @@ class TestValidatePlatformChatInterfaceSchema:
     def test_valid_gchat_endpoint_url_passes(self) -> None:
         iface = self._interface("gchat", {"endpoint_url": "https://example.com/x"})
         validate_platform_chat_interface_schema(iface)
+
+    def test_slack_request_mode_rejected(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="slack",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"signing_secret": "abc"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        with pytest.raises(ValueError, match="does not support mode 'request'"):
+            validate_platform_chat_interface_schema(iface)
+
+    def test_unsupported_mode_reported_even_with_bad_config(self) -> None:
+        # Slack does not support REQUEST mode AND the platform_config has
+        # an unknown field. The unsupported-mode error is the clearer
+        # failure for the user — surface that one, not a downstream
+        # pydantic ValidationError about the typo'd field.
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="slack",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"signing_secrt": "abc"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        with pytest.raises(ValueError, match="does not support mode 'request'"):
+            validate_platform_chat_interface_schema(iface)
+
+    def test_gchat_request_mode_passes(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="gchat",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"project_number": "1234567890"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        validate_platform_chat_interface_schema(iface)
+
+    def test_telegram_notification_mode_passes(self) -> None:
+        iface = self._interface("telegram", {"secret_token": "shh"})
+        validate_platform_chat_interface_schema(iface)
+
+    def test_telegram_request_mode_rejected(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.REQUEST,
+            platform_config={"secret_token": "shh"},
+            exposure=Exposure(http=HTTPExposure(path="/x")),
+        )
+        with pytest.raises(ValueError, match="does not support mode 'request'"):
+            validate_platform_chat_interface_schema(iface)
+
+    def test_telegram_polling_mode_passes(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"bot_token": "123:abc"},
+            polling=Polling(),
+        )
+        validate_platform_chat_interface_schema(iface)
+
+    def test_slack_polling_mode_rejected(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="slack",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"signing_secret": "abc"},
+            polling=Polling(),
+        )
+        with pytest.raises(ValueError, match="does not support mode 'polling'"):
+            validate_platform_chat_interface_schema(iface)
+
+
+class TestTelegramConfig:
+    def test_empty_config_allowed(self) -> None:
+        # Schema-level: both fields are optional. Runtime checks enforce
+        # bot_token (polling) and secret_token (verifying) only as needed.
+        config = TelegramConfig.model_validate({})
+        assert config.bot_token is None
+        assert config.secret_token is None
+
+    def test_valid_config_with_secret_token(self) -> None:
+        config = TelegramConfig.model_validate({"secret_token": "xyz"})
+        assert config.secret_token == "xyz"
+
+    def test_valid_config_with_bot_token(self) -> None:
+        config = TelegramConfig.model_validate({"bot_token": "123:abc"})
+        assert config.bot_token == "123:abc"
+
+    def test_valid_config_with_both_tokens(self) -> None:
+        config = TelegramConfig.model_validate(
+            {"bot_token": "123:abc", "secret_token": "shh"}
+        )
+        assert config.bot_token == "123:abc"
+        assert config.secret_token == "shh"
+
+    def test_unknown_field_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TelegramConfig.model_validate({"api_id": "1"})
+        assert "api_id" in str(exc_info.value)
+
+    def test_wrong_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TelegramConfig.model_validate({"secret_token": 123})
+
+    def test_wrong_bot_token_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TelegramConfig.model_validate({"bot_token": 123})
+
+    def test_empty_string_bot_token_normalized_to_none(self) -> None:
+        config = TelegramConfig.model_validate({"bot_token": ""})
+        assert config.bot_token is None
+
+    def test_whitespace_only_bot_token_normalized_to_none(self) -> None:
+        config = TelegramConfig.model_validate({"bot_token": "   "})
+        assert config.bot_token is None
+
+    def test_whitespace_only_secret_token_normalized_to_none(self) -> None:
+        config = TelegramConfig.model_validate({"secret_token": "\t\n "})
+        assert config.secret_token is None
+
+    def test_token_with_surrounding_whitespace_is_stripped(self) -> None:
+        config = TelegramConfig.model_validate({"bot_token": " 123:abc "})
+        assert config.bot_token == "123:abc"
+
+
+class TestVerifyTelegramSecretToken:
+    def test_matching_token_passes(self) -> None:
+        assert verify_telegram_secret_token("abc", "abc") is True
+
+    def test_mismatched_token_fails(self) -> None:
+        assert verify_telegram_secret_token("abc", "xyz") is False
+
+    def test_missing_header_fails(self) -> None:
+        assert verify_telegram_secret_token(None, "abc") is False
+
+    def test_empty_received_fails(self) -> None:
+        assert verify_telegram_secret_token("", "abc") is False
+
+
+class TestShouldIgnoreTelegramUpdate:
+    def test_non_dict_payload_not_ignored(self) -> None:
+        assert should_ignore_telegram_update("not a dict") is False
+
+    def test_message_from_user_not_ignored(self) -> None:
+        payload = {
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "is_bot": False},
+                "chat": {"id": 42, "type": "private"},
+                "text": "hi",
+            },
+        }
+        assert should_ignore_telegram_update(payload) is False
+
+    def test_message_from_bot_ignored(self) -> None:
+        payload = {
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "is_bot": True},
+                "chat": {"id": 42, "type": "private"},
+                "text": "hi",
+            },
+        }
+        assert should_ignore_telegram_update(payload) is True
+
+    def test_edited_message_ignored(self) -> None:
+        # Updates without a "message" field (edited_message, channel_post,
+        # callback_query, etc.) are not handled by the default flow.
+        payload = {
+            "update_id": 1,
+            "edited_message": {
+                "message_id": 1,
+                "from": {"id": 42, "is_bot": False},
+                "chat": {"id": 42, "type": "private"},
+                "text": "hi (edited)",
+            },
+        }
+        assert should_ignore_telegram_update(payload) is True
+
+    def test_callback_query_ignored(self) -> None:
+        payload = {"update_id": 1, "callback_query": {"id": "1"}}
+        assert should_ignore_telegram_update(payload) is True
+
+
+class TestGetTelegramSessionId:
+    def test_non_dict_payload(self) -> None:
+        assert get_telegram_session_id("not a dict") == "default"
+
+    def test_private_chat_with_user(self) -> None:
+        payload = {
+            "message": {
+                "from": {"id": 42},
+                "chat": {"id": 42, "type": "private"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:42:42"
+
+    def test_group_chat_with_user(self) -> None:
+        payload = {
+            "message": {
+                "from": {"id": 99},
+                "chat": {"id": -1001234, "type": "supergroup"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:-1001234:99"
+
+    def test_missing_user_falls_back_to_default(self) -> None:
+        payload = {
+            "message": {
+                "chat": {"id": -1001234, "type": "channel"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:-1001234:default"
+
+    def test_missing_chat_uses_unknown(self) -> None:
+        payload = {"message": {"from": {"id": 42}}}
+        assert get_telegram_session_id(payload) == "telegram:unknown-chat:42"
+
+    def test_missing_message_returns_unknown(self) -> None:
+        assert get_telegram_session_id({}) == "telegram:unknown-chat:default"
+
+    def test_string_id_passes_through(self) -> None:
+        payload = {
+            "message": {
+                "from": {"id": "user-42"},
+                "chat": {"id": "chat-42"},
+            }
+        }
+        assert get_telegram_session_id(payload) == "telegram:chat-42:user-42"
+
+
+class TestTelegramHandlerVerifyRawRequest:
+    def _interface(self, secret_token: str | None) -> PlatformChatInterface:
+        config: dict = {}
+        if secret_token is not None:
+            config["secret_token"] = secret_token
+        return PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.NOTIFICATION,
+            platform_config=config,
+            exposure=Exposure(http=HTTPExposure(path="/telegram")),
+        )
+
+    def test_valid_secret_token_passes(self) -> None:
+        handler = TelegramHandler()
+        handler.verify_raw_request(
+            body=b"{}",
+            headers={TELEGRAM_SECRET_TOKEN_HEADER: "shh"},
+            interface=self._interface("shh"),
+        )
+
+    def test_invalid_secret_token_rejected(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handler = TelegramHandler()
+        with caplog.at_level("WARNING"):
+            with pytest.raises(HTTPException) as exc_info:
+                handler.verify_raw_request(
+                    body=b"{}",
+                    headers={TELEGRAM_SECRET_TOKEN_HEADER: "wrong"},
+                    interface=self._interface("shh"),
+                )
+        assert exc_info.value.status_code == 401
+        # Mismatch path emits a sanitized warning — header was present
+        # but did not match. We never log either side of the token.
+        mismatch_logs = [
+            r for r in caplog.records if "secret token mismatch" in r.message
+        ]
+        assert len(mismatch_logs) == 1
+        rendered = mismatch_logs[0].getMessage()
+        assert "header_present=True" in rendered
+        assert "wrong" not in rendered
+        assert "shh" not in rendered
+
+    def test_missing_secret_token_header_rejected(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handler = TelegramHandler()
+        with caplog.at_level("WARNING"):
+            with pytest.raises(HTTPException) as exc_info:
+                handler.verify_raw_request(
+                    body=b"{}",
+                    headers={},
+                    interface=self._interface("shh"),
+                )
+        assert exc_info.value.status_code == 401
+        mismatch_logs = [
+            r for r in caplog.records if "secret token mismatch" in r.message
+        ]
+        assert len(mismatch_logs) == 1
+        # No header at all is distinguishable in the log from a wrong one.
+        assert "header_present=False" in mismatch_logs[0].getMessage()
+
+    def test_handler_without_configured_secret_returns_500(self) -> None:
+        handler = TelegramHandler()
+        with pytest.raises(HTTPException) as exc_info:
+            handler.verify_raw_request(
+                body=b"{}",
+                headers={TELEGRAM_SECRET_TOKEN_HEADER: "shh"},
+                interface=self._interface(None),
+            )
+        assert exc_info.value.status_code == 500
+
+
+class TestTelegramHandlerValidateRuntimeConfig:
+    def _interface(self, secret_token: str | None) -> PlatformChatInterface:
+        config: dict = {}
+        if secret_token is not None:
+            config["secret_token"] = secret_token
+        return PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.NOTIFICATION,
+            platform_config=config,
+            exposure=Exposure(http=HTTPExposure(path="/telegram")),
+        )
+
+    def test_secret_required_when_verifying(self) -> None:
+        with pytest.raises(ValueError, match="secret_token"):
+            TelegramHandler().validate_runtime_config(
+                self._interface(None), verify_signatures=True
+            )
+
+    def test_secret_not_required_when_not_verifying(self) -> None:
+        TelegramHandler().validate_runtime_config(
+            self._interface(None), verify_signatures=False
+        )
+
+    def test_secret_present_passes(self) -> None:
+        TelegramHandler().validate_runtime_config(
+            self._interface("shh"), verify_signatures=True
+        )
+
+    def _polling_interface(self, *, bot_token: str | None) -> PlatformChatInterface:
+        config: dict = {}
+        if bot_token is not None:
+            config["bot_token"] = bot_token
+        return PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config=config,
+            polling=Polling(),
+        )
+
+    def test_polling_requires_bot_token(self) -> None:
+        with pytest.raises(ValueError, match="bot_token"):
+            TelegramHandler().validate_runtime_config(
+                self._polling_interface(bot_token=None),
+                verify_signatures=False,
+            )
+
+    def test_polling_with_bot_token_passes(self) -> None:
+        TelegramHandler().validate_runtime_config(
+            self._polling_interface(bot_token="123:abc"),
+            verify_signatures=False,
+        )
+
+    def test_polling_does_not_require_secret_token(self) -> None:
+        # Polling pulls from the bot's authenticated session — no inbound
+        # webhook to verify, so secret_token is irrelevant.
+        TelegramHandler().validate_runtime_config(
+            self._polling_interface(bot_token="123:abc"),
+            verify_signatures=True,
+        )
+
+    def test_polling_rejects_empty_bot_token(self) -> None:
+        with pytest.raises(ValueError, match="bot_token"):
+            TelegramHandler().validate_runtime_config(
+                self._polling_interface(bot_token=""),
+                verify_signatures=False,
+            )
+
+    def test_polling_rejects_whitespace_only_bot_token(self) -> None:
+        with pytest.raises(ValueError, match="bot_token"):
+            TelegramHandler().validate_runtime_config(
+                self._polling_interface(bot_token="   "),
+                verify_signatures=False,
+            )
+
+    def test_notification_rejects_empty_secret_token(self) -> None:
+        with pytest.raises(ValueError, match="secret_token"):
+            TelegramHandler().validate_runtime_config(
+                self._interface(secret_token=""),
+                verify_signatures=True,
+            )
+
+    def test_notification_rejects_whitespace_only_secret_token(self) -> None:
+        with pytest.raises(ValueError, match="secret_token"):
+            TelegramHandler().validate_runtime_config(
+                self._interface(secret_token="\t \n"),
+                verify_signatures=True,
+            )
+
+    def test_polling_rejects_timeout_above_telegram_cap(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"bot_token": "123:abc"},
+            polling=Polling(timeout=60),
+        )
+        with pytest.raises(ValueError, match="at most 50"):
+            TelegramHandler().validate_runtime_config(iface, verify_signatures=False)
+
+    def test_polling_accepts_timeout_at_telegram_cap(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"bot_token": "123:abc"},
+            polling=Polling(timeout=50),
+        )
+        TelegramHandler().validate_runtime_config(iface, verify_signatures=False)
+
+
+class TestPollingModelValidation:
+    def test_negative_interval_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            Polling.model_validate({"interval": -1})
+
+    def test_zero_interval_allowed(self) -> None:
+        # interval=0 is meaningful: "no sleep between cycles", typical
+        # when timeout is set and the platform long-polls.
+        config = Polling.model_validate({"interval": 0})
+        assert config.interval == 0
+
+    def test_negative_timeout_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            Polling.model_validate({"timeout": -1})
+
+
+def _make_telegram_polling_interface(
+    bot_token: str = "123:abc",
+) -> PlatformChatInterface:
+    return PlatformChatInterface(
+        type="platformchat",
+        platform="telegram",
+        mode=PlatformChatMode.POLLING,
+        platform_config={"bot_token": bot_token},
+        polling=Polling(interval=0, timeout=0),
+    )
+
+
+def _mock_async_client_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    get_responses: list[dict | Exception],
+) -> list[dict]:
+    """Patch httpx.AsyncClient in telegram.py to return successive canned
+    JSON bodies from ``get_responses``. Returns a list that records each
+    GET call's (url, params) for assertion."""
+    calls: list[dict] = []
+    iterator = iter(get_responses)
+
+    def make_response(body: dict) -> MagicMock:
+        resp = MagicMock()
+        resp.json.return_value = body
+        resp.raise_for_status.return_value = None
+        return resp
+
+    async def fake_get(url: str, params: dict | None = None) -> MagicMock:
+        # Yield so the polling loop's surrounding tasks (stoppers) get
+        # scheduled — without this, the loop spins synchronously and
+        # the stop signal is never delivered.
+        await asyncio.sleep(0)
+        calls.append({"url": url, "params": dict(params) if params else None})
+        try:
+            body = next(iterator)
+        except StopIteration:
+            body = {"ok": True, "result": []}
+        if isinstance(body, Exception):
+            raise body
+        return make_response(body)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = fake_get
+
+    def factory(*args: object, **kwargs: object) -> MagicMock:
+        return mock_client
+
+    monkeypatch.setattr(
+        "afm.interfaces.platform_chat.telegram.httpx.AsyncClient", factory
+    )
+    return calls
+
+
+class TestTelegramHandlerPollUpdates:
+    @pytest.mark.asyncio
+    async def test_first_call_omits_offset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
+        updates, state = await TelegramHandler().poll_updates(
+            _make_telegram_polling_interface(), {}
+        )
+        assert updates == []
+        assert state == {}
+        assert calls[0]["params"] == {"timeout": 0}
+
+    @pytest.mark.asyncio
+    async def test_returned_updates_and_offset_progression(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _mock_async_client_factory(
+            monkeypatch,
+            [
+                {
+                    "ok": True,
+                    "result": [
+                        {"update_id": 10, "message": {"text": "a"}},
+                        {"update_id": 12, "message": {"text": "b"}},
+                    ],
+                }
+            ],
+        )
+        updates, state = await TelegramHandler().poll_updates(
+            _make_telegram_polling_interface(), {}
+        )
+        assert len(updates) == 2
+        assert state == {"offset": 13}
+        assert calls[0]["params"] == {"timeout": 0}
+
+    @pytest.mark.asyncio
+    async def test_subsequent_call_passes_offset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
+        await TelegramHandler().poll_updates(
+            _make_telegram_polling_interface(), {"offset": 99}
+        )
+        assert calls[0]["params"] == {"timeout": 0, "offset": 99}
+
+    @pytest.mark.asyncio
+    async def test_empty_batch_preserves_offset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
+        updates, state = await TelegramHandler().poll_updates(
+            _make_telegram_polling_interface(), {"offset": 42}
+        )
+        assert updates == []
+        assert state == {"offset": 42}
+
+    @pytest.mark.asyncio
+    async def test_not_ok_response_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(
+            monkeypatch, [{"ok": False, "description": "Unauthorized"}]
+        )
+        with pytest.raises(RuntimeError, match="Unauthorized"):
+            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+
+    @pytest.mark.asyncio
+    async def test_non_list_result_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(monkeypatch, [{"ok": True, "result": "not a list"}])
+        with pytest.raises(RuntimeError, match="unexpected result shape") as exc_info:
+            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+        assert "not a list" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_falsy_non_list_result_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(monkeypatch, [{"ok": True, "result": 0}])
+        with pytest.raises(RuntimeError, match="unexpected result shape"):
+            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+
+    @pytest.mark.asyncio
+    async def test_http_status_error_is_sanitized(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        request = httpx.Request(
+            "GET",
+            "https://api.telegram.org/bot123:secret-token/getUpdates",
+        )
+        response = httpx.Response(429, request=request)
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                httpx.HTTPStatusError(
+                    "rate limited",
+                    request=request,
+                    response=response,
+                )
+            ],
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+
+        assert str(exc_info.value) == "Telegram getUpdates returned HTTP 429"
+        assert "123:secret-token" not in str(exc_info.value)
+        assert exc_info.value.__suppress_context__ is True
+
+    @pytest.mark.asyncio
+    async def test_http_transport_error_is_sanitized(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        request = httpx.Request(
+            "GET",
+            "https://api.telegram.org/bot123:secret-token/getUpdates",
+        )
+        _mock_async_client_factory(
+            monkeypatch,
+            [httpx.ConnectError("connect failed", request=request)],
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+
+        assert str(exc_info.value) == (
+            "Telegram getUpdates request failed: ConnectError"
+        )
+        assert "123:secret-token" not in str(exc_info.value)
+        assert exc_info.value.__suppress_context__ is True
+
+    @pytest.mark.asyncio
+    async def test_missing_bot_token_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config={},
+            polling=Polling(),
+        )
+        with pytest.raises(RuntimeError, match="bot_token"):
+            await TelegramHandler().poll_updates(iface, {})
+
+    @pytest.mark.asyncio
+    async def test_long_poll_timeout_passed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"bot_token": "123:abc"},
+            polling=Polling(interval=1, timeout=30),
+        )
+        await TelegramHandler().poll_updates(iface, {})
+        assert calls[0]["params"] == {"timeout": 30}
+
+
+class TestDispatchUpdate:
+    def _interface(self) -> PlatformChatInterface:
+        return PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.NOTIFICATION,
+            platform_config={"secret_token": "shh"},
+            prompt="Reply to ${http:payload.message.text}",
+            exposure=Exposure(http=HTTPExposure(path="/telegram")),
+        )
+
+    def _agent(self) -> tuple[MagicMock, list[tuple[str, str]]]:
+        seen: list[tuple[str, str]] = []
+
+        async def arun(prompt: str, session_id: str = "default") -> str:
+            seen.append((prompt, session_id))
+            return "ok"
+
+        agent = MagicMock()
+        agent.arun = arun
+        return agent, seen
+
+    @pytest.mark.asyncio
+    async def test_dispatches_with_session_id(self) -> None:
+        from afm.templates import compile_template
+
+        agent, seen = self._agent()
+        compiled = compile_template("Reply to ${http:payload.message.text}")
+        await dispatch_update(
+            handler=TelegramHandler(),
+            agent=agent,
+            payload={
+                "update_id": 1,
+                "message": {
+                    "from": {"id": 99, "is_bot": False},
+                    "chat": {"id": 99, "type": "private"},
+                    "text": "hi",
+                },
+            },
+            headers={},
+            compiled_prompt=compiled,
+        )
+        assert len(seen) == 1
+        prompt, session_id = seen[0]
+        assert "hi" in prompt
+        assert session_id == "telegram:99:99"
+
+    @pytest.mark.asyncio
+    async def test_template_error_skips_agent(self) -> None:
+        from afm.templates import compile_template
+
+        agent, seen = self._agent()
+        compiled = compile_template("Refers to ${http:payload.nope.absent}")
+        await dispatch_update(
+            handler=TelegramHandler(),
+            agent=agent,
+            payload={
+                "update_id": 1,
+                "message": {
+                    "from": {"id": 99, "is_bot": False},
+                    "chat": {"id": 99, "type": "private"},
+                    "text": "hi",
+                },
+            },
+            headers={},
+            compiled_prompt=compiled,
+        )
+        assert seen == []
+
+    @pytest.mark.asyncio
+    async def test_agent_exception_is_logged_not_raised(self) -> None:
+        async def failing_arun(prompt: str, session_id: str = "default") -> str:
+            raise RuntimeError("boom")
+
+        agent = MagicMock()
+        agent.arun = failing_arun
+
+        # Should not raise — dispatch_update logs and returns.
+        await dispatch_update(
+            handler=TelegramHandler(),
+            agent=agent,
+            payload={
+                "update_id": 1,
+                "message": {
+                    "from": {"id": 99, "is_bot": False},
+                    "chat": {"id": 99, "type": "private"},
+                    "text": "hi",
+                },
+            },
+            headers={},
+            compiled_prompt=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_agent_cancellation_is_not_swallowed(self) -> None:
+        async def cancelled_arun(prompt: str, session_id: str = "default") -> str:
+            raise asyncio.CancelledError
+
+        agent = MagicMock()
+        agent.arun = cancelled_arun
+
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch_update(
+                handler=TelegramHandler(),
+                agent=agent,
+                payload={
+                    "update_id": 1,
+                    "message": {
+                        "from": {"id": 99, "is_bot": False},
+                        "chat": {"id": 99, "type": "private"},
+                        "text": "hi",
+                    },
+                },
+                headers={},
+                compiled_prompt=None,
+            )
+
+
+class TestRunPollingLoop:
+    @pytest.mark.asyncio
+    async def test_loop_stops_when_event_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                {"ok": True, "result": []},
+                {"ok": True, "result": []},
+            ],
+        )
+
+        agent = MagicMock()
+        agent.arun = AsyncMock(return_value="ok")
+
+        stop_event = asyncio.Event()
+        iface = _make_telegram_polling_interface()
+
+        async def stop_after_brief_run() -> None:
+            await asyncio.sleep(0.05)
+            stop_event.set()
+
+        await asyncio.gather(
+            run_polling_loop(agent, iface, stop_event=stop_event),
+            stop_after_brief_run(),
+        )
+        # No assertion on call count — just that the loop exits cleanly.
+
+    @pytest.mark.asyncio
+    async def test_loop_dispatches_updates_to_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "hello",
+                            },
+                        }
+                    ],
+                },
+                # Stop after this batch by returning empty forever.
+                {"ok": True, "result": []},
+            ],
+        )
+
+        seen: list[tuple[str, str]] = []
+
+        async def arun(prompt: str, session_id: str = "default") -> str:
+            seen.append((prompt, session_id))
+            return "ok"
+
+        agent = MagicMock()
+        agent.arun = arun
+
+        stop_event = asyncio.Event()
+        iface = _make_telegram_polling_interface()
+
+        async def stop_after_one_dispatch() -> None:
+            while not seen:
+                await asyncio.sleep(0.01)
+            stop_event.set()
+
+        await asyncio.gather(
+            run_polling_loop(agent, iface, stop_event=stop_event),
+            stop_after_one_dispatch(),
+        )
+
+        assert len(seen) >= 1
+        prompt, session_id = seen[0]
+        assert session_id == "telegram:99:99"
+
+    @pytest.mark.asyncio
+    async def test_loop_continues_after_poll_exception(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_counter = {"n": 0}
+
+        class FlakyHandler(TelegramHandler):
+            async def poll_updates(
+                self, interface: PlatformChatInterface, state: dict
+            ) -> tuple[list, dict]:
+                call_counter["n"] += 1
+                if call_counter["n"] == 1:
+                    raise RuntimeError("transient")
+                return [], state
+
+        monkeypatch.setitem(
+            __import__(
+                "afm.interfaces.platform_chat", fromlist=["_HANDLERS"]
+            )._HANDLERS,
+            "telegram",
+            FlakyHandler(),
+        )
+
+        agent = MagicMock()
+        agent.arun = AsyncMock(return_value="ok")
+        stop_event = asyncio.Event()
+        iface = _make_telegram_polling_interface()
+
+        async def stop_after_recovery() -> None:
+            while call_counter["n"] < 2:
+                await asyncio.sleep(0.01)
+            stop_event.set()
+
+        await asyncio.gather(
+            run_polling_loop(agent, iface, stop_event=stop_event),
+            stop_after_recovery(),
+        )
+        assert call_counter["n"] >= 2
+
+    @pytest.mark.asyncio
+    async def test_loop_filters_should_ignore_updates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                {
+                    "ok": True,
+                    "result": [
+                        # Bot sender — should be filtered out
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "from": {"id": 99, "is_bot": True},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "from a bot",
+                            },
+                        },
+                        # Real user — should reach the agent
+                        {
+                            "update_id": 2,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "from a human",
+                            },
+                        },
+                    ],
+                },
+                {"ok": True, "result": []},
+            ],
+        )
+
+        seen: list[tuple[str, str]] = []
+
+        async def arun(prompt: str, session_id: str = "default") -> str:
+            seen.append((prompt, session_id))
+            return "ok"
+
+        agent = MagicMock()
+        agent.arun = arun
+
+        stop_event = asyncio.Event()
+
+        async def stop_after_human_dispatch() -> None:
+            while not any("human" in p for p, _ in seen):
+                await asyncio.sleep(0.01)
+            stop_event.set()
+
+        await asyncio.gather(
+            run_polling_loop(
+                agent, _make_telegram_polling_interface(), stop_event=stop_event
+            ),
+            stop_after_human_dispatch(),
+        )
+
+        # The bot-sender update should never reach the agent.
+        texts = [json.loads(prompt)["message"]["text"] for prompt, _ in seen]
+        assert texts == ["from a human"]
+
+    @pytest.mark.asyncio
+    async def test_non_polling_interface_raises(self) -> None:
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="telegram",
+            mode=PlatformChatMode.NOTIFICATION,
+            platform_config={"secret_token": "shh"},
+            exposure=Exposure(http=HTTPExposure(path="/telegram")),
+        )
+        agent = MagicMock()
+        with pytest.raises(ValueError, match="expected 'polling'"):
+            await run_polling_loop(agent, iface)
+
+    @pytest.mark.asyncio
+    async def test_unsupported_platform_raises(self) -> None:
+        # Construct a polling-mode interface for a platform that has not
+        # opted into polling (slack).
+        iface = PlatformChatInterface(
+            type="platformchat",
+            platform="slack",
+            mode=PlatformChatMode.POLLING,
+            platform_config={"signing_secret": "abc"},
+            polling=Polling(),
+        )
+        agent = MagicMock()
+        with pytest.raises(ValueError, match="does not support polling"):
+            await run_polling_loop(agent, iface)
+
+    @pytest.mark.asyncio
+    async def test_transient_failure_recovered_within_retry_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Zero backoff keeps the test snappy without changing behavior.
+        monkeypatch.setattr(
+            "afm.interfaces.platform_chat.DISPATCH_BACKOFF_SECONDS", 0.0
+        )
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "hello",
+                            },
+                        }
+                    ],
+                },
+                {"ok": True, "result": []},
+            ],
+        )
+
+        attempts: list[int] = []
+
+        async def flaky_arun(prompt: str, session_id: str = "default") -> str:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("transient LLM blip")
+            return "ok"
+
+        agent = MagicMock()
+        agent.arun = flaky_arun
+
+        stop_event = asyncio.Event()
+
+        async def stop_after_success() -> None:
+            while len(attempts) < 2:
+                await asyncio.sleep(0.01)
+            stop_event.set()
+
+        await asyncio.gather(
+            run_polling_loop(
+                agent,
+                _make_telegram_polling_interface(),
+                stop_event=stop_event,
+            ),
+            stop_after_success(),
+        )
+
+        # First attempt failed, second attempt succeeded — total 2 calls.
+        assert len(attempts) == 2
+
+    @pytest.mark.asyncio
+    async def test_permanent_failure_dropped_after_max_attempts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(
+            "afm.interfaces.platform_chat.DISPATCH_BACKOFF_SECONDS", 0.0
+        )
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 42,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 777, "type": "private"},
+                                "text": "permanently broken",
+                            },
+                        }
+                    ],
+                },
+                {"ok": True, "result": []},
+            ],
+        )
+
+        attempts: list[int] = []
+
+        async def always_fails(prompt: str, session_id: str = "default") -> str:
+            attempts.append(1)
+            raise RuntimeError("permanent agent bug")
+
+        agent = MagicMock()
+        agent.arun = always_fails
+
+        stop_event = asyncio.Event()
+
+        async def stop_after_exhaustion() -> None:
+            # Wait until MAX_DISPATCH_ATTEMPTS attempts have been made
+            # and the drop log has been emitted.
+            while not any("Dropping update" in r.message for r in caplog.records):
+                await asyncio.sleep(0.01)
+            stop_event.set()
+
+        with caplog.at_level("ERROR"):
+            await asyncio.gather(
+                run_polling_loop(
+                    agent,
+                    _make_telegram_polling_interface(),
+                    stop_event=stop_event,
+                ),
+                stop_after_exhaustion(),
+            )
+
+        from afm.interfaces.platform_chat import MAX_DISPATCH_ATTEMPTS
+
+        assert len(attempts) == MAX_DISPATCH_ATTEMPTS
+        drop_logs = [r for r in caplog.records if "Dropping update" in r.message]
+        assert len(drop_logs) == 1
+        # Drop log carries the Telegram update id without stable user/chat ids.
+        rendered = drop_logs[0].getMessage()
+        assert "update_id=42" in rendered
+        assert "session_id" not in rendered
+        assert "chat_id" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_subsequent_update_processed_after_a_dropped_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A permanently-bad update in the middle of a batch must not stop
+        # later updates from being attempted.
+        monkeypatch.setattr(
+            "afm.interfaces.platform_chat.DISPATCH_BACKOFF_SECONDS", 0.0
+        )
+        _mock_async_client_factory(
+            monkeypatch,
+            [
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "broken",
+                            },
+                        },
+                        {
+                            "update_id": 2,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "good",
+                            },
+                        },
+                    ],
+                },
+                {"ok": True, "result": []},
+            ],
+        )
+
+        seen_prompts: list[str] = []
+
+        async def selective_arun(prompt: str, session_id: str = "default") -> str:
+            # Fail every call for "broken", succeed for "good".
+            if '"broken"' in prompt:
+                raise RuntimeError("permanent")
+            seen_prompts.append(prompt)
+            return "ok"
+
+        agent = MagicMock()
+        agent.arun = selective_arun
+
+        stop_event = asyncio.Event()
+
+        async def stop_after_good_dispatched() -> None:
+            while not seen_prompts:
+                await asyncio.sleep(0.01)
+            stop_event.set()
+
+        await asyncio.gather(
+            run_polling_loop(
+                agent,
+                _make_telegram_polling_interface(),
+                stop_event=stop_event,
+            ),
+            stop_after_good_dispatched(),
+        )
+
+        assert len(seen_prompts) == 1
+        assert '"good"' in seen_prompts[0]
+
+    @pytest.mark.asyncio
+    async def test_interrupted_batch_does_not_advance_polling_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        platform_chat_module = __import__(
+            "afm.interfaces.platform_chat",
+            fromlist=["_HANDLERS", "_sleep_or_stop"],
+        )
+
+        class RecordingHandler(TelegramHandler):
+            def __init__(self) -> None:
+                self.seen_states: list[dict] = []
+
+            async def poll_updates(
+                self, interface: PlatformChatInterface, state: dict
+            ) -> tuple[list, dict]:
+                self.seen_states.append(dict(state))
+                if len(self.seen_states) == 1:
+                    return [
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "first",
+                            },
+                        },
+                        {
+                            "update_id": 2,
+                            "message": {
+                                "from": {"id": 99, "is_bot": False},
+                                "chat": {"id": 99, "type": "private"},
+                                "text": "second",
+                            },
+                        },
+                    ], {"offset": 3}
+
+                stop_event.set()
+                return [], state
+
+        handler = RecordingHandler()
+        monkeypatch.setitem(platform_chat_module._HANDLERS, "telegram", handler)
+
+        cleared_stop_once = False
+
+        async def clear_stop_once(interval: float, stop: asyncio.Event) -> None:
+            # Let the test observe one more poll with the loop's retained state.
+            nonlocal cleared_stop_once
+            if stop.is_set() and not cleared_stop_once:
+                cleared_stop_once = True
+                stop.clear()
+
+        monkeypatch.setattr(platform_chat_module, "_sleep_or_stop", clear_stop_once)
+
+        seen_prompts: list[str] = []
+        stop_event = asyncio.Event()
+
+        async def arun(prompt: str, session_id: str = "default") -> str:
+            seen_prompts.append(prompt)
+            stop_event.set()
+            return "ok"
+
+        agent = MagicMock()
+        agent.arun = arun
+
+        await run_polling_loop(
+            agent,
+            _make_telegram_polling_interface(),
+            stop_event=stop_event,
+        )
+
+        assert handler.seen_states == [{}, {}]
+        assert len(seen_prompts) == 1
+        assert '"first"' in seen_prompts[0]

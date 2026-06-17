@@ -81,9 +81,11 @@ interfaces:
   # Platform Chat Interface (third-party chat platforms: Slack, Google Chat, etc.)
   # mode: notification = ack immediately, run agent in background
   # mode: request      = run agent synchronously, return result in HTTP response
+  # mode: polling      = pull platform updates in a background loop
+  # Each platform supports a subset of modes; see platform docs.
   - type: platformchat
-    platform: gchat                      # REQUIRED: gchat, slack, ...
-    mode: request                        # REQUIRED: notification | request
+    platform: gchat                      # REQUIRED: gchat, slack, telegram, ...
+    mode: request                        # gchat supports: notification | request
     prompt: |
       [${http:payload.type}] Reply to ${http:payload.message.text}
     platform_config:
@@ -97,6 +99,35 @@ interfaces:
     exposure:
       http:
         path: "/gchat"                   # REQUIRED
+
+  # Telegram (webhook delivery).
+  - type: platformchat
+    platform: telegram
+    mode: notification                   # telegram supports: notification | polling
+    prompt: |
+      Reply to ${http:payload.message.text}
+    platform_config:
+      # Pass the same value to Telegram's setWebhook `secret_token`
+      # parameter. Telegram echoes it in the
+      # X-Telegram-Bot-Api-Secret-Token header on every delivery.
+      secret_token: "${env:TELEGRAM_SECRET_TOKEN}"
+    exposure:
+      http:
+        path: "/telegram"
+
+  # Telegram (polling — getUpdates long-poll).
+  # Use this instead of the notification block above when you can't expose
+  # a public webhook URL. Telegram disallows both at once for the same bot.
+  - type: platformchat
+    platform: telegram
+    mode: polling
+    prompt: |
+      Reply to ${http:payload.message.text}
+    platform_config:
+      bot_token: "${env:TELEGRAM_BOT_TOKEN}"
+    polling:
+      interval: 1                        # seconds between getUpdates calls
+      timeout: 30                        # Telegram long-poll timeout (max 50)
 
 # ============================================================================
 # TOOLS - OPTIONAL

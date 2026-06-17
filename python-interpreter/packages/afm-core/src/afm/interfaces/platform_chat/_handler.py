@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Mapping
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from ...models import PlatformChatMode
+
 if TYPE_CHECKING:
     from ...models import PlatformChatInterface
 
@@ -34,6 +36,7 @@ class PlatformHandler(ABC):
     """
 
     name: ClassVar[str]
+    supported_modes: ClassVar[frozenset[PlatformChatMode]]
 
     @abstractmethod
     def parse_config(self, raw_config: Mapping[str, Any] | None) -> BaseModel:
@@ -90,10 +93,47 @@ class PlatformHandler(ABC):
     def get_session_id(self, payload: Any) -> str:
         """Derive a per-conversation session identifier from the payload."""
 
-    @abstractmethod
     def create_notification_ack(self) -> Response:
-        """Response body for notification-mode acknowledgement."""
+        """Response body for notification-mode acknowledgement.
 
-    @abstractmethod
+        Default raises: only platforms that include
+        ``PlatformChatMode.NOTIFICATION`` in ``supported_modes`` need to
+        override this. The framework guards against unsupported modes at
+        schema validation time, so this should be unreachable for platforms
+        that do not support notification mode.
+        """
+        raise NotImplementedError(
+            f"Platform {self.name!r} does not support notification mode"
+        )
+
     def create_request_response(self, result: str | object) -> Response:
-        """Response body wrapping the agent's output in request mode."""
+        """Response body wrapping the agent's output in request mode.
+
+        Default raises: only platforms that include ``PlatformChatMode.REQUEST``
+        in ``supported_modes`` need to override this. The framework guards
+        against unsupported modes at schema validation time, so this should
+        be unreachable for platforms that do not support request mode.
+        """
+        raise NotImplementedError(
+            f"Platform {self.name!r} does not support request mode"
+        )
+
+    async def poll_updates(
+        self,
+        interface: PlatformChatInterface,
+        state: dict[str, Any],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        """Fetch one batch of updates from the platform.
+
+        Returns ``(updates, next_state)``. ``state`` is passed through
+        opaquely between calls so the handler can track cursors / offsets;
+        the framework persists it across iterations within a single
+        process (no disk persistence in this implementation).
+
+        Default raises: only platforms that include
+        ``PlatformChatMode.POLLING`` in ``supported_modes`` need to override
+        this.
+        """
+        raise NotImplementedError(
+            f"Platform {self.name!r} does not support polling mode"
+        )

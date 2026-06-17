@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, Response
 from jwt import PyJWKClient
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from ...models import PlatformChatMode
 from ._handler import PlatformHandler
 
 if TYPE_CHECKING:
@@ -238,6 +239,9 @@ def should_ignore_gchat_event(payload: object) -> bool:
 
 class GChatHandler(PlatformHandler):
     name: ClassVar[str] = "gchat"
+    supported_modes: ClassVar[frozenset[PlatformChatMode]] = frozenset(
+        {PlatformChatMode.NOTIFICATION, PlatformChatMode.REQUEST}
+    )
 
     def parse_config(self, raw_config: Mapping[str, Any] | None) -> GChatConfig:
         return GChatConfig.model_validate(dict(raw_config or {}))

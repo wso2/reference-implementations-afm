@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable
 
 import click
 import uvicorn
@@ -34,6 +35,7 @@ from .interfaces.base import get_http_path, get_interfaces
 from .interfaces.console_chat import async_run_console_chat
 from .interfaces.platform_chat import (
     create_platform_chat_router,
+    run_polling_loop,
     validate_platform_chat_interface,
     validate_platform_chat_interface_schema,
 )
@@ -61,20 +63,101 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _raise_unexpected_task_exceptions(tasks: Iterable[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            continue
+        # Ctrl+C / runner shutdown should not be reported as task failure.
+        if exc is not None and not isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise exc
+
+
+def _validate_platform_chat_schemas(afm: AFMRecord) -> None:
+    for iface in get_interfaces(afm):
+        if isinstance(iface, PlatformChatInterface):
+            try:
+                validate_platform_chat_interface_schema(iface)
+            except (ValueError, ValidationError) as e:
+                raise click.ClickException(
+                    f"Invalid platformchat interface ({iface.platform}): {e}"
+                ) from e
+
+
+def _normalize_platform_chat_interfaces(
+    platform_chat_interface: PlatformChatInterface
+    | Sequence[PlatformChatInterface]
+    | None,
+) -> list[PlatformChatInterface]:
+    if platform_chat_interface is None:
+        return []
+    if isinstance(platform_chat_interface, PlatformChatInterface):
+        return [platform_chat_interface]
+    return list(platform_chat_interface)
+
+
+def _validate_unique_http_paths(
+    webchat_interface: WebChatInterface | None,
+    webhook_interface: WebhookInterface | None,
+    platform_chat_interfaces: Sequence[PlatformChatInterface],
+) -> None:
+    seen: dict[str, str] = {}
+
+    def add_path(label: str, path: str) -> None:
+        existing = seen.get(path)
+        if existing is not None:
+            raise ValueError(
+                f"HTTP path {path!r} is used by both {existing} and {label}"
+            )
+        seen[path] = label
+
+    if webchat_interface is not None:
+        add_path("webchat", get_http_path(webchat_interface))
+    if webhook_interface is not None:
+        add_path("webhook", get_http_path(webhook_interface))
+    for interface in platform_chat_interfaces:
+        add_path(
+            f"platformchat ({interface.platform}, {interface.mode.value})",
+            get_http_path(interface),
+        )
+
+
+def _validate_cli_http_paths(
+    webchat_interface: WebChatInterface | None,
+    webhook_interface: WebhookInterface | None,
+    platform_chat_interfaces: Sequence[PlatformChatInterface],
+) -> None:
+    try:
+        _validate_unique_http_paths(
+            webchat_interface,
+            webhook_interface,
+            platform_chat_interfaces,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+
 def create_unified_app(
     agent: AgentRunner,
     *,
     webchat_interface: WebChatInterface | None = None,
     webhook_interface: WebhookInterface | None = None,
-    platform_chat_interface: PlatformChatInterface | None = None,
+    platform_chat_interface: PlatformChatInterface
+    | Sequence[PlatformChatInterface]
+    | None = None,
     startup_event: asyncio.Event | None = None,
     host: str = "0.0.0.0",
     port: int = DEFAULT_HTTP_PORT,
 ) -> FastAPI:
+    platform_chat_interfaces = _normalize_platform_chat_interfaces(
+        platform_chat_interface
+    )
+
     if (
         webchat_interface is None
         and webhook_interface is None
-        and platform_chat_interface is None
+        and not platform_chat_interfaces
     ):
         raise ValueError("At least one HTTP interface must be provided")
 
@@ -112,10 +195,20 @@ def create_unified_app(
                 secret=secret,
             )
 
-    if platform_chat_interface is not None:
-        validate_platform_chat_interface(
-            platform_chat_interface, verify_signatures=True
-        )
+    for iface in platform_chat_interfaces:
+        if iface.mode == PlatformChatMode.POLLING:
+            raise ValueError(
+                "Polling-mode platformchat interfaces should be run via "
+                "run_polling_loop, not create_unified_app."
+            )
+        validate_platform_chat_interface(iface, verify_signatures=True)
+
+    # The CLI checks this before startup; keep it here for direct API callers.
+    _validate_unique_http_paths(
+        webchat_interface,
+        webhook_interface,
+        platform_chat_interfaces,
+    )
 
     # Create lifespan for MCP connection management and WebSub
     @asynccontextmanager
@@ -165,9 +258,10 @@ def create_unified_app(
     # Determine paths for info endpoint
     webchat_path = get_http_path(webchat_interface) if webchat_interface else None
     webhook_path = get_http_path(webhook_interface) if webhook_interface else None
-    platform_chat_path = (
-        get_http_path(platform_chat_interface) if platform_chat_interface else None
-    )
+    platform_chat_paths = [
+        get_http_path(interface) for interface in platform_chat_interfaces
+    ]
+    platform_chat_path = platform_chat_paths[0] if platform_chat_paths else None
 
     @app.get("/")
     async def root_info() -> dict[str, Any]:
@@ -179,7 +273,9 @@ def create_unified_app(
             "interfaces": {
                 "webchat": webchat_path,
                 "webhook": webhook_path,
+                # Preserve the legacy str|None field; expose all routes separately.
                 "platformchat": platform_chat_path,
+                "platformchats": platform_chat_paths,
             },
         }
 
@@ -207,11 +303,12 @@ def create_unified_app(
         app.state.websub_subscriber = websub_subscriber
         app.state.secret = secret
 
-    if platform_chat_interface is not None:
+    for iface in platform_chat_interfaces:
+        route_path = get_http_path(iface)
         platform_chat_router = create_platform_chat_router(
             agent,
-            platform_chat_interface,
-            platform_chat_path,  # type: ignore
+            iface,
+            route_path,
         )
         app.include_router(platform_chat_router)
 
@@ -297,19 +394,18 @@ def extract_interfaces(
     ConsoleChatInterface | None,
     WebChatInterface | None,
     WebhookInterface | None,
-    PlatformChatInterface | None,
+    list[PlatformChatInterface],
 ]:
     interfaces = get_interfaces(afm)
 
     consolechat: ConsoleChatInterface | None = None
     webchat: WebChatInterface | None = None
     webhook: WebhookInterface | None = None
-    platform_chat: PlatformChatInterface | None = None
+    platform_chats: list[PlatformChatInterface] = []
 
     console_count = 0
     webchat_count = 0
     webhook_count = 0
-    platform_chat_count = 0
 
     for iface in interfaces:
         if isinstance(iface, ConsoleChatInterface):
@@ -322,20 +418,14 @@ def extract_interfaces(
             webhook_count += 1
             webhook = iface
         elif isinstance(iface, PlatformChatInterface):
-            platform_chat_count += 1
-            platform_chat = iface
+            platform_chats.append(iface)
 
-    if (
-        console_count > 1
-        or webchat_count > 1
-        or webhook_count > 1
-        or platform_chat_count > 1
-    ):
+    if console_count > 1 or webchat_count > 1 or webhook_count > 1:
         raise click.ClickException(
-            "Multiple interfaces of the same type are not supported"
+            "Multiple consolechat, webchat, or webhook interfaces are not supported"
         )
 
-    return consolechat, webchat, webhook, platform_chat
+    return consolechat, webchat, webhook, platform_chats
 
 
 # ---------------------------------------------------------------------------
@@ -388,17 +478,7 @@ def validate(file: Path) -> None:
     except Exception as e:
         raise click.ClickException(f"Unexpected error parsing AFM file: {e}") from e
 
-    for iface in get_interfaces(afm):
-        if isinstance(iface, PlatformChatInterface):
-            if iface.mode == PlatformChatMode.POLLING:
-                # Polling platforms are not yet implemented; skip handler check.
-                continue
-            try:
-                validate_platform_chat_interface_schema(iface)
-            except (ValueError, ValidationError) as e:
-                raise click.ClickException(
-                    f"Invalid platformchat interface ({iface.platform}): {e}"
-                ) from e
+    _validate_platform_chat_schemas(afm)
 
     click.echo(f"Loading: {file}")
     click.echo(format_validation_output(afm))
@@ -471,17 +551,21 @@ def run(
         raise click.ClickException(f"Unexpected error parsing AFM file: {e}") from e
 
     # Extract interfaces
-    consolechat, webchat, webhook, platform_chat = extract_interfaces(afm)
+    consolechat, webchat, webhook, platform_chats = extract_interfaces(afm)
 
-    if platform_chat is not None and platform_chat.mode == PlatformChatMode.POLLING:
-        raise click.ClickException(
-            f"platformchat mode 'polling' (platform: {platform_chat.platform}) "
-            "is not yet supported by this implementation"
-        )
+    polling_platform_chats = [
+        iface for iface in platform_chats if iface.mode == PlatformChatMode.POLLING
+    ]
+    http_platform_chats = [
+        iface for iface in platform_chats if iface.mode != PlatformChatMode.POLLING
+    ]
+    has_polling = bool(polling_platform_chats)
 
     # Check if we have anything to run
-    has_http = webchat is not None or webhook is not None or platform_chat is not None
-    has_console = (consolechat is not None or not has_http) and not no_console
+    has_http = webchat is not None or webhook is not None or bool(http_platform_chats)
+    has_console = (
+        consolechat is not None or not (has_http or has_polling)
+    ) and not no_console
 
     # Configure logging
     log_level = logging.DEBUG if verbose else logging.INFO
@@ -517,12 +601,19 @@ def run(
 
     # Dry-run mode: validate and exit
     if dry_run:
+        # Dry-run stays runtime-light, but still validates platform schema
+        # and route shape.
+        _validate_platform_chat_schemas(afm)
+        _validate_cli_http_paths(webchat, webhook, http_platform_chats)
         click.echo(format_validation_output(afm))
         return
 
-    if not has_http and not has_console:
+    if not has_http and not has_console and not has_polling:
         click.echo("No interfaces to run (consolechat skipped with --no-console)")
         return
+
+    if has_http:
+        _validate_cli_http_paths(webchat, webhook, http_platform_chats)
 
     # Load runner backend via entry points
     try:
@@ -551,13 +642,16 @@ def run(
         webhook_path = get_http_path(webhook)
         click.echo(f"  - webhook at http://{host}:{port}{webhook_path}")
 
-    if platform_chat:
-        platform_chat_path = get_http_path(platform_chat)
-        click.echo(
-            f"  - platformchat ({platform_chat.platform}, "
-            f"{platform_chat.mode.value}) at "
-            f"http://{host}:{port}{platform_chat_path}"
-        )
+    for platform_chat in platform_chats:
+        if platform_chat.mode == PlatformChatMode.POLLING:
+            click.echo(f"  - platformchat ({platform_chat.platform}, polling)")
+        else:
+            platform_chat_path = get_http_path(platform_chat)
+            click.echo(
+                f"  - platformchat ({platform_chat.platform}, "
+                f"{platform_chat.mode.value}) at "
+                f"http://{host}:{port}{platform_chat_path}"
+            )
 
     if has_console:
         click.echo("  - consolechat (interactive)")
@@ -565,14 +659,46 @@ def run(
     click.echo("")
 
     # Run the appropriate configuration
-    if has_http and has_console:
-        # Both HTTP and console: run HTTP in background, console in foreground
+    if has_polling:
+        if has_http and has_console:
+            asyncio.run(
+                _run_http_polling_and_console(
+                    agent,
+                    webchat,
+                    webhook,
+                    http_platform_chats,
+                    polling_platform_chats,
+                    host,
+                    port,
+                    verbose,
+                    log_file,
+                )
+            )
+        elif has_http:
+            asyncio.run(
+                _run_http_and_polling(
+                    agent,
+                    webchat,
+                    webhook,
+                    http_platform_chats,
+                    polling_platform_chats,
+                    host,
+                    port,
+                    verbose,
+                    log_file,
+                )
+            )
+        elif has_console:
+            asyncio.run(_run_polling_and_console(agent, polling_platform_chats))
+        else:
+            asyncio.run(_run_polling_only(agent, polling_platform_chats))
+    elif has_http and has_console:
         asyncio.run(
             _run_http_and_console(
                 agent,
                 webchat,
                 webhook,
-                platform_chat,
+                http_platform_chats,
                 host,
                 port,
                 verbose,
@@ -581,12 +707,17 @@ def run(
             )
         )
     elif has_http:
-        # HTTP only: run uvicorn blocking
         _run_http_only(
-            agent, webchat, webhook, platform_chat, host, port, verbose, log_file
+            agent,
+            webchat,
+            webhook,
+            http_platform_chats,
+            host,
+            port,
+            verbose,
+            log_file,
         )
     else:
-        # Console only: run console blocking
         asyncio.run(_run_console_only(agent))
 
 
@@ -629,7 +760,7 @@ async def _run_http_and_console(
     agent: AgentRunner,
     webchat: WebChatInterface | None,
     webhook: WebhookInterface | None,
-    platform_chat: PlatformChatInterface | None,
+    platform_chats: Sequence[PlatformChatInterface],
     host: str,
     port: int,
     verbose: bool,
@@ -644,7 +775,7 @@ async def _run_http_and_console(
         agent,
         webchat_interface=webchat,
         webhook_interface=webhook,
-        platform_chat_interface=platform_chat,
+        platform_chat_interface=platform_chats,
         startup_event=startup_event,
         host=host,
         port=port,
@@ -668,6 +799,7 @@ async def _run_http_and_console(
 
     # Start HTTP server in background task
     server_task = asyncio.create_task(server.serve())
+    console_task: asyncio.Task[None] | None = None
 
     try:
         # Wait for EITHER server startup to complete OR server to fail.
@@ -691,12 +823,7 @@ async def _run_http_and_console(
             return_when=asyncio.FIRST_COMPLETED,
         )
 
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, SystemExit):
-                pass
+        await _cancel_tasks(pending)
 
         # If the server exited (e.g. port in use), inform the user
         if server_task in done:
@@ -706,10 +833,7 @@ async def _run_http_and_console(
             )
 
         # Propagate any real exception from whichever task finished first
-        for task in done:
-            exc = task.exception()
-            if exc is not None and not isinstance(exc, SystemExit):
-                raise exc
+        _raise_unexpected_task_exceptions(done)
     finally:
         # Ensure the HTTP server shuts down cleanly
         server.should_exit = True
@@ -717,13 +841,15 @@ async def _run_http_and_console(
             await server_task
         except (asyncio.CancelledError, SystemExit):
             pass
+        if console_task is not None:
+            await _cancel_tasks([console_task])
 
 
 def _run_http_only(
     agent: AgentRunner,
     webchat: WebChatInterface | None,
     webhook: WebhookInterface | None,
-    platform_chat: PlatformChatInterface | None,
+    platform_chats: Sequence[PlatformChatInterface],
     host: str,
     port: int,
     verbose: bool,
@@ -734,7 +860,7 @@ def _run_http_only(
         agent,
         webchat_interface=webchat,
         webhook_interface=webhook,
-        platform_chat_interface=platform_chat,
+        platform_chat_interface=platform_chats,
         host=host,
         port=port,
     )
@@ -751,6 +877,213 @@ def _run_http_only(
 async def _run_console_only(agent: AgentRunner) -> None:
     async with agent:
         await async_run_console_chat(agent)
+
+
+def _create_polling_tasks(
+    agent: AgentRunner,
+    platform_chats: Sequence[PlatformChatInterface],
+) -> list[asyncio.Task[None]]:
+    return [
+        asyncio.create_task(run_polling_loop(agent, platform_chat))
+        for platform_chat in platform_chats
+    ]
+
+
+async def _cancel_tasks(tasks: Iterable[asyncio.Task[Any]]) -> None:
+    tasks = list(tasks)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            pass
+
+
+async def _run_polling_only(
+    agent: AgentRunner,
+    platform_chats: Sequence[PlatformChatInterface],
+) -> None:
+    async with agent:
+        polling_tasks = _create_polling_tasks(agent, platform_chats)
+        try:
+            done, pending = await asyncio.wait(
+                polling_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            await _cancel_tasks(pending)
+            _raise_unexpected_task_exceptions(done)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        finally:
+            await _cancel_tasks(polling_tasks)
+
+
+async def _run_polling_and_console(
+    agent: AgentRunner,
+    platform_chats: Sequence[PlatformChatInterface],
+) -> None:
+    async with agent:
+        polling_tasks = _create_polling_tasks(agent, platform_chats)
+        console_task = asyncio.create_task(async_run_console_chat(agent))
+        try:
+            done, pending = await asyncio.wait(
+                [*polling_tasks, console_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            await _cancel_tasks(pending)
+
+            _raise_unexpected_task_exceptions(done)
+        finally:
+            await _cancel_tasks([*polling_tasks, console_task])
+
+
+async def _run_http_and_polling(
+    agent: AgentRunner,
+    webchat: WebChatInterface | None,
+    webhook: WebhookInterface | None,
+    http_platform_chats: Sequence[PlatformChatInterface],
+    polling_platform_chats: Sequence[PlatformChatInterface],
+    host: str,
+    port: int,
+    verbose: bool,
+    log_file: Path | None = None,
+) -> None:
+    startup_event = asyncio.Event()
+
+    app = create_unified_app(
+        agent,
+        webchat_interface=webchat,
+        webhook_interface=webhook,
+        platform_chat_interface=http_platform_chats,
+        startup_event=startup_event,
+        host=host,
+        port=port,
+    )
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="debug" if verbose else "info",
+    )
+    server = uvicorn.Server(config)
+
+    server_task = asyncio.create_task(server.serve())
+    polling_tasks: list[asyncio.Task[None]] = []
+
+    try:
+        startup_waiter = asyncio.create_task(startup_event.wait())
+        done, _pending = await asyncio.wait(
+            [server_task, startup_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if server_task in done:
+            startup_waiter.cancel()
+            server_task.result()
+            return
+
+        polling_tasks = _create_polling_tasks(agent, polling_platform_chats)
+        done, pending = await asyncio.wait(
+            [server_task, *polling_tasks],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        await _cancel_tasks(pending)
+
+        if server_task in done:
+            click.echo(
+                "\nHTTP server stopped unexpectedly. Exiting.",
+                err=True,
+            )
+
+        _raise_unexpected_task_exceptions(done)
+    finally:
+        server.should_exit = True
+        try:
+            await server_task
+        except (asyncio.CancelledError, SystemExit):
+            pass
+        await _cancel_tasks(polling_tasks)
+
+
+async def _run_http_polling_and_console(
+    agent: AgentRunner,
+    webchat: WebChatInterface | None,
+    webhook: WebhookInterface | None,
+    http_platform_chats: Sequence[PlatformChatInterface],
+    polling_platform_chats: Sequence[PlatformChatInterface],
+    host: str,
+    port: int,
+    verbose: bool,
+    log_file: Path | None = None,
+) -> None:
+    startup_event = asyncio.Event()
+
+    app = create_unified_app(
+        agent,
+        webchat_interface=webchat,
+        webhook_interface=webhook,
+        platform_chat_interface=http_platform_chats,
+        startup_event=startup_event,
+        host=host,
+        port=port,
+    )
+
+    uvicorn_log_level = "warning" if not log_file else ("debug" if verbose else "info")
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level=uvicorn_log_level,
+    )
+    server = uvicorn.Server(config)
+
+    server_task = asyncio.create_task(server.serve())
+    polling_tasks: list[asyncio.Task[None]] = []
+    console_task: asyncio.Task[None] | None = None
+
+    try:
+        startup_waiter = asyncio.create_task(startup_event.wait())
+        done, _pending = await asyncio.wait(
+            [server_task, startup_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if server_task in done:
+            startup_waiter.cancel()
+            server_task.result()
+            return
+
+        # Server started — run polling alongside, console drives shutdown.
+        polling_tasks = _create_polling_tasks(agent, polling_platform_chats)
+        console_task = asyncio.create_task(async_run_console_chat(agent))
+        done, pending = await asyncio.wait(
+            [server_task, *polling_tasks, console_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        await _cancel_tasks(pending)
+
+        if server_task in done:
+            click.echo(
+                "\nHTTP server stopped unexpectedly. Exiting.",
+                err=True,
+            )
+
+        _raise_unexpected_task_exceptions(done)
+    finally:
+        server.should_exit = True
+        try:
+            await server_task
+        except (asyncio.CancelledError, SystemExit):
+            pass
+        await _cancel_tasks(polling_tasks)
+        if console_task is not None:
+            await _cancel_tasks([console_task])
 
 
 if __name__ == "__main__":

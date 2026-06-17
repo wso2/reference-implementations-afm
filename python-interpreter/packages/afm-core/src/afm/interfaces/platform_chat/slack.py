@@ -23,9 +23,10 @@ import time
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping
 
 from fastapi import HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict
 
+from ...models import PlatformChatMode
 from ._handler import PlatformHandler
 
 if TYPE_CHECKING:
@@ -167,6 +168,9 @@ def should_ignore_slack_event(payload: object) -> bool:
 
 class SlackHandler(PlatformHandler):
     name: ClassVar[str] = "slack"
+    supported_modes: ClassVar[frozenset[PlatformChatMode]] = frozenset(
+        {PlatformChatMode.NOTIFICATION}
+    )
 
     def parse_config(self, raw_config: Mapping[str, Any] | None) -> SlackConfig:
         return SlackConfig.model_validate(dict(raw_config or {}))
@@ -243,13 +247,6 @@ class SlackHandler(PlatformHandler):
 
     def create_notification_ack(self) -> Response:
         return Response(status_code=200)
-
-    def create_request_response(self, result: str | object) -> Response:
-        # Slack request-mode responses are rare (slash command pattern).
-        # Fall back to a sensible default: plain text for strings, JSON otherwise.
-        if isinstance(result, str):
-            return PlainTextResponse(content=result)
-        return JSONResponse(content=result)
 
 
 def _non_empty_string(value: object) -> str | None:
