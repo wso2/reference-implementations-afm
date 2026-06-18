@@ -71,18 +71,6 @@ isolated function verifySlackRequestSignature(byte[] body, string? timestamp,
     return constantTimeEquals(expectedSig, signatureHeader);
 }
 
-isolated function constantTimeEquals(string expected, string actual) returns boolean {
-    int expectedLength = expected.length();
-    if expectedLength != actual.length() {
-        return false;
-    }
-    int diff = 0;
-    foreach int index in 0 ..< expectedLength {
-        diff = diff | (expected.getCodePoint(index) ^ actual.getCodePoint(index));
-    }
-    return diff == 0;
-}
-
 isolated function getSlackSessionId(json payload) returns string {
     if payload !is map<json> {
         return "default";
@@ -163,14 +151,15 @@ isolated function shouldIgnoreSlackEvent(json payload) returns boolean|error {
         return true;
     }
 
-    // Only process event types the agent can act on. Everything else (e.g.
-    // function_executed_success) is ignored.
+    // Only process event types the agent can act on. Events without a
+    // `type` (or with a non-string one) are non-actionable — ignore rather
+    // than 500.
     string eventType = check event.'type;
     if eventType != "message" && eventType != "app_mention" {
         return true;
     }
 
-    if event["bot_id"] !is () {
+    if event.hasKey("bot_id") {
         return true;
     }
 
@@ -179,13 +168,14 @@ isolated function shouldIgnoreSlackEvent(json payload) returns boolean|error {
     // bot's own replies re-trigger the agent in a loop. Only ignore messages
     // from our own app (matched via the envelope's `api_app_id`) so that
     // messages from other apps can still be handled.
-    json eventAppId = event["app_id"];
-    if eventAppId !is () && eventAppId == payload["api_app_id"] {
+    string? eventAppId = nonEmptyString(event.app_id);
+    string? apiAppId = nonEmptyString(payload.api_app_id);
+    if eventAppId != () && eventAppId == apiAppId {
         return true;
     }
 
-    json subtype = event["subtype"];
-    if subtype !is string {
+    string? subtype = nonEmptyString(event.subtype);
+    if subtype is () {
         return false;
     }
     return subtype == "bot_message" || subtype == "message_changed" ||
@@ -231,10 +221,10 @@ isolated class SlackHandler {
         if payload !is map<json> {
             return ();
         }
-        if payload["type"] != "url_verification" {
+        if payload.'type != "url_verification" {
             return ();
         }
-        json challenge = payload["challenge"];
+        json|error challenge = payload.challenge;
         if challenge !is string {
             return {
                 statusCode: 400,

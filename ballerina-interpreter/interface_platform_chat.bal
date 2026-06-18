@@ -245,8 +245,9 @@ isolated function dispatchPlatformChatRequest(http:Request req, ai:Agent agent,
         return badRequestResponse("Failed to evaluate prompt template");
     }
 
-    boolean hasOutputSchema = outputSchema?.properties !is () || outputSchema.'type != "string";
-    map<json>? effectiveOutputSchema = hasOutputSchema ? outputSchema : ();
+    map<json>? effectiveOutputSchema =
+            (outputSchema?.properties !is () || outputSchema.'type != "string")
+                ? outputSchema : ();
 
     json|InputError|AgentError result = runAgent(agent, userPrompt,
             outputSchema = effectiveOutputSchema, sessionId = sessionId);
@@ -366,11 +367,11 @@ isolated function dispatchWithRetry(PlatformHandler handler, ai:Agent agent,
 }
 
 isolated function summarizeDroppedPayload(json payload) returns string {
-    if payload is map<json> {
-        json? updateId = payload["update_id"];
-        return string `update_id=${updateId is () ? "<unknown>" : updateId.toString()}`;
+    if payload !is map<json> {
+        return string `<${(typeof payload).toString()}>`;
     }
-    return string `<${(typeof payload).toString()}>`;
+    json|error updateId = payload.update_id;
+    return string `update_id=${updateId is json && updateId !is () ? updateId.toString() : "<unknown>"}`;
 }
 
 isolated function collectHeaders(http:Request req) returns map<string|string[]> {
@@ -419,6 +420,20 @@ isolated function unauthorizedResponse(string detail) returns http:Unauthorized 
 
 isolated function internalServerErrorResponse(string detail) returns http:InternalServerError =>
     {body: {detail}};
+
+// Cross-platform constant-time string comparison; lives here because both
+// Slack (HMAC signature) and Telegram (secret token) use it.
+isolated function constantTimeEquals(string expected, string actual) returns boolean {
+    int expectedLength = expected.length();
+    if expectedLength != actual.length() {
+        return false;
+    }
+    int diff = 0;
+    foreach int index in 0 ..< expectedLength {
+        diff = diff | (expected.getCodePoint(index) ^ actual.getCodePoint(index));
+    }
+    return diff == 0;
+}
 
 isolated function nonEmptyString(json|error value) returns string? {
     if value is string && value != "" {

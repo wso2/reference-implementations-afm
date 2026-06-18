@@ -96,51 +96,48 @@ isolated function verifyTelegramSecretToken(string? received, string expected)
 }
 
 isolated function getTelegramSessionId(json payload) returns string {
-    if !(payload is map<json>) {
+    if payload !is map<json> {
         return "default";
     }
 
-    json message = payload["message"];
-    if !(message is map<json>) {
+    json|error message = payload.message;
+    if message !is map<json> {
         return "telegram:unknown-chat:default";
     }
 
-    json chat = message["chat"];
-    string chatId = chat is map<json> ? (stringifyId(chat["id"]) ?: "unknown-chat") :
+    json|error chat = message.chat;
+    string chatId = chat is map<json> ? (stringifyId(chat.id) ?: "unknown-chat") :
             "unknown-chat";
 
-    json sender = message["from"];
-    string? userId = sender is map<json> ? stringifyId(sender["id"]) : ();
+    json|error sender = message.'from;
+    string? userId = sender is map<json> ? stringifyId(sender.id) : ();
     if userId is string {
         return string `telegram:${chatId}:${userId}`;
     }
     return string `telegram:${chatId}:default`;
 }
 
-isolated function stringifyId(json value) returns string? {
+isolated function stringifyId(json|error value) returns string? {
     if value is int {
         return value.toString();
     }
-    if value is string && value != "" {
-        return value;
-    }
-    return ();
+    return nonEmptyString(value);
 }
 
 isolated function shouldIgnoreTelegramUpdate(json payload) returns boolean {
-    if !(payload is map<json>) {
+    if payload !is map<json> {
         return false;
     }
 
-    json message = payload["message"];
-    if !(message is map<json>) {
+    json|error message = payload.message;
+    if message !is map<json> {
         // No "message" field: edited_message, channel_post, callback_query,
         // etc. Not actionable by the default text-reply flow.
         return true;
     }
 
-    json sender = message["from"];
-    if sender is map<json> && sender["is_bot"] == true {
+    json|error sender = message.'from;
+    if sender is map<json> && sender.is_bot == true {
         return true;
     }
     return false;
@@ -252,8 +249,8 @@ isolated class TelegramHandler {
         }
 
         map<string|string[]> queryParams = {timeout: self.longPollTimeout.toString()};
-        json? offset = state["offset"];
-        if offset !is () {
+        json|error offset = state.offset;
+        if offset is json && offset !is () {
             queryParams["offset"] = offset.toString();
         }
 
@@ -269,34 +266,47 @@ isolated class TelegramHandler {
             return error(string `Telegram getUpdates returned HTTP ${response.statusCode}`);
         }
 
-        map<json> body = check (check response.getJsonPayload()).ensureType();
+        return parseTelegramGetUpdatesResponse(check response.getJsonPayload(), state);
+    }
+}
 
-        if body["ok"] != true {
-            json description = body["description"];
-            return error(string `Telegram getUpdates returned not-ok: ` +
-                    string `${description is () ? "no description" : description.toString()}`);
-        }
+isolated function parseTelegramGetUpdatesResponse(json body, map<json> state)
+        returns [json[], map<json>]|error {
+    map<json> bodyMap = check body.ensureType();
 
-        json? rawResult = body["result"];
-        json[] updates = rawResult is () ? <json[]>[] : check rawResult.ensureType();
+    if bodyMap.ok != true {
+        json|error description = bodyMap.description;
+        return error(string `Telegram getUpdates returned not-ok: ` +
+                string `${description is json && description !is () ? description.toString() : "no description"}`);
+    }
 
-        map<json> nextState = state.clone();
-        if updates.length() == 0 {
-            return [updates, nextState];
-        }
+    json|error rawResult = bodyMap.result;
+    json[] updates = rawResult is () || rawResult is error
+            ? <json[]>[] : check rawResult.ensureType();
 
-        int maxId = 0;
-        foreach json update in updates {
-            if update is map<json> {
-                int|error updateId = update.update_id.ensureType();
-                if updateId is int && updateId > maxId {
-                    maxId = updateId;
-                }
-            }
-        }
-        nextState["offset"] = maxId + 1;
+    map<json> nextState = state.clone();
+    if updates.length() == 0 {
         return [updates, nextState];
     }
+
+    // Seed from prior cursor — if every update_id fails to parse the cursor
+    // stays put rather than rewinding to 1 (which would force Telegram to
+    // redeliver the whole backlog).
+    json|error priorOffsetJson = state.offset;
+    int? maxId = priorOffsetJson is int ? priorOffsetJson - 1 : ();
+    foreach json update in updates {
+        if update !is map<json> {
+            continue;
+        }
+        int|error updateId = update.update_id.ensureType();
+        if updateId is int && (maxId is () || updateId > maxId) {
+            maxId = updateId;
+        }
+    }
+    if maxId is int {
+        nextState["offset"] = maxId + 1;
+    }
+    return [updates, nextState];
 }
 
 isolated function buildQueryString(map<string|string[]> params) returns string {

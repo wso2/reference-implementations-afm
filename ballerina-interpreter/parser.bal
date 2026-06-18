@@ -252,8 +252,7 @@ function collectInterfaceErrors(Interface[] interfaces) returns string[] {
                     erroredKeys.push("interfaces.platformchat.signature");
                 }
 
-                Exposure? platformChatExposure = interface?.exposure;
-                if platformChatExposure is Exposure && exposureContainsHttpVariable(platformChatExposure) {
+                if exposureContainsHttpVariable(interface.exposure) {
                     erroredKeys.push("interfaces.platformchat.exposure");
                 }
             } else if authenticationContainsHttpVariable(interface?.authentication) {
