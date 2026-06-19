@@ -46,10 +46,21 @@ type GChatPlatformChatInterface record {|
 
 isolated function getGChatServiceConfig(GChatConfig? config) returns chat:ServiceConfiguration? {
     if config is GChatEndpointUrlOnly {
-        return {endpointUrl: config.endpoint_url};
+        string endpointUrl = config.endpoint_url.trim();
+        if endpointUrl == "" {
+            return ();
+        }
+        return {endpointUrl};
     }
     if config is GChatProjectNumberOnly {
-        return {projectNumber: config.project_number.toString()};
+        string|int configuredProjectNumber = config.project_number;
+        string projectNumber = configuredProjectNumber is string
+            ? configuredProjectNumber.trim()
+            : configuredProjectNumber.toString();
+        if projectNumber == "" {
+            return ();
+        }
+        return {projectNumber};
     }
     return ();
 }

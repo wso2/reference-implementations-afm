@@ -199,6 +199,9 @@ function validateAndExtractInterfaces(Interface[] interfaces)
             webhookCount += 1;
             webhookInterface = interface;
         } else {
+            if interface is PollingPlatformChatInterface {
+                _ = check getPollingIntervalSeconds(interface.polling);
+            }
             platformChatInterfaces.push(interface);
         }
     }
@@ -218,6 +221,11 @@ function validateUniqueHttpPaths(WebChatInterface? webChatInterface,
     if webChatInterface is WebChatInterface {
         HTTPExposure exposure = webChatInterface.exposure.http;
         check addPath(seen, "webchat", exposure.path);
+
+        Signature signature = webChatInterface.signature;
+        if signature.input.'type == "string" && signature.output.'type == "string" {
+            check addPath(seen, "webchat UI", "/chat/ui");
+        }
     }
     if webhookInterface is WebhookInterface {
         HTTPExposure exposure = webhookInterface.exposure.http;
@@ -236,4 +244,3 @@ function addPath(map<string> seen, string label, string path) returns error? {
     }
     seen[path] = label;
 }
-

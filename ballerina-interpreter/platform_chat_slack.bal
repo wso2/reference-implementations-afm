@@ -154,7 +154,7 @@ isolated function shouldIgnoreSlackEvent(json payload) returns boolean|error {
     // Only process event types the agent can act on. Events without a
     // `type` (or with a non-string one) are non-actionable — ignore rather
     // than 500.
-    string eventType = check event.'type;
+    string? eventType = nonEmptyString(event.'type);
     if eventType != "message" && eventType != "app_mention" {
         return true;
     }

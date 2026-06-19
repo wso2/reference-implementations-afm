@@ -71,6 +71,28 @@ function testCreatePlatformHandlerPropagatesInitError() {
 }
 
 // ============================================
+// polling interval validation
+// ============================================
+
+@test:Config
+function testGetPollingIntervalSecondsRejectsZero() {
+    decimal|ConfigError result = getPollingIntervalSeconds({interval: 0});
+    test:assertTrue(result is ConfigError);
+}
+
+@test:Config
+function testGetPollingIntervalSecondsRejectsNegative() {
+    decimal|ConfigError result = getPollingIntervalSeconds({interval: -1});
+    test:assertTrue(result is ConfigError);
+}
+
+@test:Config
+function testGetPollingIntervalSecondsAcceptsPositive() returns error? {
+    decimal result = check getPollingIntervalSeconds({interval: 5});
+    test:assertEquals(result, 5.0d);
+}
+
+// ============================================
 // getPlatformChatHttpPath
 // ============================================
 
@@ -271,7 +293,7 @@ function testSlackNotificationEndpointAcksAndRunsAgent() returns error? {
 
 @test:Config
 function testSlackEndpointRejectsInvalidSignature() returns error? {
-    int testPort = 28086;
+    int testPort = 28094;
     http:Listener testListener = check startPlatformChatTestServer(testPort, SAMPLE_SLACK_AFM);
 
     http:Client slackClient = check new (string `http://localhost:${testPort}`);

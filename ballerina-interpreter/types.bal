@@ -24,6 +24,7 @@ type Model record {|
     string provider?;
     string url?;
     ClientAuthentication authentication?;
+    json...;
 |};
 
 enum TransportType {
@@ -214,6 +215,7 @@ type AgentMetadata record {|
     Tools tools?;
     SkillSource[] skills?;
     int max_iterations?;
+    json...;
 |};
 
 type AFMRecord record {|

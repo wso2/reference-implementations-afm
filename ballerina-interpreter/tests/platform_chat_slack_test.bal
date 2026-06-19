@@ -155,6 +155,24 @@ function testShouldIgnoreSlackEventCallbackNonMapEvent() returns error? {
 }
 
 @test:Config
+function testShouldIgnoreSlackEventCallbackMissingEventType() returns error? {
+    boolean|error result = shouldIgnoreSlackEvent({
+        "type": "event_callback",
+        "event": {}
+    });
+    test:assertEquals(result, true);
+}
+
+@test:Config
+function testShouldIgnoreSlackEventCallbackNonStringEventType() returns error? {
+    boolean|error result = shouldIgnoreSlackEvent({
+        "type": "event_callback",
+        "event": {"type": 123}
+    });
+    test:assertEquals(result, true);
+}
+
+@test:Config
 function testShouldIgnoreSlackMessageEventNotIgnored() returns error? {
     boolean|error result = shouldIgnoreSlackEvent({
         "type": "event_callback",

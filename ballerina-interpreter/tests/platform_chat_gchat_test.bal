@@ -153,14 +153,22 @@ function testGetGChatServiceConfigNil() {
 function testGetGChatServiceConfigEndpointUrl() {
     GChatEndpointUrlOnly config = {endpoint_url: "https://example.com"};
     chat:ServiceConfiguration? result = getGChatServiceConfig(config);
-    test:assertTrue(result is chat:HttpEndpointUrlConfig);
+    if result is chat:HttpEndpointUrlConfig {
+        test:assertEquals(result.endpointUrl, "https://example.com");
+    } else {
+        test:assertFail("expected HttpEndpointUrlConfig");
+    }
 }
 
 @test:Config
 function testGetGChatServiceConfigProjectNumberString() {
     GChatProjectNumberOnly config = {project_number: "12345"};
     chat:ServiceConfiguration? result = getGChatServiceConfig(config);
-    test:assertTrue(result is chat:ProjectNumberConfig);
+    if result is chat:ProjectNumberConfig {
+        test:assertEquals(result.projectNumber, "12345");
+    } else {
+        test:assertFail("expected ProjectNumberConfig");
+    }
 }
 
 @test:Config
@@ -172,4 +180,16 @@ function testGetGChatServiceConfigProjectNumberInt() {
     } else {
         test:assertFail("expected ProjectNumberConfig");
     }
+}
+
+@test:Config
+function testGetGChatServiceConfigEmptyEndpointUrl() {
+    GChatEndpointUrlOnly config = {endpoint_url: "   "};
+    test:assertEquals(getGChatServiceConfig(config), ());
+}
+
+@test:Config
+function testGetGChatServiceConfigEmptyProjectNumberString() {
+    GChatProjectNumberOnly config = {project_number: "   "};
+    test:assertEquals(getGChatServiceConfig(config), ());
 }

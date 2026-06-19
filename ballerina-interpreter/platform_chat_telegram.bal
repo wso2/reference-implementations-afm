@@ -16,6 +16,7 @@
 
 import ballerina/http;
 import ballerina/log;
+import ballerina/url;
 
 // Header Telegram echoes from `setWebhook?secret_token=...` on every webhook
 // delivery. Used as a shared-secret check in lieu of HMAC signing.
@@ -92,7 +93,7 @@ isolated function verifyTelegramSecretToken(string? received, string expected)
     if received is () {
         return false;
     }
-    return constantTimeEquals(received, expected);
+    return constantTimeEquals(expected, received);
 }
 
 isolated function getTelegramSessionId(json payload) returns string {
@@ -163,11 +164,18 @@ isolated class TelegramHandler {
                         "a non-empty platform_config.bot_token.");
             }
             int? timeout = interface.polling.timeout;
-            if timeout is int && timeout > TELEGRAM_GET_UPDATES_MAX_TIMEOUT {
-                return error ConfigError(
-                        string `Telegram getUpdates timeout must be at most ` +
-                        string `${TELEGRAM_GET_UPDATES_MAX_TIMEOUT} seconds; ` +
-                        string `got ${timeout}.`);
+            if timeout is int {
+                if timeout < 0 {
+                    return error ConfigError(
+                            string `Telegram getUpdates timeout must be non-negative; ` +
+                            string `got ${timeout}.`);
+                }
+                if timeout > TELEGRAM_GET_UPDATES_MAX_TIMEOUT {
+                    return error ConfigError(
+                            string `Telegram getUpdates timeout must be at most ` +
+                            string `${TELEGRAM_GET_UPDATES_MAX_TIMEOUT} seconds; ` +
+                            string `got ${timeout}.`);
+                }
             }
             self.botToken = token;
             self.secretToken = ();
@@ -254,7 +262,7 @@ isolated class TelegramHandler {
             queryParams["offset"] = offset.toString();
         }
 
-        string path = string `/bot${botToken}/getUpdates` + buildQueryString(queryParams);
+        string path = string `/bot${botToken}/getUpdates` + check buildQueryString(queryParams);
         http:Response|http:ClientError response = telegramClient->get(path);
         if response is http:ClientError {
             // Sanitize error to avoid leaking the bot token via the request
@@ -309,17 +317,18 @@ isolated function parseTelegramGetUpdatesResponse(json body, map<json> state)
     return [updates, nextState];
 }
 
-isolated function buildQueryString(map<string|string[]> params) returns string {
+isolated function buildQueryString(map<string|string[]> params) returns string|error {
     if params.length() == 0 {
         return "";
     }
     string[] parts = [];
     foreach var [k, v] in params.entries() {
+        string encodedKey = check url:encode(k, "UTF-8");
         if v is string {
-            parts.push(string `${k}=${v}`);
+            parts.push(string `${encodedKey}=${check url:encode(v, "UTF-8")}`);
         } else {
             foreach string item in v {
-                parts.push(string `${k}=${item}`);
+                parts.push(string `${encodedKey}=${check url:encode(item, "UTF-8")}`);
             }
         }
     }

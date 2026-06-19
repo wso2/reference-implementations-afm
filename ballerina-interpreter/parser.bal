@@ -17,6 +17,8 @@
 import ballerina/data.yaml;
 import ballerina/os;
 
+const HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS = "webhook and platformchat prompt fields";
+
 function parseAfm(string content) returns AFMRecord|error {
     string resolvedContent = check resolveVariables(content);
 
@@ -164,16 +166,19 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
     }
 
     if erroredKeys.length() > 0 {
-        return error(string `http: variables are only supported in webhook prompt fields, found in metadata fields: ${string:'join(", ", ...erroredKeys)}`);
+        return error(string `http: variables are only supported in ${HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS}, ` +
+                string `found in metadata fields: ${string:'join(", ", ...erroredKeys)}`);
     }
 }
 
 function validateRoleAndInstructions(AFMRecord afmRecord) returns error? {
     if containsHttpVariable(afmRecord.role) {
-        return error("http: variables are only supported in webhook prompt fields, found in role section");
+        return error(string `http: variables are only supported in ` +
+                string `${HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS}, found in role section`);
     }
     if containsHttpVariable(afmRecord.instructions) {
-        return error("http: variables are only supported in webhook prompt fields, found in instructions section");
+        return error(string `http: variables are only supported in ` +
+                string `${HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS}, found in instructions section`);
     }
 }
 
@@ -182,8 +187,8 @@ function collectMetadataFieldErrors(AgentMetadata metadata) returns string[] {
 
     string[] erroredKeys = [];
 
-    foreach [string, anydata] [key, value] in rest.entries() {
-        if value is string && containsHttpVariable(value) {
+    foreach [string, json] [key, value] in rest.entries() {
+        if jsonContainsHttpVariable(value) {
             erroredKeys.push(key);
         }
     }
@@ -208,7 +213,7 @@ function collectMetadataFieldErrors(AgentMetadata metadata) returns string[] {
     if model is Model {
         Model {authentication, ...modelRest} = model;
         foreach [string, anydata] [key, value] in modelRest.entries() {
-            if value is string && containsHttpVariable(value) {
+            if jsonContainsHttpVariable(value.toJson()) {
                 erroredKeys.push("model." + key);
             }
         }
@@ -259,8 +264,8 @@ function collectInterfaceErrors(Interface[] interfaces) returns string[] {
                 erroredKeys.push("interfaces.platformchat.authentication");
             }
 
-            map<json>? platformConfig = interface?.platform_config;
-            if platformConfig is map<json> && jsonContainsHttpVariable(platformConfig) {
+            SlackConfig|GChatConfig|TelegramConfig? platformConfig = interface?.platform_config;
+            if platformConfig !is () && jsonContainsHttpVariable(platformConfig.toJson()) {
                 erroredKeys.push("interfaces.platformchat.platform_config");
             }
             continue;

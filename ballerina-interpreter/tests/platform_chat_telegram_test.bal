@@ -41,6 +41,16 @@ function testVerifyTelegramSecretTokenEmptyReceived() {
 }
 
 // ============================================
+// buildQueryString
+// ============================================
+
+@test:Config
+function testBuildQueryStringEncodesKeysAndValues() returns error? {
+    test:assertEquals(check buildQueryString({"weird=key": "value=1&next"}),
+            "?weird%3Dkey=value%3D1%26next");
+}
+
+// ============================================
 // normalizeTelegramSecret
 // ============================================
 
@@ -319,6 +329,16 @@ function testTelegramHandlerPollingRejectsTimeoutAboveCap() {
     TelegramPollingPlatformChatInterface interface = {
         platform_config: {bot_token: "123:abc"},
         polling: {timeout: 60}
+    };
+    TelegramHandler|ConfigError result = new TelegramHandler(interface, false);
+    test:assertTrue(result is ConfigError);
+}
+
+@test:Config
+function testTelegramHandlerPollingRejectsNegativeTimeout() {
+    TelegramPollingPlatformChatInterface interface = {
+        platform_config: {bot_token: "123:abc"},
+        polling: {timeout: -1}
     };
     TelegramHandler|ConfigError result = new TelegramHandler(interface, false);
     test:assertTrue(result is ConfigError);

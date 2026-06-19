@@ -308,7 +308,7 @@ isolated function runPlatformChatPollingLoop(ai:Agent agent,
         ? check compileTemplate(promptTemplate)
         : ();
 
-    final decimal intervalSeconds = <decimal> interface.polling.interval;
+    final decimal intervalSeconds = check getPollingIntervalSeconds(interface.polling);
 
     map<json> state = {};
 
@@ -343,6 +343,15 @@ isolated function runPlatformChatPollingLoop(ai:Agent agent,
 
         runtime:sleep(intervalSeconds);
     }
+}
+
+isolated function getPollingIntervalSeconds(Polling polling) returns decimal|ConfigError {
+    int interval = polling.interval;
+    if interval <= 0 {
+        return error ConfigError(string `platformchat polling.interval must be greater than 0; ` +
+                string `got ${interval}.`);
+    }
+    return <decimal> interval;
 }
 
 isolated function dispatchWithRetry(PlatformHandler handler, ai:Agent agent,
@@ -425,12 +434,14 @@ isolated function internalServerErrorResponse(string detail) returns http:Intern
 // Slack (HMAC signature) and Telegram (secret token) use it.
 isolated function constantTimeEquals(string expected, string actual) returns boolean {
     int expectedLength = expected.length();
-    if expectedLength != actual.length() {
-        return false;
-    }
-    int diff = 0;
-    foreach int index in 0 ..< expectedLength {
-        diff = diff | (expected.getCodePoint(index) ^ actual.getCodePoint(index));
+    int actualLength = actual.length();
+    int maxLength = expectedLength > actualLength ? expectedLength : actualLength;
+    // Fold the length mismatch into the accumulator instead of branching early.
+    int diff = expectedLength ^ actualLength;
+    foreach int index in 0 ..< maxLength {
+        int expectedCodePoint = index < expectedLength ? expected.getCodePoint(index) : 0;
+        int actualCodePoint = index < actualLength ? actual.getCodePoint(index) : 0;
+        diff = diff | (expectedCodePoint ^ actualCodePoint);
     }
     return diff == 0;
 }
