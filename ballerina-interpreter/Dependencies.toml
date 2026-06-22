@@ -5,7 +5,7 @@
 
 [ballerina]
 dependencies-toml-version = "2"
-distribution-version = "2201.12.10"
+distribution-version = "2201.13.3"
 
 [[package]]
 org = "ballerina"
@@ -77,10 +77,13 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "crypto"
-version = "2.11.0"
+version = "2.12.1"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "time"}
+]
+modules = [
+	{org = "ballerina", packageName = "crypto", moduleName = "crypto"}
 ]
 
 [[package]]
@@ -115,7 +118,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "file"
-version = "1.12.0"
+version = "1.13.0"
 dependencies = [
 	{org = "ballerina", name = "io"},
 	{org = "ballerina", name = "jballerina.java"},
@@ -129,7 +132,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "http"
-version = "2.14.11"
+version = "2.16.3"
 dependencies = [
 	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "cache"},
@@ -286,7 +289,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "log"
-version = "2.14.0"
+version = "2.17.0"
 dependencies = [
 	{org = "ballerina", name = "io"},
 	{org = "ballerina", name = "jballerina.java"},
@@ -315,7 +318,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "mime"
-version = "2.12.1"
+version = "2.12.2"
 dependencies = [
 	{org = "ballerina", name = "io"},
 	{org = "ballerina", name = "jballerina.java"},
@@ -326,7 +329,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "oauth2"
-version = "2.14.1"
+version = "2.15.0"
 dependencies = [
 	{org = "ballerina", name = "cache"},
 	{org = "ballerina", name = "crypto"},
@@ -339,7 +342,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "observe"
-version = "1.6.0"
+version = "1.7.1"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
 ]
@@ -368,7 +371,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "task"
-version = "2.11.1"
+version = "2.11.2"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "time"},
@@ -407,6 +410,9 @@ version = "2.6.1"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
 ]
+modules = [
+	{org = "ballerina", packageName = "url", moduleName = "url"}
+]
 
 [[package]]
 org = "ballerina"
@@ -422,7 +428,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "websub"
-version = "2.14.0"
+version = "2.15.0"
 dependencies = [
 	{org = "ballerina", name = "crypto"},
 	{org = "ballerina", name = "http"},
@@ -442,7 +448,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "websubhub"
-version = "1.15.2"
+version = "1.16.0"
 scope = "testOnly"
 dependencies = [
 	{org = "ballerina", name = "crypto"},
@@ -521,6 +527,26 @@ modules = [
 
 [[package]]
 org = "ballerinax"
+name = "googleapis.chat"
+version = "0.1.0"
+dependencies = [
+	{org = "ballerina", name = "crypto"},
+	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "jwt"},
+	{org = "ballerina", name = "log"},
+	{org = "ballerina", name = "mime"},
+	{org = "ballerina", name = "time"},
+	{org = "ballerina", name = "url"},
+	{org = "ballerinai", name = "observe"}
+]
+modules = [
+	{org = "ballerinax", packageName = "googleapis.chat", moduleName = "googleapis.chat"}
+]
+
+[[package]]
+org = "ballerinax"
 name = "openai.chat"
 version = "4.0.1"
 dependencies = [
@@ -535,7 +561,7 @@ dependencies = [
 [[package]]
 org = "ballerinax"
 name = "openai.embeddings"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
 	{org = "ballerina", name = "constraint"},
 	{org = "ballerina", name = "http"},
@@ -549,6 +575,7 @@ name = "afm_ballerina"
 version = "0.3.0"
 dependencies = [
 	{org = "ballerina", name = "ai"},
+	{org = "ballerina", name = "crypto"},
 	{org = "ballerina", name = "data.yaml"},
 	{org = "ballerina", name = "file"},
 	{org = "ballerina", name = "http"},
@@ -560,11 +587,13 @@ dependencies = [
 	{org = "ballerina", name = "os"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},
+	{org = "ballerina", name = "url"},
 	{org = "ballerina", name = "websub"},
 	{org = "ballerina", name = "websubhub"},
 	{org = "ballerinai", name = "observe"},
 	{org = "ballerinax", name = "ai.anthropic"},
-	{org = "ballerinax", name = "ai.openai"}
+	{org = "ballerinax", name = "ai.openai"},
+	{org = "ballerinax", name = "googleapis.chat"}
 ]
 modules = [
 	{org = "wso2", packageName = "afm_ballerina", moduleName = "afm_ballerina"},

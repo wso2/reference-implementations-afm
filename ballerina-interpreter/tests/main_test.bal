@@ -251,6 +251,42 @@ function testValidateHttpVariablesInStdioTransportEnv() {
 }
 
 @test:Config
+function testValidateHttpVariablesMessageMentionsPlatformChatPrompt() {
+    AFMRecord afmRecord = {
+        role: "${http:payload.text}",
+        instructions: ""
+    };
+
+    error? result = validateHttpVariables(afmRecord);
+    if result is () {
+        test:assertFail("Expected error for http: variables in role");
+    }
+    test:assertTrue(result.message().includes("webhook and platformchat prompt fields"));
+}
+
+@test:Config
+function testValidateHttpVariablesInPlatformChatConfig() {
+    AFMRecord afmRecord = {
+        metadata: {
+            spec_version: "0.3.0",
+            interfaces: [
+                <SlackPlatformChatInterface>{
+                    platform_config: {signing_secret: "${http:header.Authorization}"}
+                }
+            ]
+        },
+        role: "",
+        instructions: ""
+    };
+
+    error? result = validateHttpVariables(afmRecord);
+    if result is () {
+        test:assertFail("Expected error for http: variables in platformchat config");
+    }
+    test:assertTrue(result.message().includes("interfaces.platformchat.platform_config"));
+}
+
+@test:Config
 function testParseAfmWithoutFrontmatter() returns error? {
     string content = string `# Role
 This is the role.
@@ -289,19 +325,21 @@ Agent instructions here.`;
 @test:Config
 function testValidateAndExtractInterfacesSingleConsoleChat() returns error? {
     Interface[] interfaces = [<ConsoleChatInterface>{}];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ConsoleChatInterface);
     test:assertTrue(web is ());
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
 function testValidateAndExtractInterfacesSingleWebChat() returns error? {
     Interface[] interfaces = [<WebChatInterface>{}];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ());
     test:assertTrue(web is WebChatInterface);
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
@@ -310,10 +348,11 @@ function testValidateAndExtractInterfacesMixed() returns error? {
         <ConsoleChatInterface>{},
         <WebChatInterface>{}
     ];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ConsoleChatInterface);
     test:assertTrue(web is WebChatInterface);
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
@@ -326,7 +365,8 @@ function testValidateAndExtractInterfacesDuplicateConsoleChat() {
     if result !is error {
         test:assertFail("Expected error for duplicate console chat interfaces");
     }
-    test:assertEquals(result.message(), "Multiple interfaces of the same type are not supported");
+    test:assertEquals(result.message(),
+        "Multiple consolechat, webchat, or webhook interfaces are not supported");
 }
 
 @test:Config
@@ -339,7 +379,33 @@ function testValidateAndExtractInterfacesDuplicateWebChat() {
     if result !is error {
         test:assertFail("Expected error for duplicate web chat interfaces");
     }
-    test:assertEquals(result.message(), "Multiple interfaces of the same type are not supported");
+    test:assertEquals(result.message(),
+        "Multiple consolechat, webchat, or webhook interfaces are not supported");
+}
+
+@test:Config
+function testValidateAndExtractInterfacesMultiplePlatformChats() returns error? {
+    Interface[] interfaces = [
+        <PlatformChatInterface>{platform: "slack", mode: NOTIFICATION},
+        <PlatformChatInterface>{platform: "gchat", mode: NOTIFICATION}
+    ];
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
+    test:assertTrue(console is ());
+    test:assertTrue(web is ());
+    test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 2);
+}
+
+@test:Config
+function testValidateAndExtractInterfacesRejectsInvalidPollingInterval() {
+    Interface[] interfaces = [
+        <TelegramPollingPlatformChatInterface>{
+            platform_config: {bot_token: "123:abc"},
+            polling: {interval: 0}
+        }
+    ];
+    var result = validateAndExtractInterfaces(interfaces);
+    test:assertTrue(result is ConfigError);
 }
 
 // ============================================
@@ -1198,4 +1264,32 @@ function testMapToHttpClientAuthUnsupportedType() {
         test:assertFail("Expected error for unsupported authentication type");
     }
     test:assertEquals(result.message(), "Unsupported authentication type: custom-auth");
+}
+
+// ============================================
+// validateUniqueHttpPaths Tests
+// ============================================
+
+@test:Config
+function testValidateUniqueHttpPathsPlatformChatCollidesWithWebChatUi() {
+    WebChatInterface webChat = {};
+    SlackPlatformChatInterface slack = {exposure: {http: {path: "/chat/ui"}}};
+    error? result = validateUniqueHttpPaths(webChat, (), [slack]);
+    if result is () {
+        test:assertFail("Expected platformchat path '/chat/ui' to collide with webchat UI");
+    }
+    test:assertTrue(result.message().includes("'/chat/ui'"));
+    test:assertTrue(result.message().includes("webchat UI"));
+}
+
+@test:Config
+function testValidateUniqueHttpPathsChatUiAvailableWhenNotStringIo() returns error? {
+    WebChatInterface webChat = {
+        signature: {
+            input: {"type": "object", "properties": {}},
+            output: {"type": "object", "properties": {}}
+        }
+    };
+    SlackPlatformChatInterface slack = {exposure: {http: {path: "/chat/ui"}}};
+    check validateUniqueHttpPaths(webChat, (), [slack]);
 }
