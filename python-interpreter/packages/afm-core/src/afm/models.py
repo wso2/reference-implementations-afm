@@ -138,7 +138,7 @@ class HTTPExposure(BaseModel):
 class Exposure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    http: HTTPExposure | None = None
+    http: HTTPExposure
 
 
 class Subscription(BaseModel):
@@ -167,6 +167,9 @@ class PlatformChatMode(str, Enum):
 
 DEFAULT_POLLING_INTERVAL_SECONDS = 30
 
+DEFAULT_WEBCHAT_PATH = "/chat"
+DEFAULT_WEBHOOK_PATH = "/webhook"
+
 
 class Polling(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -190,7 +193,9 @@ class WebChatInterface(BaseModel):
 
     type: Literal["webchat"] = "webchat"
     signature: Signature = Field(default_factory=Signature)
-    exposure: Exposure | None = None
+    exposure: Exposure = Field(
+        default_factory=lambda: Exposure(http=HTTPExposure(path=DEFAULT_WEBCHAT_PATH))
+    )
 
 
 class WebhookInterface(BaseModel):
@@ -199,7 +204,9 @@ class WebhookInterface(BaseModel):
     type: Literal["webhook"] = "webhook"
     prompt: str | None = None
     signature: Signature = Field(default_factory=Signature)
-    exposure: Exposure | None = None
+    exposure: Exposure = Field(
+        default_factory=lambda: Exposure(http=HTTPExposure(path=DEFAULT_WEBHOOK_PATH))
+    )
     subscription: Subscription
 
 

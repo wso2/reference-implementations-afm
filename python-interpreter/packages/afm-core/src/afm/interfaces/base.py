@@ -23,6 +23,7 @@ from ..models import (
     Interface,
     InterfaceType,
     PlatformChatInterface,
+    PlatformChatMode,
     WebChatInterface,
     WebhookInterface,
 )
@@ -70,12 +71,13 @@ def get_platform_chat_interface(afm: AFMRecord) -> PlatformChatInterface:
 def get_http_path(
     interface: WebChatInterface | WebhookInterface | PlatformChatInterface,
 ) -> str:
-    if interface.exposure and interface.exposure.http:
-        return interface.exposure.http.path
-
-    # Defaults per spec
-    if isinstance(interface, WebChatInterface):
-        return "/chat"
     if isinstance(interface, PlatformChatInterface):
-        return f"/{interface.platform}"
-    return "/webhook"
+        if interface.mode == PlatformChatMode.POLLING:
+            raise ValueError(
+                f"PlatformChatInterface in polling mode has no inbound "
+                f"HTTP path (platform={interface.platform!r})."
+            )
+        if interface.exposure is None:
+            return f"/{interface.platform}"
+        return interface.exposure.http.path
+    return interface.exposure.http.path

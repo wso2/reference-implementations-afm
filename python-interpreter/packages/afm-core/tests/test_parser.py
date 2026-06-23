@@ -137,7 +137,6 @@ class TestParseAfm:
         assert interface.platform_config == {"signing_secret": "test-signing-secret"}
         assert interface.has_explicit_output_schema is False
         assert interface.exposure is not None
-        assert interface.exposure.http is not None
         assert interface.exposure.http.path == "/slack"
 
     def test_parse_gchat_platform_chat_agent(
@@ -154,7 +153,6 @@ class TestParseAfm:
         assert interface.platform_config == {"project_number": "test-project-number"}
         assert interface.has_explicit_output_schema is False
         assert interface.exposure is not None
-        assert interface.exposure.http is not None
         assert interface.exposure.http.path == "/gchat"
 
     def test_parse_minimal_agent(self, sample_minimal_path: Path) -> None:

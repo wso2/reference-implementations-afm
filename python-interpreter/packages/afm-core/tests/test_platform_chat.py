@@ -32,8 +32,9 @@ from pydantic import ValidationError
 from afm.interfaces.platform_chat import (
     create_platform_chat_app,
     dispatch_update,
-    get_platform_handler,
+    get_platform_handler_class,
     get_platform_session_id,
+    new_platform_handler,
     run_polling_loop,
     validate_platform_chat_interface_schema,
 )
@@ -896,14 +897,14 @@ class TestGChatPlatformChatEndpoint:
 
 
 class TestPlatformHandlerRegistry:
-    def test_get_known_platform_returns_handler(self) -> None:
-        assert isinstance(get_platform_handler("slack"), SlackHandler)
-        assert isinstance(get_platform_handler("gchat"), GChatHandler)
-        assert isinstance(get_platform_handler("telegram"), TelegramHandler)
+    def test_get_known_platform_returns_class(self) -> None:
+        assert get_platform_handler_class("slack") is SlackHandler
+        assert get_platform_handler_class("gchat") is GChatHandler
+        assert get_platform_handler_class("telegram") is TelegramHandler
 
     def test_get_unknown_platform_raises(self) -> None:
         with pytest.raises(ValueError) as exc_info:
-            get_platform_handler("teams")
+            get_platform_handler_class("teams")
         assert "not supported" in str(exc_info.value)
 
 
@@ -1245,23 +1246,21 @@ class TestTelegramHandlerVerifyRawRequest:
         )
 
     def test_valid_secret_token_passes(self) -> None:
-        handler = TelegramHandler()
+        handler = TelegramHandler(self._interface("shh"))
         handler.verify_raw_request(
             body=b"{}",
             headers={TELEGRAM_SECRET_TOKEN_HEADER: "shh"},
-            interface=self._interface("shh"),
         )
 
     def test_invalid_secret_token_rejected(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        handler = TelegramHandler()
+        handler = TelegramHandler(self._interface("shh"))
         with caplog.at_level("WARNING"):
             with pytest.raises(HTTPException) as exc_info:
                 handler.verify_raw_request(
                     body=b"{}",
                     headers={TELEGRAM_SECRET_TOKEN_HEADER: "wrong"},
-                    interface=self._interface("shh"),
                 )
         assert exc_info.value.status_code == 401
         # Mismatch path emits a sanitized warning — header was present
@@ -1278,13 +1277,12 @@ class TestTelegramHandlerVerifyRawRequest:
     def test_missing_secret_token_header_rejected(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        handler = TelegramHandler()
+        handler = TelegramHandler(self._interface("shh"))
         with caplog.at_level("WARNING"):
             with pytest.raises(HTTPException) as exc_info:
                 handler.verify_raw_request(
                     body=b"{}",
                     headers={},
-                    interface=self._interface("shh"),
                 )
         assert exc_info.value.status_code == 401
         mismatch_logs = [
@@ -1295,17 +1293,22 @@ class TestTelegramHandlerVerifyRawRequest:
         assert "header_present=False" in mismatch_logs[0].getMessage()
 
     def test_handler_without_configured_secret_returns_500(self) -> None:
-        handler = TelegramHandler()
+        # Construct with verify_signatures=False so __init__ accepts the
+        # missing secret_token; the runtime check fires inside verify_raw_request.
+        handler = TelegramHandler(self._interface(None), verify_signatures=False)
         with pytest.raises(HTTPException) as exc_info:
             handler.verify_raw_request(
                 body=b"{}",
                 headers={TELEGRAM_SECRET_TOKEN_HEADER: "shh"},
-                interface=self._interface(None),
             )
         assert exc_info.value.status_code == 500
 
 
-class TestTelegramHandlerValidateRuntimeConfig:
+class TestTelegramHandlerInitValidation:
+    """Runtime validation runs inside TelegramHandler.__init__: missing
+    credentials, polling timeouts above Telegram's cap, etc. all surface
+    as construction-time ValueErrors."""
+
     def _interface(self, secret_token: str | None) -> PlatformChatInterface:
         config: dict = {}
         if secret_token is not None:
@@ -1320,19 +1323,13 @@ class TestTelegramHandlerValidateRuntimeConfig:
 
     def test_secret_required_when_verifying(self) -> None:
         with pytest.raises(ValueError, match="secret_token"):
-            TelegramHandler().validate_runtime_config(
-                self._interface(None), verify_signatures=True
-            )
+            TelegramHandler(self._interface(None), verify_signatures=True)
 
     def test_secret_not_required_when_not_verifying(self) -> None:
-        TelegramHandler().validate_runtime_config(
-            self._interface(None), verify_signatures=False
-        )
+        TelegramHandler(self._interface(None), verify_signatures=False)
 
     def test_secret_present_passes(self) -> None:
-        TelegramHandler().validate_runtime_config(
-            self._interface("shh"), verify_signatures=True
-        )
+        TelegramHandler(self._interface("shh"), verify_signatures=True)
 
     def _polling_interface(self, *, bot_token: str | None) -> PlatformChatInterface:
         config: dict = {}
@@ -1348,13 +1345,13 @@ class TestTelegramHandlerValidateRuntimeConfig:
 
     def test_polling_requires_bot_token(self) -> None:
         with pytest.raises(ValueError, match="bot_token"):
-            TelegramHandler().validate_runtime_config(
+            TelegramHandler(
                 self._polling_interface(bot_token=None),
                 verify_signatures=False,
             )
 
     def test_polling_with_bot_token_passes(self) -> None:
-        TelegramHandler().validate_runtime_config(
+        TelegramHandler(
             self._polling_interface(bot_token="123:abc"),
             verify_signatures=False,
         )
@@ -1362,35 +1359,35 @@ class TestTelegramHandlerValidateRuntimeConfig:
     def test_polling_does_not_require_secret_token(self) -> None:
         # Polling pulls from the bot's authenticated session — no inbound
         # webhook to verify, so secret_token is irrelevant.
-        TelegramHandler().validate_runtime_config(
+        TelegramHandler(
             self._polling_interface(bot_token="123:abc"),
             verify_signatures=True,
         )
 
     def test_polling_rejects_empty_bot_token(self) -> None:
         with pytest.raises(ValueError, match="bot_token"):
-            TelegramHandler().validate_runtime_config(
+            TelegramHandler(
                 self._polling_interface(bot_token=""),
                 verify_signatures=False,
             )
 
     def test_polling_rejects_whitespace_only_bot_token(self) -> None:
         with pytest.raises(ValueError, match="bot_token"):
-            TelegramHandler().validate_runtime_config(
+            TelegramHandler(
                 self._polling_interface(bot_token="   "),
                 verify_signatures=False,
             )
 
     def test_notification_rejects_empty_secret_token(self) -> None:
         with pytest.raises(ValueError, match="secret_token"):
-            TelegramHandler().validate_runtime_config(
+            TelegramHandler(
                 self._interface(secret_token=""),
                 verify_signatures=True,
             )
 
     def test_notification_rejects_whitespace_only_secret_token(self) -> None:
         with pytest.raises(ValueError, match="secret_token"):
-            TelegramHandler().validate_runtime_config(
+            TelegramHandler(
                 self._interface(secret_token="\t \n"),
                 verify_signatures=True,
             )
@@ -1404,7 +1401,7 @@ class TestTelegramHandlerValidateRuntimeConfig:
             polling=Polling(timeout=60),
         )
         with pytest.raises(ValueError, match="at most 50"):
-            TelegramHandler().validate_runtime_config(iface, verify_signatures=False)
+            TelegramHandler(iface, verify_signatures=False)
 
     def test_polling_accepts_timeout_at_telegram_cap(self) -> None:
         iface = PlatformChatInterface(
@@ -1414,7 +1411,7 @@ class TestTelegramHandlerValidateRuntimeConfig:
             platform_config={"bot_token": "123:abc"},
             polling=Polling(timeout=50),
         )
-        TelegramHandler().validate_runtime_config(iface, verify_signatures=False)
+        TelegramHandler(iface, verify_signatures=False)
 
 
 class TestPollingModelValidation:
@@ -1479,6 +1476,7 @@ def _mock_async_client_factory(
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = fake_get
+    mock_client.aclose = AsyncMock(return_value=None)
 
     def factory(*args: object, **kwargs: object) -> MagicMock:
         return mock_client
@@ -1495,9 +1493,8 @@ class TestTelegramHandlerPollUpdates:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
-        updates, state = await TelegramHandler().poll_updates(
-            _make_telegram_polling_interface(), {}
-        )
+        handler = TelegramHandler(_make_telegram_polling_interface())
+        updates, state = await handler.poll_updates({})
         assert updates == []
         assert state == {}
         assert calls[0]["params"] == {"timeout": 0}
@@ -1518,9 +1515,8 @@ class TestTelegramHandlerPollUpdates:
                 }
             ],
         )
-        updates, state = await TelegramHandler().poll_updates(
-            _make_telegram_polling_interface(), {}
-        )
+        handler = TelegramHandler(_make_telegram_polling_interface())
+        updates, state = await handler.poll_updates({})
         assert len(updates) == 2
         assert state == {"offset": 13}
         assert calls[0]["params"] == {"timeout": 0}
@@ -1530,9 +1526,8 @@ class TestTelegramHandlerPollUpdates:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
-        await TelegramHandler().poll_updates(
-            _make_telegram_polling_interface(), {"offset": 99}
-        )
+        handler = TelegramHandler(_make_telegram_polling_interface())
+        await handler.poll_updates({"offset": 99})
         assert calls[0]["params"] == {"timeout": 0, "offset": 99}
 
     @pytest.mark.asyncio
@@ -1540,9 +1535,8 @@ class TestTelegramHandlerPollUpdates:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _mock_async_client_factory(monkeypatch, [{"ok": True, "result": []}])
-        updates, state = await TelegramHandler().poll_updates(
-            _make_telegram_polling_interface(), {"offset": 42}
-        )
+        handler = TelegramHandler(_make_telegram_polling_interface())
+        updates, state = await handler.poll_updates({"offset": 42})
         assert updates == []
         assert state == {"offset": 42}
 
@@ -1553,16 +1547,18 @@ class TestTelegramHandlerPollUpdates:
         _mock_async_client_factory(
             monkeypatch, [{"ok": False, "description": "Unauthorized"}]
         )
+        handler = TelegramHandler(_make_telegram_polling_interface())
         with pytest.raises(RuntimeError, match="Unauthorized"):
-            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+            await handler.poll_updates({})
 
     @pytest.mark.asyncio
     async def test_non_list_result_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _mock_async_client_factory(monkeypatch, [{"ok": True, "result": "not a list"}])
+        handler = TelegramHandler(_make_telegram_polling_interface())
         with pytest.raises(RuntimeError, match="unexpected result shape") as exc_info:
-            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+            await handler.poll_updates({})
         assert "not a list" not in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -1570,8 +1566,9 @@ class TestTelegramHandlerPollUpdates:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _mock_async_client_factory(monkeypatch, [{"ok": True, "result": 0}])
+        handler = TelegramHandler(_make_telegram_polling_interface())
         with pytest.raises(RuntimeError, match="unexpected result shape"):
-            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+            await handler.poll_updates({})
 
     @pytest.mark.asyncio
     async def test_http_status_error_is_sanitized(
@@ -1593,8 +1590,9 @@ class TestTelegramHandlerPollUpdates:
             ],
         )
 
+        handler = TelegramHandler(_make_telegram_polling_interface())
         with pytest.raises(RuntimeError) as exc_info:
-            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+            await handler.poll_updates({})
 
         assert str(exc_info.value) == "Telegram getUpdates returned HTTP 429"
         assert "123:secret-token" not in str(exc_info.value)
@@ -1613,8 +1611,9 @@ class TestTelegramHandlerPollUpdates:
             [httpx.ConnectError("connect failed", request=request)],
         )
 
+        handler = TelegramHandler(_make_telegram_polling_interface())
         with pytest.raises(RuntimeError) as exc_info:
-            await TelegramHandler().poll_updates(_make_telegram_polling_interface(), {})
+            await handler.poll_updates({})
 
         assert str(exc_info.value) == (
             "Telegram getUpdates request failed: ConnectError"
@@ -1622,10 +1621,9 @@ class TestTelegramHandlerPollUpdates:
         assert "123:secret-token" not in str(exc_info.value)
         assert exc_info.value.__suppress_context__ is True
 
-    @pytest.mark.asyncio
-    async def test_missing_bot_token_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_bot_token_rejected_at_construction(self) -> None:
+        # Polling mode requires bot_token; construction-time validation
+        # surfaces this before any poll attempt.
         iface = PlatformChatInterface(
             type="platformchat",
             platform="telegram",
@@ -1633,8 +1631,8 @@ class TestTelegramHandlerPollUpdates:
             platform_config={},
             polling=Polling(),
         )
-        with pytest.raises(RuntimeError, match="bot_token"):
-            await TelegramHandler().poll_updates(iface, {})
+        with pytest.raises(ValueError, match="bot_token"):
+            TelegramHandler(iface)
 
     @pytest.mark.asyncio
     async def test_long_poll_timeout_passed(
@@ -1648,7 +1646,8 @@ class TestTelegramHandlerPollUpdates:
             platform_config={"bot_token": "123:abc"},
             polling=Polling(interval=1, timeout=30),
         )
-        await TelegramHandler().poll_updates(iface, {})
+        handler = TelegramHandler(iface)
+        await handler.poll_updates({})
         assert calls[0]["params"] == {"timeout": 30}
 
 
@@ -1681,7 +1680,7 @@ class TestDispatchUpdate:
         agent, seen = self._agent()
         compiled = compile_template("Reply to ${http:payload.message.text}")
         await dispatch_update(
-            handler=TelegramHandler(),
+            handler=TelegramHandler(self._interface()),
             agent=agent,
             payload={
                 "update_id": 1,
@@ -1706,7 +1705,7 @@ class TestDispatchUpdate:
         agent, seen = self._agent()
         compiled = compile_template("Refers to ${http:payload.nope.absent}")
         await dispatch_update(
-            handler=TelegramHandler(),
+            handler=TelegramHandler(self._interface()),
             agent=agent,
             payload={
                 "update_id": 1,
@@ -1731,7 +1730,7 @@ class TestDispatchUpdate:
 
         # Should not raise — dispatch_update logs and returns.
         await dispatch_update(
-            handler=TelegramHandler(),
+            handler=TelegramHandler(self._interface()),
             agent=agent,
             payload={
                 "update_id": 1,
@@ -1755,7 +1754,7 @@ class TestDispatchUpdate:
 
         with pytest.raises(asyncio.CancelledError):
             await dispatch_update(
-                handler=TelegramHandler(),
+                handler=TelegramHandler(self._interface()),
                 agent=agent,
                 payload={
                     "update_id": 1,
@@ -1857,9 +1856,7 @@ class TestRunPollingLoop:
         call_counter = {"n": 0}
 
         class FlakyHandler(TelegramHandler):
-            async def poll_updates(
-                self, interface: PlatformChatInterface, state: dict
-            ) -> tuple[list, dict]:
+            async def poll_updates(self, state: dict) -> tuple[list, dict]:
                 call_counter["n"] += 1
                 if call_counter["n"] == 1:
                     raise RuntimeError("transient")
@@ -1867,10 +1864,10 @@ class TestRunPollingLoop:
 
         monkeypatch.setitem(
             __import__(
-                "afm.interfaces.platform_chat", fromlist=["_HANDLERS"]
-            )._HANDLERS,
+                "afm.interfaces.platform_chat", fromlist=["_HANDLER_CLASSES"]
+            )._HANDLER_CLASSES,
             "telegram",
-            FlakyHandler(),
+            FlakyHandler,
         )
 
         agent = MagicMock()
@@ -1975,7 +1972,7 @@ class TestRunPollingLoop:
             polling=Polling(),
         )
         agent = MagicMock()
-        with pytest.raises(ValueError, match="does not support polling"):
+        with pytest.raises(ValueError, match="does not support mode 'polling'"):
             await run_polling_loop(agent, iface)
 
     @pytest.mark.asyncio
@@ -2178,16 +2175,23 @@ class TestRunPollingLoop:
     ) -> None:
         platform_chat_module = __import__(
             "afm.interfaces.platform_chat",
-            fromlist=["_HANDLERS", "_sleep_or_stop"],
+            fromlist=["_HANDLER_CLASSES", "_sleep_or_stop"],
         )
 
-        class RecordingHandler(TelegramHandler):
-            def __init__(self) -> None:
-                self.seen_states: list[dict] = []
+        instances: list[RecordingHandler] = []
 
-            async def poll_updates(
-                self, interface: PlatformChatInterface, state: dict
-            ) -> tuple[list, dict]:
+        class RecordingHandler(TelegramHandler):
+            def __init__(
+                self,
+                interface: PlatformChatInterface,
+                *,
+                verify_signatures: bool = True,
+            ) -> None:
+                super().__init__(interface, verify_signatures=verify_signatures)
+                self.seen_states: list[dict] = []
+                instances.append(self)
+
+            async def poll_updates(self, state: dict) -> tuple[list, dict]:
                 self.seen_states.append(dict(state))
                 if len(self.seen_states) == 1:
                     return [
@@ -2212,8 +2216,9 @@ class TestRunPollingLoop:
                 stop_event.set()
                 return [], state
 
-        handler = RecordingHandler()
-        monkeypatch.setitem(platform_chat_module._HANDLERS, "telegram", handler)
+        monkeypatch.setitem(
+            platform_chat_module._HANDLER_CLASSES, "telegram", RecordingHandler
+        )
 
         cleared_stop_once = False
 
@@ -2243,6 +2248,7 @@ class TestRunPollingLoop:
             stop_event=stop_event,
         )
 
-        assert handler.seen_states == [{}, {}]
+        assert len(instances) == 1
+        assert instances[0].seen_states == [{}, {}]
         assert len(seen_prompts) == 1
         assert '"first"' in seen_prompts[0]

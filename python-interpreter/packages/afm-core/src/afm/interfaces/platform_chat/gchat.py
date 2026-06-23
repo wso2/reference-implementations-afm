@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import jwt
 from fastapi import HTTPException
@@ -30,6 +30,8 @@ from ...models import PlatformChatMode
 from ._handler import PlatformHandler
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from ...models import PlatformChatInterface
 
 logger = logging.getLogger(__name__)
@@ -242,52 +244,44 @@ class GChatHandler(PlatformHandler):
     supported_modes: ClassVar[frozenset[PlatformChatMode]] = frozenset(
         {PlatformChatMode.NOTIFICATION, PlatformChatMode.REQUEST}
     )
+    config_cls: ClassVar[type[BaseModel]] = GChatConfig
 
-    def parse_config(self, raw_config: Mapping[str, Any] | None) -> GChatConfig:
-        return GChatConfig.model_validate(dict(raw_config or {}))
-
-    def validate_runtime_config(
+    def __init__(
         self,
         interface: PlatformChatInterface,
         *,
-        verify_signatures: bool,
+        verify_signatures: bool = True,
     ) -> None:
-        if not verify_signatures:
-            return
-        config = self.parse_config(interface.platform_config)
-        if get_http_config(config) is None:
+        super().__init__(interface, verify_signatures=verify_signatures)
+        config = GChatConfig.model_validate(dict(interface.platform_config or {}))
+        http_config = get_http_config(config)
+        if verify_signatures and http_config is None:
             raise ValueError(
                 "GChat platform chat requires "
                 "platform_config.project_number or "
                 "platform_config.endpoint_url when "
                 "signature verification is enabled."
             )
+        self._http_config = http_config
 
     def verify_raw_request(
         self,
         body: bytes,
         headers: Mapping[str, str],
-        interface: PlatformChatInterface,
     ) -> None:
-        config = self.parse_config(interface.platform_config)
-        http_config = get_http_config(config)
-        if http_config is None:
+        if self._http_config is None:
             raise HTTPException(
                 status_code=500,
                 detail="GChat verification audience is not configured",
             )
         auth_header = headers.get("authorization") or headers.get("Authorization")
-        if not verify_gchat_bearer_token(auth_header, http_config):
+        if not verify_gchat_bearer_token(auth_header, self._http_config):
             raise HTTPException(
                 status_code=401,
                 detail="Invalid GChat bearer token",
             )
 
-    def verify_parsed_payload(
-        self,
-        payload: Any,
-        interface: PlatformChatInterface,
-    ) -> None:
+    def verify_parsed_payload(self, payload: Any) -> None:
         return
 
     def should_ignore(self, payload: Any) -> bool:
@@ -296,7 +290,8 @@ class GChatHandler(PlatformHandler):
     def create_ignored_response(self) -> Response:
         return JSONResponse(status_code=200, content={})
 
-    def get_session_id(self, payload: Any) -> str:
+    @classmethod
+    def get_session_id(cls, payload: Any) -> str:
         return get_gchat_session_id(payload)
 
     def create_notification_ack(self) -> Response:

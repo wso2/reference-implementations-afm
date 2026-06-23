@@ -265,9 +265,7 @@ def _json_schema_contains_http_variable(schema: JSONSchema) -> bool:
 def _exposure_contains_http_variable(exposure: Exposure | None) -> bool:
     if exposure is None:
         return False
-    if exposure.http and contains_http_variable(exposure.http.path):
-        return True
-    return False
+    return contains_http_variable(exposure.http.path)
 
 
 def _subscription_contains_http_variable(subscription: Subscription) -> bool:
