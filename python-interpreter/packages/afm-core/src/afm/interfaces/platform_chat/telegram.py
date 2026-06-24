@@ -69,8 +69,7 @@ class TelegramConfig(BaseModel):
         tokens). A blank or whitespace-only value almost certainly means
         an unset env var (``${env:UNSET_VAR}`` → ``""``) or a templating
         mistake. Treat them as missing so the regular ``not config.X``
-        checks in validate_runtime_config / verify_raw_request / poll catch
-        missing credentials in one place.
+        checks catch missing credentials in one place.
         """
         if isinstance(value, str):
             stripped = value.strip()
@@ -133,17 +132,18 @@ class TelegramHandler(PlatformHandler):
     supported_modes: ClassVar[frozenset[PlatformChatMode]] = frozenset(
         {PlatformChatMode.NOTIFICATION, PlatformChatMode.POLLING}
     )
+    config_cls: ClassVar[type[BaseModel]] = TelegramConfig
 
-    def parse_config(self, raw_config: Mapping[str, Any] | None) -> TelegramConfig:
-        return TelegramConfig.model_validate(dict(raw_config or {}))
-
-    def validate_runtime_config(
+    def __init__(
         self,
         interface: PlatformChatInterface,
         *,
-        verify_signatures: bool,
+        verify_signatures: bool = True,
     ) -> None:
-        config = self.parse_config(interface.platform_config)
+        super().__init__(interface, verify_signatures=verify_signatures)
+        config = TelegramConfig.model_validate(dict(interface.platform_config or {}))
+
+        self._http_client: httpx.AsyncClient | None = None
 
         if interface.mode == PlatformChatMode.POLLING:
             if not config.bot_token:
@@ -162,6 +162,11 @@ class TelegramHandler(PlatformHandler):
                     f"{TELEGRAM_GET_UPDATES_MAX_TIMEOUT} seconds; "
                     f"got {polling.timeout}."
                 )
+            self._bot_token = config.bot_token
+            self._secret_token: str | None = None
+            self._long_poll_timeout = (
+                polling.timeout if polling and polling.timeout else 0
+            )
             return
 
         # Notification mode (request mode is rejected at schema validation).
@@ -171,15 +176,16 @@ class TelegramHandler(PlatformHandler):
                 "platform_config.secret_token when signature "
                 "verification is enabled."
             )
+        self._bot_token = None
+        self._secret_token = config.secret_token
+        self._long_poll_timeout = 0
 
     def verify_raw_request(
         self,
         body: bytes,
         headers: Mapping[str, str],
-        interface: PlatformChatInterface,
     ) -> None:
-        config = self.parse_config(interface.platform_config)
-        if not config.secret_token:
+        if self._secret_token is None:
             raise HTTPException(
                 status_code=500,
                 detail="Telegram secret token is not configured",
@@ -188,7 +194,7 @@ class TelegramHandler(PlatformHandler):
         received = headers.get(TELEGRAM_SECRET_TOKEN_HEADER) or headers.get(
             "X-Telegram-Bot-Api-Secret-Token"
         )
-        if not verify_telegram_secret_token(received, config.secret_token):
+        if not verify_telegram_secret_token(received, self._secret_token):
             logger.warning(
                 "Telegram webhook rejected: secret token mismatch (header_present=%s)",
                 received is not None,
@@ -198,11 +204,7 @@ class TelegramHandler(PlatformHandler):
                 detail="Invalid Telegram secret token",
             )
 
-    def verify_parsed_payload(
-        self,
-        payload: Any,
-        interface: PlatformChatInterface,
-    ) -> None:
+    def verify_parsed_payload(self, payload: Any) -> None:
         return
 
     def should_ignore(self, payload: Any) -> bool:
@@ -211,38 +213,37 @@ class TelegramHandler(PlatformHandler):
     def create_ignored_response(self) -> Response:
         return Response(status_code=200)
 
-    def get_session_id(self, payload: Any) -> str:
+    @classmethod
+    def get_session_id(cls, payload: Any) -> str:
         return get_telegram_session_id(payload)
 
     def create_notification_ack(self) -> Response:
         return Response(status_code=200)
 
     async def poll_updates(
-        self,
-        interface: PlatformChatInterface,
-        state: dict[str, Any],
+        self, state: dict[str, Any]
     ) -> tuple[list[Any], dict[str, Any]]:
-        config = self.parse_config(interface.platform_config)
-        if not config.bot_token:
-            # validate_runtime_config should have caught this; defensive.
+        if not self._bot_token:
             raise RuntimeError(
                 "Telegram polling requires a non-empty platform_config.bot_token"
             )
 
-        polling = interface.polling
-        long_poll_timeout = polling.timeout if polling and polling.timeout else 0
+        if self._http_client is None:
+            # Open one AsyncClient over the polling interface's lifetime so
+            # connection pooling and keep-alive actually work. Read timeout
+            # must outlast Telegram's long-poll window or every call would
+            # abort early.
+            read_timeout = self._long_poll_timeout + _GET_UPDATES_HTTP_TIMEOUT_PADDING
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(read_timeout, connect=10.0)
+            )
 
-        params: dict[str, Any] = {"timeout": long_poll_timeout}
+        params: dict[str, Any] = {"timeout": self._long_poll_timeout}
         offset = state.get("offset")
         if offset is not None:
             params["offset"] = offset
 
-        url = f"{TELEGRAM_API_BASE}/bot{config.bot_token}/getUpdates"
-
-        # Read timeout must outlast Telegram's long-poll window or every call
-        # would abort early with a client-side timeout.
-        read_timeout = long_poll_timeout + _GET_UPDATES_HTTP_TIMEOUT_PADDING
-        timeout = httpx.Timeout(read_timeout, connect=10.0)
+        url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/getUpdates"
 
         # Catch httpx errors explicitly: the default exception chain
         # includes the request URL, which contains the bot token. Sanitize
@@ -250,10 +251,9 @@ class TelegramHandler(PlatformHandler):
         # token does not leak through ``logger.exception`` in the polling
         # loop.
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                body = response.json()
+            response = await self._http_client.get(url, params=params)
+            response.raise_for_status()
+            body = response.json()
         except httpx.HTTPStatusError as e:
             raise RuntimeError(
                 f"Telegram getUpdates returned HTTP {e.response.status_code}"
@@ -289,6 +289,11 @@ class TelegramHandler(PlatformHandler):
             next_state["offset"] = max_id + 1
 
         return updates, next_state
+
+    async def aclose(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
 
 def _stringify_id(value: object) -> str | None:

@@ -31,47 +31,41 @@ if TYPE_CHECKING:
 class PlatformHandler(ABC):
     """Per-platform behavior for the platformchat interface.
 
-    Implementations live in sibling modules (slack.py, gchat.py, ...) and
-    are registered in __init__.py's _HANDLERS map keyed by `name`.
+    One handler is constructed per platformchat interface in
+    ``new_platform_handler``; the handler caches per-interface state
+    (signing secrets, bot tokens, HTTP clients) so it does not have to be
+    re-derived on every request or poll iteration.
     """
 
     name: ClassVar[str]
     supported_modes: ClassVar[frozenset[PlatformChatMode]]
+    config_cls: ClassVar[type[BaseModel]]
 
-    @abstractmethod
-    def parse_config(self, raw_config: Mapping[str, Any] | None) -> BaseModel:
-        """Validate and parse platform_config into a typed model.
-
-        Catches typos, wrong types, and unknown fields at AFM-validate time.
-        Returns the typed config (caller may discard it).
-        """
-
-    def validate_runtime_config(
+    def __init__(
         self,
         interface: PlatformChatInterface,
         *,
-        verify_signatures: bool,
+        verify_signatures: bool = True,
     ) -> None:
-        """Optional runtime-only checks (e.g. signature secret required when verifying).
+        self._interface = interface
+        self._verify_signatures = verify_signatures
 
-        Default: no-op. Override per platform if needed.
-        """
+    @classmethod
+    def validate_config_schema(cls, raw_config: Mapping[str, Any] | None) -> BaseModel:
+        """Schema-only validation of ``platform_config`` without instantiating
+        the handler. Safe to call at AFM-validate time."""
+        return cls.config_cls.model_validate(dict(raw_config or {}))
 
     @abstractmethod
     def verify_raw_request(
         self,
         body: bytes,
         headers: Mapping[str, str],
-        interface: PlatformChatInterface,
     ) -> None:
         """Raise HTTPException on failure. Called before JSON parsing."""
 
     @abstractmethod
-    def verify_parsed_payload(
-        self,
-        payload: Any,
-        interface: PlatformChatInterface,
-    ) -> None:
+    def verify_parsed_payload(self, payload: Any) -> None:
         """Raise HTTPException on failure. Called after JSON parsing."""
 
     def handle_pre_dispatch(self, payload: Any) -> Response | None:
@@ -89,8 +83,9 @@ class PlatformHandler(ABC):
     def create_ignored_response(self) -> Response:
         """Response body to send when an event is ignored."""
 
+    @classmethod
     @abstractmethod
-    def get_session_id(self, payload: Any) -> str:
+    def get_session_id(cls, payload: Any) -> str:
         """Derive a per-conversation session identifier from the payload."""
 
     def create_notification_ack(self) -> Response:
@@ -98,9 +93,7 @@ class PlatformHandler(ABC):
 
         Default raises: only platforms that include
         ``PlatformChatMode.NOTIFICATION`` in ``supported_modes`` need to
-        override this. The framework guards against unsupported modes at
-        schema validation time, so this should be unreachable for platforms
-        that do not support notification mode.
+        override this.
         """
         raise NotImplementedError(
             f"Platform {self.name!r} does not support notification mode"
@@ -110,18 +103,14 @@ class PlatformHandler(ABC):
         """Response body wrapping the agent's output in request mode.
 
         Default raises: only platforms that include ``PlatformChatMode.REQUEST``
-        in ``supported_modes`` need to override this. The framework guards
-        against unsupported modes at schema validation time, so this should
-        be unreachable for platforms that do not support request mode.
+        in ``supported_modes`` need to override this.
         """
         raise NotImplementedError(
             f"Platform {self.name!r} does not support request mode"
         )
 
     async def poll_updates(
-        self,
-        interface: PlatformChatInterface,
-        state: dict[str, Any],
+        self, state: dict[str, Any]
     ) -> tuple[list[Any], dict[str, Any]]:
         """Fetch one batch of updates from the platform.
 
@@ -137,3 +126,6 @@ class PlatformHandler(ABC):
         raise NotImplementedError(
             f"Platform {self.name!r} does not support polling mode"
         )
+
+    async def aclose(self) -> None:
+        """Release per-interface resources (HTTP clients, etc.). Default no-op."""

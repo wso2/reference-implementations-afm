@@ -171,34 +171,30 @@ class SlackHandler(PlatformHandler):
     supported_modes: ClassVar[frozenset[PlatformChatMode]] = frozenset(
         {PlatformChatMode.NOTIFICATION}
     )
+    config_cls: ClassVar[type[BaseModel]] = SlackConfig
 
-    def parse_config(self, raw_config: Mapping[str, Any] | None) -> SlackConfig:
-        return SlackConfig.model_validate(dict(raw_config or {}))
-
-    def validate_runtime_config(
+    def __init__(
         self,
         interface: PlatformChatInterface,
         *,
-        verify_signatures: bool,
+        verify_signatures: bool = True,
     ) -> None:
-        if not verify_signatures:
-            return
-        config = self.parse_config(interface.platform_config)
-        if config.signing_secret is None:
+        super().__init__(interface, verify_signatures=verify_signatures)
+        config = SlackConfig.model_validate(dict(interface.platform_config or {}))
+        if verify_signatures and config.signing_secret is None:
             raise ValueError(
                 "Slack platform chat requires "
                 "platform_config.signing_secret when signature "
                 "verification is enabled."
             )
+        self._signing_secret = config.signing_secret
 
     def verify_raw_request(
         self,
         body: bytes,
         headers: Mapping[str, str],
-        interface: PlatformChatInterface,
     ) -> None:
-        config = self.parse_config(interface.platform_config)
-        if config.signing_secret is None:
+        if self._signing_secret is None:
             raise HTTPException(
                 status_code=500,
                 detail="Slack signing secret is not configured",
@@ -210,18 +206,14 @@ class SlackHandler(PlatformHandler):
             or headers.get("X-Slack-Request-Timestamp"),
             signature_header=headers.get("x-slack-signature")
             or headers.get("X-Slack-Signature"),
-            signing_secret=config.signing_secret,
+            signing_secret=self._signing_secret,
         ):
             raise HTTPException(
                 status_code=401,
                 detail="Invalid Slack signature",
             )
 
-    def verify_parsed_payload(
-        self,
-        payload: Any,
-        interface: PlatformChatInterface,
-    ) -> None:
+    def verify_parsed_payload(self, payload: Any) -> None:
         # Slack signature is verified pre-parse; nothing extra needed here.
         return
 
@@ -242,7 +234,8 @@ class SlackHandler(PlatformHandler):
     def create_ignored_response(self) -> Response:
         return Response(status_code=200)
 
-    def get_session_id(self, payload: Any) -> str:
+    @classmethod
+    def get_session_id(cls, payload: Any) -> str:
         return get_slack_session_id(payload)
 
     def create_notification_ack(self) -> Response:

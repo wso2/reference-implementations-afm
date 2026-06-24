@@ -55,21 +55,43 @@ MAX_DISPATCH_ATTEMPTS = 3
 DISPATCH_BACKOFF_SECONDS = 1.0
 
 
-_HANDLERS: dict[str, PlatformHandler] = {
-    SlackHandler.name: SlackHandler(),
-    GChatHandler.name: GChatHandler(),
-    TelegramHandler.name: TelegramHandler(),
+_HANDLER_CLASSES: dict[str, type[PlatformHandler]] = {
+    SlackHandler.name: SlackHandler,
+    GChatHandler.name: GChatHandler,
+    TelegramHandler.name: TelegramHandler,
 }
 
 
-def get_platform_handler(platform: str) -> PlatformHandler:
-    handler = _HANDLERS.get(platform)
-    if handler is None:
+def get_platform_handler_class(platform: str) -> type[PlatformHandler]:
+    cls = _HANDLER_CLASSES.get(platform)
+    if cls is None:
         raise ValueError(
             f"Platform {platform!r} is not supported. "
-            f"Supported platforms: {', '.join(sorted(_HANDLERS))}"
+            f"Supported platforms: {', '.join(sorted(_HANDLER_CLASSES))}"
         )
-    return handler
+    return cls
+
+
+def new_platform_handler(
+    interface: PlatformChatInterface,
+    *,
+    verify_signatures: bool = True,
+) -> PlatformHandler:
+    """Construct a handler bound to ``interface``.
+
+    Enforces platform/mode pairing and runs the handler's per-interface
+    init, which validates platform_config and caches credentials. Any
+    long-lived resources (e.g. Telegram's polling HTTP client) are
+    opened lazily on first use and released via ``PlatformHandler.aclose``.
+    """
+    cls = get_platform_handler_class(interface.platform)
+    if interface.mode not in cls.supported_modes:
+        supported = ", ".join(sorted(m.value for m in cls.supported_modes))
+        raise ValueError(
+            f"Platform {interface.platform!r} does not support mode "
+            f"{interface.mode.value!r}. Supported modes: {supported}"
+        )
+    return cls(interface, verify_signatures=verify_signatures)
 
 
 class ErrorResponse(BaseModel):
@@ -81,10 +103,10 @@ class HealthResponse(BaseModel):
 
 
 def get_platform_session_id(platform: str, payload: object) -> str:
-    handler = _HANDLERS.get(platform)
-    if handler is None:
+    cls = _HANDLER_CLASSES.get(platform)
+    if cls is None:
         return "default"
-    return handler.get_session_id(payload)
+    return cls.get_session_id(payload)
 
 
 def validate_platform_chat_interface_schema(
@@ -95,14 +117,14 @@ def validate_platform_chat_interface_schema(
     Safe to call at AFM-validate time (does not require env vars to resolve).
     Raises ValueError or pydantic ValidationError on bad config.
     """
-    handler = get_platform_handler(interface.platform)
-    if interface.mode not in handler.supported_modes:
-        supported = ", ".join(sorted(m.value for m in handler.supported_modes))
+    cls = get_platform_handler_class(interface.platform)
+    if interface.mode not in cls.supported_modes:
+        supported = ", ".join(sorted(m.value for m in cls.supported_modes))
         raise ValueError(
             f"Platform {interface.platform!r} does not support mode "
             f"{interface.mode.value!r}. Supported modes: {supported}"
         )
-    handler.parse_config(interface.platform_config)
+    cls.validate_config_schema(interface.platform_config)
 
 
 def validate_platform_chat_interface(
@@ -112,11 +134,12 @@ def validate_platform_chat_interface(
 ) -> None:
     """Full validation: schema + runtime requirements (e.g. signing secret).
 
-    Called at app-creation time.
+    Called at app-creation time. Instantiating the handler runs both checks
+    in one pass; we discard the instance because the caller doesn't need it
+    and the handler holds no resources until its first poll/request.
     """
     validate_platform_chat_interface_schema(interface)
-    handler = get_platform_handler(interface.platform)
-    handler.validate_runtime_config(interface, verify_signatures=verify_signatures)
+    new_platform_handler(interface, verify_signatures=verify_signatures)
 
 
 async def run_polling_loop(
@@ -148,75 +171,71 @@ async def run_polling_loop(
     cursor from the platform's default position. For Telegram this means
     Telegram-side retained updates (~24h) are re-delivered on restart.
     """
-    handler = get_platform_handler(interface.platform)
-
     if interface.mode != PlatformChatMode.POLLING:
         raise ValueError(
             "run_polling_loop called with interface.mode = "
             f"{interface.mode.value!r}; expected 'polling'"
         )
 
-    if PlatformChatMode.POLLING not in handler.supported_modes:
-        raise ValueError(
-            f"Platform {interface.platform!r} does not support polling mode"
+    handler = new_platform_handler(interface, verify_signatures=False)
+
+    try:
+        compiled_prompt: CompiledTemplate | None = None
+        if interface.prompt:
+            compiled_prompt = compile_template(interface.prompt)
+
+        interval = (
+            interface.polling.interval
+            if interface.polling
+            else DEFAULT_POLLING_INTERVAL_SECONDS
         )
 
-    handler.validate_runtime_config(interface, verify_signatures=False)
+        state: dict[str, Any] = {}
+        stop = stop_event or asyncio.Event()
 
-    compiled_prompt: CompiledTemplate | None = None
-    if interface.prompt:
-        compiled_prompt = compile_template(interface.prompt)
+        logger.info(
+            "Starting polling loop for platform %r (interval=%ss)",
+            interface.platform,
+            interval,
+        )
 
-    interval = (
-        interface.polling.interval
-        if interface.polling
-        else DEFAULT_POLLING_INTERVAL_SECONDS
-    )
-
-    state: dict[str, Any] = {}
-    stop = stop_event or asyncio.Event()
-
-    logger.info(
-        "Starting polling loop for platform %r (interval=%ss)",
-        interface.platform,
-        interval,
-    )
-
-    while not stop.is_set():
-        try:
-            updates, next_state = await handler.poll_updates(interface, state)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Polling iteration failed; sleeping before retry")
-            await _sleep_or_stop(interval, stop)
-            continue
-
-        completed_batch = True
-        for update in updates:
-            if handler.should_ignore(update):
+        while not stop.is_set():
+            try:
+                updates, next_state = await handler.poll_updates(state)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Polling iteration failed; sleeping before retry")
+                await _sleep_or_stop(interval, stop)
                 continue
-            await _dispatch_with_retry(
-                handler=handler,
-                agent=agent,
-                payload=update,
-                compiled_prompt=compiled_prompt,
-                stop=stop,
-            )
-            if stop.is_set():
-                completed_batch = False
-                break
 
-        # Advance the cursor only after the dispatch loop has had its
-        # chance at every update in the batch. The next poll_updates call
-        # is what actually ack's the batch with the platform; deferring
-        # the local assignment until here keeps that ordering explicit.
-        if completed_batch:
-            state = next_state
+            completed_batch = True
+            for update in updates:
+                if handler.should_ignore(update):
+                    continue
+                await _dispatch_with_retry(
+                    handler=handler,
+                    agent=agent,
+                    payload=update,
+                    compiled_prompt=compiled_prompt,
+                    stop=stop,
+                )
+                if stop.is_set():
+                    completed_batch = False
+                    break
 
-        await _sleep_or_stop(interval, stop)
+            # Advance the cursor only after the dispatch loop has had its
+            # chance at every update in the batch. The next poll_updates call
+            # is what actually ack's the batch with the platform; deferring
+            # the local assignment until here keeps that ordering explicit.
+            if completed_batch:
+                state = next_state
 
-    logger.info("Polling loop for platform %r stopped", interface.platform)
+            await _sleep_or_stop(interval, stop)
+
+        logger.info("Polling loop for platform %r stopped", interface.platform)
+    finally:
+        await handler.aclose()
 
 
 async def _dispatch_with_retry(
@@ -346,7 +365,7 @@ def create_platform_chat_router(
     verify_signatures: bool = True,
 ) -> APIRouter:
     router = APIRouter()
-    handler = get_platform_handler(interface.platform)
+    handler = new_platform_handler(interface, verify_signatures=verify_signatures)
 
     compiled_prompt: CompiledTemplate | None = None
     if interface.prompt:
@@ -380,7 +399,7 @@ def create_platform_chat_router(
         headers = dict(request.headers)
 
         if verify_signatures:
-            handler.verify_raw_request(body, headers, interface)
+            handler.verify_raw_request(body, headers)
 
         try:
             payload = json.loads(body)
@@ -391,7 +410,7 @@ def create_platform_chat_router(
             ) from e
 
         if verify_signatures:
-            handler.verify_parsed_payload(payload, interface)
+            handler.verify_parsed_payload(payload)
 
         early = handler.handle_pre_dispatch(payload)
         if early is not None:
