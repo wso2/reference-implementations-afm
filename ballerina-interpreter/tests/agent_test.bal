@@ -309,6 +309,83 @@ function testGetTokenNull() returns error? {
 }
 
 @test:Config
+function testValidateJwtAlgorithmNoneRejected() returns error? {
+    ClientAuthentication auth = {'type: "jwt", "issuer": "i", "signing_key": "s", "algorithm": "none"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("'none' is not allowed"));
+}
+
+@test:Config
+function testValidateJwtAlgorithmUnsupportedRejected() returns error? {
+    ClientAuthentication auth = {'type: "jwt", "issuer": "i", "signing_key": "s", "algorithm": "ES256"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("'ES256' is not supported"));
+}
+
+@test:Config
+function testValidateJwtAlgorithmValid() returns error? {
+    ClientAuthentication auth = {'type: "jwt", "issuer": "i", "signing_key": "s", "algorithm": "HS256"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateJwtWithoutAudienceValid() returns error? {
+    ClientAuthentication auth = {'type: "jwt", "issuer": "i", "signing_key": "s"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateExtensionTypePassesThrough() returns error? {
+    ClientAuthentication auth = {'type: "x-aws-sigv4", "region": "us-east-1", "service": "bedrock"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateOAuth2RefreshTokenUsesTokenUrl() returns error? {
+    ClientAuthentication auth = {'type: "oauth2", "grant_type": "refresh_token", "token_url": "u", "refresh_token": "rt", "client_id": "id", "client_secret": "secret"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is ());
+}
+
+@test:Config
+function testValidateOAuth2RefreshTokenRejectsRefreshUrl() returns error? {
+    ClientAuthentication auth = {'type: "oauth2", "grant_type": "refresh_token", "token_url": "u", "refresh_url": "u", "refresh_token": "rt", "client_id": "id", "client_secret": "secret"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("does not support 'refresh_url'"));
+}
+
+@test:Config
+function testValidateOAuth2CredentialBearerInvalidRejected() returns error? {
+    ClientAuthentication auth = {'type: "oauth2", "grant_type": "client_credentials", "token_url": "u", "client_id": "id", "client_secret": "secret", "credential_bearer": "body"};
+    error? result = validateAuthentication(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("'credential_bearer' 'body' is not supported"));
+}
+
+@test:Config
+function testMapExtensionTypeNotSupported() returns error? {
+    ClientAuthentication auth = {'type: "x-aws-sigv4", "region": "us-east-1"};
+    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("extension authentication type"));
+}
+
+@test:Config
+function testBuildOAuth2CredentialBearerPostBody() returns error? {
+    OAuth2Config cfg = {grant_type: "client_credentials", token_url: "u", client_id: "id", client_secret: "secret", credential_bearer: "post_body"};
+    http:OAuth2GrantConfig grantConfig = check buildOAuth2GrantConfig(cfg);
+    test:assertTrue(grantConfig is http:OAuth2ClientCredentialsGrantConfig);
+    http:OAuth2ClientCredentialsGrantConfig ccConfig = <http:OAuth2ClientCredentialsGrantConfig>grantConfig;
+    test:assertEquals(ccConfig.credentialBearer, "POST_BODY_BEARER");
+}
+
+@test:Config
 function testGetModelNoProviderSpecified() returns error? {
     Model model = {
         name: "gpt-4"

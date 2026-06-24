@@ -348,6 +348,9 @@ function validateAuthentication(ClientAuthentication? auth) returns error? {
     }
 
     string authType = auth.'type.toLowerAscii();
+    if authType.startsWith("x-") {
+        return;
+    }
     if RECOGNIZED_AUTH_TYPES.indexOf(authType) is () {
         return error(string `unknown authentication type '${auth.'type}'. Supported types: bearer, basic, api-key, jwt, oauth2`);
     }
@@ -373,6 +376,28 @@ function validateAuthentication(ClientAuthentication? auth) returns error? {
         if allowed.indexOf(fieldName) is () {
             return error(string `type '${authType}' does not support '${fieldName}' field`);
         }
+    }
+
+    if authType == "jwt" {
+        return validateJwtAlgorithm(auth);
+    }
+}
+
+final readonly & string[] JWT_ALGORITHMS = ["RS256", "RS384", "RS512", "HS256", "HS384", "HS512"];
+
+function validateJwtAlgorithm(ClientAuthentication auth) returns error? {
+    anydata alg = auth["algorithm"];
+    if alg is () {
+        return;
+    }
+    if alg !is string {
+        return error("jwt 'algorithm' must be a string");
+    }
+    if alg.toLowerAscii() == "none" {
+        return error("jwt 'algorithm' 'none' is not allowed; it produces an unsigned token");
+    }
+    if JWT_ALGORITHMS.indexOf(alg) is () {
+        return error("jwt 'algorithm' '" + alg + "' is not supported. Supported algorithms: RS256, RS384, RS512, HS256, HS384, HS512");
     }
 }
 
@@ -439,21 +464,26 @@ function validateOAuth2(ClientAuthentication auth) returns error? {
             return error("oauth2 grant_type '" + grant + "' does not support '" + fieldName + "' field");
         }
     }
+
+    anydata credentialBearer = auth["credential_bearer"];
+    if credentialBearer is string && credentialBearer != "auth_header" && credentialBearer != "post_body" {
+        return error("oauth2 'credential_bearer' '" + credentialBearer + "' is not supported. Supported values: auth_header, post_body");
+    }
 }
 
 function oauth2GrantFields(string grant) returns [string[], string[]]? {
     match grant {
         "client_credentials" => {
-            return [["token_url", "client_id", "client_secret"], ["scopes"]];
+            return [["token_url", "client_id", "client_secret"], ["scopes", "credential_bearer"]];
         }
         "password" => {
-            return [["token_url", "username", "password", "client_id", "client_secret"], ["scopes"]];
+            return [["token_url", "username", "password", "client_id", "client_secret"], ["scopes", "credential_bearer"]];
         }
         "refresh_token" => {
-            return [["refresh_url", "refresh_token", "client_id", "client_secret"], ["scopes"]];
+            return [["token_url", "refresh_token", "client_id", "client_secret"], ["scopes", "credential_bearer"]];
         }
         "jwt_bearer" => {
-            return [["token_url", "assertion"], ["client_id", "client_secret", "scopes"]];
+            return [["token_url", "assertion"], ["client_id", "client_secret", "scopes", "credential_bearer"]];
         }
     }
     return ();

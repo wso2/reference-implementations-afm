@@ -24,7 +24,7 @@ import pytest
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.sessions import StdioConnection
 
-from afm.exceptions import MCPConnectionError
+from afm.exceptions import MCPAuthenticationError, MCPConnectionError
 from afm.models import (
     AFMRecord,
     AgentMetadata,
@@ -247,6 +247,29 @@ class TestBuildHttpxAuth:
         )
         assert decoded["iss"] == "afm-agent"
 
+    def test_jwt_signing_key_file_read_once_and_cached(self, tmp_path):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        key_file = tmp_path / "jwt_key.pem"
+        key_file.write_bytes(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+        auth = ClientAuthentication(
+            type="jwt", issuer="i", signing_key=str(key_file), algorithm="RS256"
+        )
+        jwt_auth = build_httpx_auth(auth)
+        assert isinstance(jwt_auth, JwtAuth)
+        jwt_auth.sign()
+        # Key is cached after first sign; removing the file must not break a second sign.
+        key_file.unlink()
+        jwt_auth.sign()
+
     def test_oauth2_returns_oauth2_auth_instance(self):
         auth = ClientAuthentication(
             type="oauth2",
@@ -278,12 +301,12 @@ class TestBuildHttpxAuth:
         assert data["scope"] == "read write"
         assert basic == ("id", "secret")
 
-    def test_oauth2_refresh_token_uses_refresh_url(self):
+    def test_oauth2_refresh_token_uses_token_url(self):
         result = build_httpx_auth(
             ClientAuthentication(
                 type="oauth2",
                 grant_type="refresh_token",
-                refresh_url="https://auth.example.com/refresh",
+                token_url="https://auth.example.com/token",
                 refresh_token="rt",
                 client_id="id",
                 client_secret="secret",
@@ -291,7 +314,7 @@ class TestBuildHttpxAuth:
         )
         assert isinstance(result, OAuth2Auth)
         url, data, _basic = result._token_request()
-        assert url == "https://auth.example.com/refresh"
+        assert url == "https://auth.example.com/token"
         assert data["grant_type"] == "refresh_token"
         assert data["refresh_token"] == "rt"
 
@@ -327,6 +350,61 @@ class TestBuildHttpxAuth:
         flow = result.sync_auth_flow(request)
         next(flow)
         assert request.headers["Authorization"] == "Bearer cached-token"
+
+    def test_oauth2_credential_bearer_post_body(self):
+        result = build_httpx_auth(
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="client_credentials",
+                token_url="https://auth.example.com/token",
+                client_id="id",
+                client_secret="secret",
+                credential_bearer="post_body",
+            )
+        )
+        assert isinstance(result, OAuth2Auth)
+        _url, data, basic = result._token_request()
+        assert basic is None
+        assert data["client_id"] == "id"
+        assert data["client_secret"] == "secret"
+
+    def test_oauth2_credential_bearer_defaults_to_auth_header(self):
+        result = build_httpx_auth(
+            ClientAuthentication(
+                type="oauth2",
+                grant_type="client_credentials",
+                token_url="https://auth.example.com/token",
+                client_id="id",
+                client_secret="secret",
+            )
+        )
+        assert isinstance(result, OAuth2Auth)
+        _url, data, basic = result._token_request()
+        assert basic == ("id", "secret")
+        assert "client_secret" not in data
+
+    def test_jwt_without_audience_omits_aud_claim(self):
+        auth = ClientAuthentication(
+            type="jwt",
+            issuer="afm-agent",
+            signing_key="topsecret-key-that-is-32-bytes-or-more",
+            algorithm="HS256",
+        )
+        jwt_auth = build_httpx_auth(auth)
+        assert isinstance(jwt_auth, JwtAuth)
+        token = jwt_auth.sign()
+        decoded = jwt.decode(
+            token,
+            "topsecret-key-that-is-32-bytes-or-more",
+            algorithms=["HS256"],
+        )
+        assert decoded["iss"] == "afm-agent"
+        assert "aud" not in decoded
+
+    def test_extension_type_not_supported_by_runtime(self):
+        auth = ClientAuthentication(type="x-aws-sigv4", region="us-east-1")
+        with pytest.raises(MCPAuthenticationError, match="extension authentication type"):
+            build_httpx_auth(auth)
 
 
 class TestFilterTools:

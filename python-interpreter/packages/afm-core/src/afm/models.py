@@ -43,11 +43,14 @@ _JWT_ALLOWED_FIELDS = {
     "custom_claims",
     "expiry_seconds",
 }
+_JWT_ALGORITHMS = {"RS256", "RS384", "RS512", "HS256", "HS384", "HS512"}
+_OAUTH2_CREDENTIAL_BEARERS = {"auth_header", "post_body"}
+
 _AUTH_REQUIRED_FIELDS: dict[str, set[str]] = {
     "bearer": {"token"},
     "basic": {"username", "password"},
     "api-key": {"api_key"},
-    "jwt": {"issuer", "audience", "signing_key"},
+    "jwt": {"issuer", "signing_key"},
 }
 _AUTH_ALLOWED_FIELDS: dict[str, set[str]] = {
     "bearer": {"token"},
@@ -59,19 +62,19 @@ _AUTH_ALLOWED_FIELDS: dict[str, set[str]] = {
 _OAUTH2_GRANTS: dict[str, dict[str, set[str]]] = {
     "client_credentials": {
         "required": {"token_url", "client_id", "client_secret"},
-        "optional": {"scopes"},
+        "optional": {"scopes", "credential_bearer"},
     },
     "password": {
         "required": {"token_url", "username", "password", "client_id", "client_secret"},
-        "optional": {"scopes"},
+        "optional": {"scopes", "credential_bearer"},
     },
     "refresh_token": {
-        "required": {"refresh_url", "refresh_token", "client_id", "client_secret"},
-        "optional": {"scopes"},
+        "required": {"token_url", "refresh_token", "client_id", "client_secret"},
+        "optional": {"scopes", "credential_bearer"},
     },
     "jwt_bearer": {
         "required": {"token_url", "assertion"},
-        "optional": {"client_id", "client_secret", "scopes"},
+        "optional": {"client_id", "client_secret", "scopes", "credential_bearer"},
     },
 }
 _AUTH_CREDENTIAL_FIELDS = (
@@ -90,12 +93,12 @@ _AUTH_CREDENTIAL_FIELDS = (
     "expiry_seconds",
     "grant_type",
     "token_url",
-    "refresh_url",
     "client_id",
     "client_secret",
     "refresh_token",
     "assertion",
     "scopes",
+    "credential_bearer",
 )
 
 
@@ -118,16 +121,19 @@ class ClientAuthentication(BaseModel):
     expiry_seconds: int | None = None
     grant_type: str | None = None
     token_url: str | None = None
-    refresh_url: str | None = None
     client_id: str | None = None
     client_secret: str | None = None
     refresh_token: str | None = None
     assertion: str | None = None
     scopes: list[str] | None = None
+    credential_bearer: str | None = None
 
     @model_validator(mode="after")
     def validate_type_fields(self) -> Self:
         auth_type = self.type.lower()
+
+        if auth_type.startswith("x-"):
+            return self
 
         if auth_type not in RECOGNIZED_AUTH_TYPES:
             supported = ", ".join(RECOGNIZED_AUTH_TYPES)
@@ -157,7 +163,24 @@ class ClientAuthentication(BaseModel):
             suffix = "field" if len(unknown) == 1 else "fields"
             raise ValueError(f"type '{auth_type}' does not support {fields} {suffix}")
 
+        if auth_type == "jwt":
+            self._validate_jwt_algorithm()
+
         return self
+
+    def _validate_jwt_algorithm(self) -> None:
+        if self.algorithm is None:
+            return
+        if self.algorithm.lower() == "none":
+            raise ValueError(
+                "jwt 'algorithm' 'none' is not allowed; it produces an unsigned token"
+            )
+        if self.algorithm not in _JWT_ALGORITHMS:
+            supported = ", ".join(sorted(_JWT_ALGORITHMS))
+            raise ValueError(
+                f"jwt 'algorithm' '{self.algorithm}' is not supported. "
+                f"Supported algorithms: {supported}"
+            )
 
     def _validate_oauth2_fields(self, provided: set[str]) -> None:
         if self.grant_type is None:
@@ -185,6 +208,16 @@ class ClientAuthentication(BaseModel):
             suffix = "field" if len(unknown) == 1 else "fields"
             raise ValueError(
                 f"oauth2 grant_type '{grant}' does not support {fields} {suffix}"
+            )
+
+        if (
+            self.credential_bearer is not None
+            and self.credential_bearer not in _OAUTH2_CREDENTIAL_BEARERS
+        ):
+            supported = ", ".join(sorted(_OAUTH2_CREDENTIAL_BEARERS))
+            raise ValueError(
+                f"oauth2 'credential_bearer' '{self.credential_bearer}' is not "
+                f"supported. Supported values: {supported}"
             )
 
 

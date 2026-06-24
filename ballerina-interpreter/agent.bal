@@ -368,6 +368,9 @@ function mapToHttpClientAuth(ClientAuthentication? auth) returns http:ClientAuth
             return buildJwtIssuerConfig(jwtConfig);
         }
         _ => {
+            if 'type.startsWith("x-") {
+                return error(string `extension authentication type '${'type}' is not supported by this runtime`);
+            }
             return error(string `Unsupported authentication type: ${'type}`);
         }
     }
@@ -375,7 +378,7 @@ function mapToHttpClientAuth(ClientAuthentication? auth) returns http:ClientAuth
 
 type JwtAuthConfig record {|
     string issuer;
-    string|string[] audience;
+    string|string[] audience?;
     string signing_key;
     string algorithm = "RS256";
     string key_id?;
@@ -391,13 +394,17 @@ function buildJwtIssuerConfig(JwtAuthConfig jwtConfig) returns http:JwtIssuerCon
 
     map<json> issuerConfig = {
         issuer: jwtConfig.issuer,
-        audience: jwtConfig.audience,
         expTime: jwtConfig.expiry_seconds,
         signatureConfig: {
             algorithm,
             config: signatureKeyConfig
         }
     };
+
+    string|string[]? audience = jwtConfig?.audience;
+    if audience is string|string[] {
+        issuerConfig["audience"] = audience;
+    }
 
     string? keyId = jwtConfig?.key_id;
     if keyId is string {
@@ -422,7 +429,6 @@ function buildJwtIssuerConfig(JwtAuthConfig jwtConfig) returns http:JwtIssuerCon
 type OAuth2Config record {|
     string grant_type;
     string token_url?;
-    string refresh_url?;
     string client_id?;
     string client_secret?;
     string username?;
@@ -430,30 +436,32 @@ type OAuth2Config record {|
     string refresh_token?;
     string assertion?;
     string[] scopes?;
+    string credential_bearer = "auth_header";
 |};
 
 function buildOAuth2GrantConfig(OAuth2Config cfg) returns http:OAuth2GrantConfig|error {
     string grant = cfg.grant_type.toLowerAscii();
+    string credentialBearer = cfg.credential_bearer == "post_body" ? "POST_BODY_BEARER" : "AUTH_HEADER_BEARER";
     match grant {
         "client_credentials" => {
-            map<json> grantConfig = {tokenUrl: cfg?.token_url, clientId: cfg?.client_id, clientSecret: cfg?.client_secret};
+            map<json> grantConfig = {tokenUrl: cfg?.token_url, clientId: cfg?.client_id, clientSecret: cfg?.client_secret, credentialBearer};
             addScopes(grantConfig, cfg?.scopes);
             return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2ClientCredentialsGrantConfig));
         }
         "password" => {
-            map<json> grantConfig = {tokenUrl: cfg?.token_url, username: cfg?.username, password: cfg?.password};
+            map<json> grantConfig = {tokenUrl: cfg?.token_url, username: cfg?.username, password: cfg?.password, credentialBearer};
             addOptional(grantConfig, "clientId", cfg?.client_id);
             addOptional(grantConfig, "clientSecret", cfg?.client_secret);
             addScopes(grantConfig, cfg?.scopes);
             return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2PasswordGrantConfig));
         }
         "refresh_token" => {
-            map<json> grantConfig = {refreshUrl: cfg?.refresh_url, refreshToken: cfg?.refresh_token, clientId: cfg?.client_id, clientSecret: cfg?.client_secret};
+            map<json> grantConfig = {refreshUrl: cfg?.token_url, refreshToken: cfg?.refresh_token, clientId: cfg?.client_id, clientSecret: cfg?.client_secret, credentialBearer};
             addScopes(grantConfig, cfg?.scopes);
             return wrapOAuth2(grantConfig.cloneWithType(http:OAuth2RefreshTokenGrantConfig));
         }
         "jwt_bearer" => {
-            map<json> grantConfig = {tokenUrl: cfg?.token_url, assertion: cfg?.assertion};
+            map<json> grantConfig = {tokenUrl: cfg?.token_url, assertion: cfg?.assertion, credentialBearer};
             addOptional(grantConfig, "clientId", cfg?.client_id);
             addOptional(grantConfig, "clientSecret", cfg?.client_secret);
             addScopes(grantConfig, cfg?.scopes);
