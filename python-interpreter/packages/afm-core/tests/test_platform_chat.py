@@ -34,7 +34,6 @@ from afm.interfaces.platform_chat import (
     dispatch_update,
     get_platform_handler_class,
     get_platform_session_id,
-    new_platform_handler,
     run_polling_loop,
     validate_platform_chat_interface_schema,
 )
