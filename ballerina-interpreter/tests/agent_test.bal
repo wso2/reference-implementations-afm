@@ -14,9 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/http;
 import ballerina/io;
 import ballerina/lang.runtime;
+import ballerina/os;
 import ballerina/test;
 
 @test:Config
@@ -432,4 +434,50 @@ function testArrayOutputSchemaInvalidResponse() returns error? {
 
     // Should return 500 error due to schema validation failure
     test:assertEquals(response.statusCode, 500, "Should return 500 for schema validation failure");
+}
+
+@test:Config
+function testGetModelGeminiMissingProject() returns error? {
+    Model model = {
+        provider: "gemini",
+        name: "gemini-2.5-flash"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes("'project'"));
+}
+
+@test:Config
+function testGetModelGeminiMissingCredentials() returns error? {
+    check os:unsetEnv(GOOGLE_APP_CREDENTIALS_ENV);
+    Model model = {
+        provider: "gemini",
+        name: "gemini-2.5-flash",
+        project: "test-project",
+        location: "us-central1"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is error);
+    test:assertTrue((<error>result).message().includes(GOOGLE_APP_CREDENTIALS_ENV));
+}
+
+@test:Config
+function testGetModelOllamaLocalLoopback() returns error? {
+    Model model = {
+        provider: "ollama",
+        name: "llama3"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is ai:ModelProvider);
+}
+
+@test:Config
+function testGetModelOllamaCustomEndpoint() returns error? {
+    Model model = {
+        provider: "ollama",
+        name: "mistral",
+        url: "http://192.168.1.15:11434"
+    };
+    var result = getModel(model);
+    test:assertTrue(result is ai:ModelProvider);
 }

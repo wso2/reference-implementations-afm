@@ -57,7 +57,7 @@ class ClientAuthentication(BaseModel):
 
 
 class Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     name: str | None = None
     provider: str | None = None

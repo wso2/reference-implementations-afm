@@ -17,11 +17,14 @@
 import afm_ballerina.everit.validator;
 
 import ballerina/ai;
+import ballerina/io;
 import ballerina/log;
 import ballerina/os;
 import ballerina/http;
 import ballerinax/ai.anthropic;
 import ballerinax/ai.openai;
+import ballerinax/ai.ollama;
+import ballerinax/ai.googleapis.vertex;
 
 function createAgent(AFMRecord afmRecord, string afmFileDir) returns ai:Agent|error {
     AFMRecord {metadata, role, instructions} = afmRecord;
@@ -127,8 +130,74 @@ function getModel(Model? model) returns ai:ModelProvider|error {
                 model.url ?: "https://api.anthropic.com/v1"
             );
         }
+        "ollama" => {
+            string url = model.url ?: "http://localhost:11434";
+            return new ollama:ModelProvider(check name.ensureType(), url);
+        }
+        "gemini" => {
+            return getGeminiModel(model, name);
+        }
     }
     return error(string `Model provider: ${provider} not yet supported`);
+}
+
+// Standard Google environment variable holding the path to a service account JSON key.
+const GOOGLE_APP_CREDENTIALS_ENV = "GOOGLE_APPLICATION_CREDENTIALS";
+const DEFAULT_VERTEX_LOCATION = "us-central1";
+//(e.g. "gemini-2.5-flash" -> "google/gemini-2.5-flash").
+const DEFAULT_MODEL_PUBLISHER = "google";
+
+
+function getGeminiModel(Model model, string name) returns ai:ModelProvider|error {
+    string? project = model.project;
+    if project is () {
+        return error("Vertex AI requires the 'project' field to be set in the model block " +
+            "(AI Studio Gemini is not yet supported by the Ballerina interpreter)");
+    }
+
+    string? credentialsPath = os:getEnv(GOOGLE_APP_CREDENTIALS_ENV);
+    if credentialsPath is () || credentialsPath.trim() == "" {
+        return error(string `Vertex AI authentication requires Google credentials. Set the ` +
+            string `'${GOOGLE_APP_CREDENTIALS_ENV}' environment variable to the path of a service account ` +
+            string `JSON key file or a gcloud Application Default Credentials file.`);
+    }
+
+    vertex:VertexAiAuth auth = check resolveVertexAuth(credentialsPath);
+
+    string location = model.location ?: DEFAULT_VERTEX_LOCATION;
+    string qualifiedModel = name.includes("/") ? name : string `${DEFAULT_MODEL_PUBLISHER}/${name}`;
+
+    vertex:ModelProvider|error vertexModel = new (auth, project, qualifiedModel, location = location);
+    if vertexModel is error {
+        return error(string `Failed to initialize the Vertex AI model provider: ${vertexModel.message()}`, vertexModel);
+    }
+    return vertexModel;
+}
+
+function resolveVertexAuth(string credentialsPath) returns vertex:VertexAiAuth|error {
+    json|error credsJson = io:fileReadJson(credentialsPath);
+    if credsJson is error {
+        return error(string `Unable to read Google credentials file at '${credentialsPath}': ${credsJson.message()}`, credsJson);
+    }
+
+    map<json>|error creds = credsJson.ensureType();
+    if creds is error {
+        return error(string `Google credentials file at '${credentialsPath}' is not a valid JSON object`);
+    }
+
+    if creds["type"] == "authorized_user" {
+        json clientId = creds["client_id"];
+        json clientSecret = creds["client_secret"];
+        json refreshToken = creds["refresh_token"];
+        if clientId !is string || clientSecret !is string || refreshToken !is string {
+            return error("Authorized-user (ADC) credentials must contain string 'client_id', " +
+                "'client_secret', and 'refresh_token' fields");
+        }
+        vertex:OAuth2RefreshConfig oauth2Config = {clientId, clientSecret, refreshToken};
+        return oauth2Config;
+    }
+
+    return credentialsPath;
 }
 
 const DEFAULT_SESSION_ID = "sessionId";
