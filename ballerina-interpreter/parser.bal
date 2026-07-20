@@ -20,9 +20,18 @@ import ballerina/os;
 function parseAfm(string content) returns AFMRecord|error {
     string resolvedContent = check resolveVariables(content);
 
+    string[] resolvedLines = splitLines(resolvedContent);
+    int firstNonBlank = 0;
+    while firstNonBlank < resolvedLines.length() && resolvedLines[firstNonBlank].trim() == "" {
+        firstNonBlank += 1;
+    }
+    if firstNonBlank > 0 {
+        resolvedContent = string:'join("\n", ...resolvedLines.slice(firstNonBlank));
+        resolvedLines = splitLines(resolvedContent);
+    }
+
     AgentMetadata? metadata = ();
     string body;
-    string[] resolvedLines = splitLines(resolvedContent);
     if resolvedLines.length() > 0 && resolvedLines[0].trim() == FRONTMATTER_DELIMITER {
         map<json> frontmatterMap;
         [frontmatterMap, body] = check extractFrontMatter(resolvedContent);

@@ -339,6 +339,29 @@ function testGetModelUnsupportedProvider() returns error? {
     test:assertTrue((<error>result).message().includes("not yet supported"));
 }
 
+@test:Config
+function testParseAfmIgnoresLeadingBlankLines() returns error? {
+    string content = "\n\n---\n" +
+        "model:\n" +
+        "  provider: \"ollama\"\n" +
+        "  name: \"llama3\"\n" +
+        "---\n\n" +
+        "# Role\n" +
+        "You are a helpful assistant.\n\n" +
+        "# Instructions\n" +
+        "Be concise.\n";
+
+    AFMRecord afm = check parseAfm(content);
+
+    AgentMetadata? metadata = afm.metadata;
+    test:assertTrue(metadata is AgentMetadata);
+    Model? model = (<AgentMetadata>metadata).model;
+    test:assertTrue(model is Model);
+    test:assertEquals((<Model>model).provider, "ollama");
+    test:assertEquals((<Model>model).name, "llama3");
+    test:assertEquals(afm.role, "You are a helpful assistant.");
+}
+
 function extractJsonFromCodeBlockDataProvider() returns [string, string, string][] {
     return [
         ["json marker", "Here is the result:\n```json\n{\"name\": \"Alice\"}\n```\nDone.", "{\"name\": \"Alice\"}"],

@@ -36,11 +36,15 @@ def extract_raw_frontmatter(content: str) -> tuple[dict | None, str]:
     """
     lines = content.splitlines()
 
-    if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
+    start = 0
+    while start < len(lines) and not lines[start].strip():
+        start += 1
+
+    if start >= len(lines) or lines[start].strip() != FRONTMATTER_DELIMITER:
         return None, content
 
     end_index = None
-    for i in range(1, len(lines)):
+    for i in range(start + 1, len(lines)):
         if lines[i].strip() == FRONTMATTER_DELIMITER:
             end_index = i
             break
@@ -48,7 +52,7 @@ def extract_raw_frontmatter(content: str) -> tuple[dict | None, str]:
     if end_index is None:
         raise ValueError("Unclosed frontmatter - missing closing '---'")
 
-    yaml_content = "\n".join(lines[1:end_index])
+    yaml_content = "\n".join(lines[start + 1 : end_index])
     body = "\n".join(lines[end_index + 1 :])
 
     if not yaml_content.strip():
