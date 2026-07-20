@@ -17,8 +17,11 @@
 from __future__ import annotations
 
 import logging
+import time
+from pathlib import Path
 
 import httpx
+import jwt
 from afm.exceptions import (
     MCPAuthenticationError,
     MCPConnectionError,
@@ -58,6 +61,207 @@ class ApiKeyAuth(httpx.Auth):
         yield request
 
 
+_HMAC_JWT_ALGORITHMS = {"HS256", "HS384", "HS512"}
+
+
+class JwtAuth(httpx.Auth):
+
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        audience: str | list[str] | None = None,
+        signing_key: str,
+        algorithm: str = "RS256",
+        key_id: str | None = None,
+        subject: str | None = None,
+        custom_claims: dict | None = None,
+        expiry_seconds: int = 300,
+    ) -> None:
+        self.issuer = issuer
+        self.audience = audience
+        self.signing_key = signing_key
+        self.algorithm = algorithm
+        self.key_id = key_id
+        self.subject = subject
+        self.custom_claims = custom_claims or {}
+        self.expiry_seconds = expiry_seconds
+        self._resolved_key: str | None = None
+
+    def _resolve_key(self) -> str:
+        if self._resolved_key is not None:
+            return self._resolved_key
+        if self.algorithm.upper() in _HMAC_JWT_ALGORITHMS:
+            self._resolved_key = self.signing_key
+            return self._resolved_key
+        try:
+            self._resolved_key = Path(self.signing_key).read_text()
+        except OSError as e:
+            raise MCPAuthenticationError(
+                f"Could not read JWT signing key file '{self.signing_key}': {e}"
+            ) from e
+        return self._resolved_key
+
+    def sign(self) -> str:
+        now = int(time.time())
+        claims: dict = {
+            "iss": self.issuer,
+            "iat": now,
+            "nbf": now,
+            "exp": now + self.expiry_seconds,
+        }
+        if self.audience is not None:
+            claims["aud"] = self.audience
+        if self.subject is not None:
+            claims["sub"] = self.subject
+        claims.update(self.custom_claims)
+        headers = {"kid": self.key_id} if self.key_id else None
+        try:
+            return jwt.encode(
+                claims, self._resolve_key(), algorithm=self.algorithm, headers=headers
+            )
+        except MCPAuthenticationError:
+            raise
+        except Exception as e:
+            raise MCPAuthenticationError(f"Failed to sign JWT: {e}") from e
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self.sign()}"
+        yield request
+
+
+_JWT_BEARER_GRANT_URN = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+
+class OAuth2Auth(httpx.Auth):
+
+    def __init__(
+        self,
+        *,
+        grant_type: str,
+        token_url: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        refresh_token: str | None = None,
+        assertion: str | None = None,
+        scopes: list[str] | None = None,
+        credential_bearer: str = "auth_header",
+    ) -> None:
+        self.grant_type = grant_type.lower()
+        self.token_url = token_url
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.username = username
+        self.password = password
+        self.refresh_token = refresh_token
+        self.assertion = assertion
+        self.scopes = scopes
+        self.credential_bearer = credential_bearer
+        self._token: str | None = None
+        self._expires_at: float = 0.0
+
+    def _token_request(self) -> tuple[str, dict[str, str], tuple[str, str] | None]:
+        data: dict[str, str]
+        if self.grant_type == "client_credentials":
+            data = {"grant_type": "client_credentials"}
+        elif self.grant_type == "password":
+            data = {
+                "grant_type": "password",
+                "username": self.username or "",
+                "password": self.password or "",
+            }
+        elif self.grant_type == "refresh_token":
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token or "",
+            }
+        elif self.grant_type == "jwt_bearer":
+            data = {
+                "grant_type": _JWT_BEARER_GRANT_URN,
+                "assertion": self.assertion or "",
+            }
+        else:
+            raise MCPAuthenticationError(
+                f"Unsupported oauth2 grant_type: {self.grant_type}"
+            )
+
+        if self.token_url is None:
+            raise MCPAuthenticationError(
+                f"oauth2 grant_type '{self.grant_type}' is missing its token URL"
+            )
+        if self.scopes:
+            data["scope"] = " ".join(self.scopes)
+
+        basic: tuple[str, str] | None = None
+        if self.client_id is not None and self.client_secret is not None:
+            if self.credential_bearer == "post_body":
+                data["client_id"] = self.client_id
+                data["client_secret"] = self.client_secret
+            else:
+                basic = (self.client_id, self.client_secret)
+        return self.token_url, data, basic
+
+    def _store_token(self, payload: dict) -> str:
+        token = payload.get("access_token")
+        if not token:
+            raise MCPAuthenticationError(
+                "OAuth2 token response did not contain 'access_token'"
+            )
+        expires_in = float(payload.get("expires_in", 3600))
+        self._expires_at = time.time() + expires_in - 30
+        self._token = token
+        return token
+
+    def _cached_token(self) -> str | None:
+        if self._token is not None and time.time() < self._expires_at:
+            return self._token
+        return None
+
+    def _fetch_token_sync(self) -> str:
+        url, data, basic = self._token_request()
+        try:
+            resp = httpx.post(
+                url,
+                data=data,
+                auth=basic,
+                headers={"Accept": "application/json"},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as e:
+            raise MCPAuthenticationError(f"OAuth2 token request failed: {e}") from e
+        return self._store_token(payload)
+
+    async def _fetch_token_async(self) -> str:
+        url, data, basic = self._token_request()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    url,
+                    data=data,
+                    auth=basic,
+                    headers={"Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as e:
+            raise MCPAuthenticationError(f"OAuth2 token request failed: {e}") from e
+        return self._store_token(payload)
+
+    def sync_auth_flow(self, request: httpx.Request):
+        token = self._cached_token() or self._fetch_token_sync()
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+    async def async_auth_flow(self, request: httpx.Request):
+        token = self._cached_token() or await self._fetch_token_async()
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
+
+
 def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
     if auth is None:
         return None
@@ -79,11 +283,46 @@ def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
     elif auth_type == "api-key":
         if auth.api_key is None:
             raise MCPAuthenticationError("API key auth requires 'api_key' field")
-        return ApiKeyAuth(auth.api_key)
+        return ApiKeyAuth(auth.api_key, header_name=auth.header_name or "Authorization")
 
-    elif auth_type in ("oauth2", "jwt"):
+    elif auth_type == "jwt":
+        if auth.issuer is None or auth.signing_key is None:
+            raise MCPAuthenticationError(
+                "JWT auth requires 'issuer' and 'signing_key' fields"
+            )
+        return JwtAuth(
+            issuer=auth.issuer,
+            audience=auth.audience,
+            signing_key=auth.signing_key,
+            algorithm=auth.algorithm or "RS256",
+            key_id=auth.key_id,
+            subject=auth.subject,
+            custom_claims=auth.custom_claims,
+            expiry_seconds=(
+                auth.expiry_seconds if auth.expiry_seconds is not None else 300
+            ),
+        )
+
+    elif auth_type == "oauth2":
+        if auth.grant_type is None:
+            raise MCPAuthenticationError("OAuth2 auth requires 'grant_type' field")
+        return OAuth2Auth(
+            grant_type=auth.grant_type,
+            token_url=auth.token_url,
+            client_id=auth.client_id,
+            client_secret=auth.client_secret,
+            username=auth.username,
+            password=auth.password,
+            refresh_token=auth.refresh_token,
+            assertion=auth.assertion,
+            scopes=auth.scopes,
+            credential_bearer=auth.credential_bearer or "auth_header",
+        )
+
+    elif auth_type.startswith("x-"):
         raise MCPAuthenticationError(
-            f"Authentication type '{auth_type}' not yet supported"
+            f"extension authentication type '{auth.type}' is not supported "
+            f"by this runtime"
         )
 
     else:
