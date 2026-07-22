@@ -40,6 +40,21 @@ def sample_webhook_path(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
+def sample_slack_platform_chat_path(fixtures_dir: Path) -> Path:
+    return fixtures_dir / "sample_slack_platform_chat_agent.afm.md"
+
+
+@pytest.fixture
+def sample_gchat_platform_chat_path(fixtures_dir: Path) -> Path:
+    return fixtures_dir / "sample_gchat_platform_chat_agent.afm.md"
+
+
+@pytest.fixture
+def sample_gchat_platform_chat_sync_path(fixtures_dir: Path) -> Path:
+    return fixtures_dir / "sample_gchat_platform_chat_sync_agent.afm.md"
+
+
+@pytest.fixture
 def sample_minimal_path(fixtures_dir: Path) -> Path:
     return fixtures_dir / "sample_minimal.afm.md"
 

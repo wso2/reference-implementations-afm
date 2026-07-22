@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, AsyncGenerator
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from ..constants import DEFAULT_HTTP_PORT
@@ -42,8 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorResponse(BaseModel):
-    error: str = Field(..., description="Error message")
-    detail: str | None = Field(None, description="Detailed error information")
+    detail: str = Field(..., description="Error message")
 
 
 class HealthResponse(BaseModel):
@@ -207,16 +206,21 @@ def create_webhook_router(
     *,
     verify_signatures: bool = True,
 ) -> APIRouter:
+    subscription = interface.subscription
+    secret = subscription.secret
+
+    if verify_signatures and not secret:
+        logger.warning(
+            "Webhook 'subscription.secret' is not set; incoming requests "
+            "will not be signature-verified."
+        )
+
     router = APIRouter()
 
     # Compile the prompt template if provided
     compiled_prompt: CompiledTemplate | None = None
     if interface.prompt:
         compiled_prompt = compile_template(interface.prompt)
-
-    # Get subscription configuration
-    subscription = interface.subscription
-    secret = subscription.secret
 
     # WebSub verification endpoint
     @router.get(path)
@@ -252,12 +256,26 @@ def create_webhook_router(
             return PlainTextResponse(content=hub_challenge)
         raise HTTPException(status_code=404, detail="Invalid mode")
 
-    async def _run_agent_in_background(user_prompt: str) -> None:
+    async def _run_agent_in_background(user_prompt: str, session_id: str) -> None:
         try:
-            response = await agent.arun(user_prompt)
+            response = await agent.arun(user_prompt, session_id=session_id)
             logger.debug(f"Agent response: {response}")
         except Exception:
             logger.exception("Agent execution error")
+
+    def _build_user_prompt(payload: object, headers: dict[str, str]) -> str:
+        if compiled_prompt:
+            try:
+                return evaluate_template(compiled_prompt, payload, headers)
+            except TemplateEvaluationError as e:
+                logger.warning(f"Template evaluation error: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to evaluate prompt template",
+                ) from e
+
+        # Default: stringify the payload
+        return json.dumps(payload, indent=2)
 
     # Webhook receiver endpoint
     @router.post(
@@ -268,11 +286,9 @@ def create_webhook_router(
             401: {"model": ErrorResponse},
         },
     )
-    async def receive_webhook(request: Request) -> JSONResponse:
-        # Get raw body for signature verification
+    async def receive_webhook(request: Request) -> Response:
         body = await request.body()
 
-        # Verify signature if configured
         if verify_signatures and secret:
             signature_header = request.headers.get(
                 "X-Hub-Signature-256"
@@ -285,7 +301,6 @@ def create_webhook_router(
                 )
 
         try:
-            # Parse payload
             payload = json.loads(body)
         except json.JSONDecodeError as e:
             raise HTTPException(
@@ -294,21 +309,10 @@ def create_webhook_router(
             ) from e
 
         headers = dict(request.headers)
-        # Construct user prompt
-        if compiled_prompt:
-            try:
-                user_prompt = evaluate_template(compiled_prompt, payload, headers)
-            except TemplateEvaluationError as e:
-                logger.warning(f"Template evaluation error: {e}")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to evaluate prompt template",
-                ) from e
-        else:
-            # Default: stringify the payload
-            user_prompt = json.dumps(payload, indent=2)
+        user_prompt = _build_user_prompt(payload, headers)
+        session_id = "default"
 
-        task = asyncio.create_task(_run_agent_in_background(user_prompt))
+        task = asyncio.create_task(_run_agent_in_background(user_prompt, session_id))
         task.add_done_callback(log_task_exception)
 
         return JSONResponse(status_code=202, content={"status": "accepted"})

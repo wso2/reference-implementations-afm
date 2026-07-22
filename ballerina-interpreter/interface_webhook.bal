@@ -83,7 +83,7 @@ isolated function runAgentOnWebSubEventNotification(readonly & CompiledTemplate?
     log:printDebug("Webhook event handled successfully");
 }
 
-function compileTemplate(string template) returns CompiledTemplate|error {
+isolated function compileTemplate(string template) returns CompiledTemplate|error {
     TemplateSegment[] segments = [];
     int startPos = 0;
 

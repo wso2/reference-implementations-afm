@@ -24,6 +24,7 @@ type Model record {|
     string provider?;
     string url?;
     ClientAuthentication authentication?;
+    json...;
 |};
 
 enum TransportType {
@@ -116,15 +117,37 @@ type HTTPExposure record {|
 // |};
 
 type Exposure record {|
-    HTTPExposure http?;
+    HTTPExposure http;
     // A2AExposure a2a?;
 |};
 
 enum InterfaceType {
     CONSOLE_CHAT = "consolechat",
     WEB_CHAT = "webchat",
+    PLATFORM_CHAT = "platformchat",
     WEBHOOK = "webhook"
 }
+
+enum PlatformChatMode {
+    NOTIFICATION = "notification",
+    REQUEST = "request",
+    POLLING = "polling"
+}
+
+const PLATFORM_SLACK = "slack";
+const PLATFORM_GCHAT = "gchat";
+const PLATFORM_TELEGRAM = "telegram";
+
+const DEFAULT_SLACK_PATH = "/slack";
+const DEFAULT_GCHAT_PATH = "/";
+const DEFAULT_TELEGRAM_PATH = "/telegram";
+
+const DEFAULT_POLLING_INTERVAL_SECONDS = 30;
+
+type Polling record {|
+    int interval = DEFAULT_POLLING_INTERVAL_SECONDS;
+    int timeout?;
+|};
 
 type Subscription record {|
     string protocol;
@@ -135,10 +158,13 @@ type Subscription record {|
     ClientAuthentication authentication?;
 |};
 
+const DEFAULT_WEBCHAT_PATH = "/chat";
+const DEFAULT_WEBHOOK_PATH = "/webhook";
+
 type WebChatInterface record {|
     WEB_CHAT 'type = WEB_CHAT;
     Signature signature = {};
-    Exposure exposure = {http: {path: "/chat"}};
+    Exposure exposure = {http: {path: DEFAULT_WEBCHAT_PATH}};
 |};
 
 type ConsoleChatInterface record {|
@@ -150,11 +176,29 @@ type WebhookInterface record {|
     WEBHOOK 'type = WEBHOOK;
     string prompt?;
     Signature signature = {};
-    Exposure exposure = {http: {path: "/webhook"}};
+    Exposure exposure = {http: {path: DEFAULT_WEBHOOK_PATH}};
     Subscription subscription;
 |};
 
-type Interface WebChatInterface|ConsoleChatInterface|WebhookInterface;
+type BasePlatformChatInterface record {|
+    PLATFORM_CHAT 'type = PLATFORM_CHAT;
+    string prompt?;
+|};
+
+type NonPollingPlatformChatInterfaceBase record {|
+    *BasePlatformChatInterface;
+    NOTIFICATION|REQUEST mode;
+    Signature signature = {};
+|};
+
+type NonPollingPlatformChatInterface
+    SlackPlatformChatInterface|GChatPlatformChatInterface|TelegramHttpPlatformChatInterface;
+
+type PollingPlatformChatInterface TelegramPollingPlatformChatInterface;
+
+type PlatformChatInterface NonPollingPlatformChatInterface|PollingPlatformChatInterface;
+
+type Interface WebChatInterface|ConsoleChatInterface|WebhookInterface|PlatformChatInterface;
 
 type AgentMetadata record {|
     string spec_version?;
@@ -171,6 +215,7 @@ type AgentMetadata record {|
     Tools tools?;
     SkillSource[] skills?;
     int max_iterations?;
+    json...;
 |};
 
 type AFMRecord record {|

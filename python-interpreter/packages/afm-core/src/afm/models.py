@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -138,13 +138,13 @@ class HTTPExposure(BaseModel):
 class Exposure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    http: HTTPExposure | None = None
+    http: HTTPExposure
 
 
 class Subscription(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    protocol: str
+    protocol: Literal["websub"]
     hub: str | None = None
     topic: str | None = None
     callback: str | None = None
@@ -155,7 +155,30 @@ class Subscription(BaseModel):
 class InterfaceType(str, Enum):
     CONSOLE_CHAT = "consolechat"
     WEB_CHAT = "webchat"
+    PLATFORM_CHAT = "platformchat"
     WEBHOOK = "webhook"
+
+
+class PlatformChatMode(str, Enum):
+    NOTIFICATION = "notification"
+    REQUEST = "request"
+    POLLING = "polling"
+
+
+DEFAULT_POLLING_INTERVAL_SECONDS = 30
+
+DEFAULT_WEBCHAT_PATH = "/chat"
+DEFAULT_WEBHOOK_PATH = "/webhook"
+
+
+class Polling(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Seconds to wait between polling cycles. 0 means "no sleep" (typical
+    # when ``timeout`` is set and the platform long-polls). Negative values
+    # would busy-spin the loop, so they are rejected at parse time.
+    interval: int = Field(default=DEFAULT_POLLING_INTERVAL_SECONDS, ge=0)
+    timeout: int | None = Field(default=None, ge=0)
 
 
 class ConsoleChatInterface(BaseModel):
@@ -171,7 +194,7 @@ class WebChatInterface(BaseModel):
     type: Literal["webchat"] = "webchat"
     signature: Signature = Field(default_factory=Signature)
     exposure: Exposure = Field(
-        default_factory=lambda: Exposure(http=HTTPExposure(path="/chat"))
+        default_factory=lambda: Exposure(http=HTTPExposure(path=DEFAULT_WEBCHAT_PATH))
     )
 
 
@@ -182,14 +205,69 @@ class WebhookInterface(BaseModel):
     prompt: str | None = None
     signature: Signature = Field(default_factory=Signature)
     exposure: Exposure = Field(
-        default_factory=lambda: Exposure(http=HTTPExposure(path="/webhook"))
+        default_factory=lambda: Exposure(http=HTTPExposure(path=DEFAULT_WEBHOOK_PATH))
     )
     subscription: Subscription
 
 
+class PlatformChatInterface(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["platformchat"] = "platformchat"
+    platform: str
+    mode: PlatformChatMode
+    platform_config: dict[str, Any] | None = None
+    prompt: str | None = None
+    signature: Signature = Field(default_factory=Signature)
+    exposure: Exposure | None = None
+    polling: Polling | None = None
+    authentication: ClientAuthentication | None = None
+    has_explicit_output_schema: bool = Field(default=False, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def annotate_explicit_output_schema(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        if "has_explicit_output_schema" not in data:
+            signature = data.get("signature")
+            data["has_explicit_output_schema"] = (
+                isinstance(signature, dict) and "output" in signature
+            )
+        return data
+
+    @model_validator(mode="after")
+    def validate_mode_fields(self) -> Self:
+        if self.mode != PlatformChatMode.REQUEST and self.has_explicit_output_schema:
+            raise ValueError(
+                f"mode '{self.mode.value}' does not support synchronous "
+                "responses; 'signature.output' must not be specified"
+            )
+
+        if self.mode == PlatformChatMode.POLLING:
+            if self.exposure is not None:
+                raise ValueError(
+                    "mode 'polling' has no inbound HTTP endpoint; "
+                    "'exposure' must not be set"
+                )
+        else:
+            if self.polling is not None:
+                raise ValueError(
+                    f"mode '{self.mode.value}' does not support 'polling'; "
+                    "this field applies only to mode 'polling'"
+                )
+            if self.authentication is not None:
+                raise ValueError(
+                    f"mode '{self.mode.value}' does not support "
+                    "'authentication'; this field applies only to mode 'polling'"
+                )
+        return self
+
+
 # Type alias for any interface type
 Interface = Annotated[
-    ConsoleChatInterface | WebChatInterface | WebhookInterface,
+    ConsoleChatInterface | WebChatInterface | PlatformChatInterface | WebhookInterface,
     Field(discriminator="type"),
 ]
 

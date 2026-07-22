@@ -14,17 +14,35 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import logging
 from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
 
 from .exceptions import AFMParseError, AFMValidationError
-from .models import AFMRecord, AgentMetadata
+from .models import AFMRecord, AgentMetadata, PlatformChatInterface
 from .variables import resolve_variables, validate_http_variables
+
+logger = logging.getLogger(__name__)
 
 # Delimiter for YAML frontmatter
 FRONTMATTER_DELIMITER = "---"
+
+# AFM spec versions this implementation knows how to parse.
+# Bump by adding the new version; keep older entries while changes remain
+# backwards-compatible.
+SUPPORTED_SPEC_VERSIONS: frozenset[str] = frozenset({"0.3.0", "0.4.0"})
+
+# Minimum spec version that introduced the platformchat interface.
+PLATFORMCHAT_MIN_VERSION: tuple[int, ...] = (0, 4, 0)
+
+
+def _parse_version(version: str) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return None
 
 
 def extract_raw_frontmatter(content: str) -> tuple[dict | None, str]:
@@ -83,8 +101,45 @@ def parse_afm(content: str, *, resolve_env: bool = True) -> AFMRecord:
         role=role,
         instructions=instructions,
     )
+    _warn_on_spec_version(metadata.spec_version)
+    _check_feature_version_requirements(metadata)
     validate_http_variables(afm_record)
     return afm_record
+
+
+def _check_feature_version_requirements(metadata: AgentMetadata) -> None:
+    if metadata.spec_version is None:
+        return
+    declared = _parse_version(metadata.spec_version)
+    if declared is None:
+        return
+
+    if declared < PLATFORMCHAT_MIN_VERSION and metadata.interfaces:
+        for interface in metadata.interfaces:
+            if isinstance(interface, PlatformChatInterface):
+                raise AFMValidationError(
+                    f"'platformchat' interface requires spec_version "
+                    f"{'.'.join(str(p) for p in PLATFORMCHAT_MIN_VERSION)} or "
+                    f"later (found {metadata.spec_version!r}).",
+                    field="metadata.spec_version",
+                )
+
+
+def _warn_on_spec_version(spec_version: str | None) -> None:
+    supported = ", ".join(sorted(SUPPORTED_SPEC_VERSIONS))
+    if spec_version is None:
+        logger.warning(
+            "AFM file has no 'spec_version'; expected one of: %s. Proceeding anyway.",
+            supported,
+        )
+        return
+    if spec_version not in SUPPORTED_SPEC_VERSIONS:
+        logger.warning(
+            "AFM file 'spec_version' %r is not in the supported set (%s). "
+            "Proceeding anyway; some fields may not be recognized.",
+            spec_version,
+            supported,
+        )
 
 
 def parse_afm_file(file_path: str | Path, *, resolve_env: bool = True) -> AFMRecord:

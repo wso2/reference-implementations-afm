@@ -14,7 +14,7 @@ A Ballerina-based interpreter for [Agent-Flavored Markdown (AFM)](https://github
 
 ## Prerequisites
 
-- [Ballerina](https://ballerina.io/) 2201.12.10 or later. Alternatively, use the Docker image.
+- [Ballerina](https://ballerina.io/) 2201.13.3 or later. Alternatively, use the Docker image.
 
 ## Quick Start
 

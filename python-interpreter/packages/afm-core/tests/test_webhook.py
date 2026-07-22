@@ -49,7 +49,6 @@ def mock_webhook_agent() -> MagicMock:
     agent.afm.metadata = MagicMock()
     agent.afm.metadata.version = "1.0.0"
 
-    # Configure webhook interface
     interface = WebhookInterface(
         type="webhook",
         prompt="Received event: ${http:payload.event} from ${http:header.User-Agent}",
@@ -67,7 +66,6 @@ def mock_webhook_agent() -> MagicMock:
     )
     agent.afm.metadata.interfaces = [interface]
 
-    # Mock async run
     async def mock_arun(input_data: str, session_id: str = "default") -> str:
         return f"Processed: {input_data[:50]}..."
 
@@ -84,7 +82,6 @@ def mock_webhook_agent_no_template() -> MagicMock:
     agent.afm.metadata = MagicMock()
     agent.afm.metadata.version = "1.0.0"
 
-    # Configure webhook interface without prompt
     interface = WebhookInterface(
         type="webhook",
         prompt=None,
@@ -204,6 +201,23 @@ class TestVerifyWebhookSignature:
 
 
 class TestCreateWebhookApp:
+    def test_no_secret_skips_verification(
+        self, mock_webhook_agent_no_secret: MagicMock
+    ) -> None:
+        app = create_webhook_app(
+            mock_webhook_agent_no_secret,
+            auto_subscribe=False,
+            verify_signatures=True,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/webhook",
+            json={"type": "notification"},
+        )
+
+        assert response.status_code == 202
+
     def test_creates_fastapi_app(self, mock_webhook_agent: MagicMock) -> None:
         app = create_webhook_app(mock_webhook_agent, auto_subscribe=False)
 
