@@ -1,0 +1,25 @@
+overrides:
+  '@afm/adapter-model>@afm/engine@workspace:*': '-'
+  '@afm/adapter-secret>@afm/engine@workspace:*': '-'
+  '@afm/adapter-tool>@afm/engine@workspace:*': '-'
+  '@afm/adapter-tool>@afm/adapter-auth@workspace:*': '-'
+  '@afm/adapter-auth>@afm/engine@workspace:*': '-'
+packageExtensions:
+  '@afm/adapter-auth@0.0.0':
+    peerDependencies:
+      '@afm/engine': '0.0.0'
+  '@afm/adapter-model@0.0.0':
+    peerDependencies:
+      '@afm/engine': '0.0.0'
+  '@afm/adapter-secret@0.0.0':
+    peerDependencies:
+      '@afm/engine': '0.0.0'
+  '@afm/adapter-tool@0.0.0':
+    peerDependencies:
+      '@afm/engine': '0.0.0'
+      '@afm/adapter-auth': '0.0.0'
+blockExoticSubdeps: true
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
