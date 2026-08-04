@@ -13,3 +13,5 @@ pnpm dev        # http://localhost:5173
 pnpm check      # typecheck and tests
 pnpm build      # production files in dist/
 ```
+
+HTTP MCP servers cannot be reached directly from a page, so the app refuses to connect one without a proxy. Copy `.env.example` to `.env.local` and set `VITE_MCP_PROXY_URL` to a running MCP proxy (a separate service).

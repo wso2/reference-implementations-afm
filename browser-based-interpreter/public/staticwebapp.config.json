@@ -1,0 +1,13 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/assets/*", "/*.{js,mjs,css,json,ico,png,svg,wasm,woff,woff2,map,txt}"]
+  },
+  "globalHeaders": {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.openai.com https://api.anthropic.com; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
+  }
+}
