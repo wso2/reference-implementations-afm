@@ -15,7 +15,7 @@
 // under the License.
 
 import { join, resolve } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { defineConfig, loadEnv } from "vite";
 import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
@@ -50,6 +50,19 @@ export function withConnectSource(csp: string, origin: string | null): string {
     .join("; ");
 }
 
+export function clientMetadata(clientIdUrl: string) {
+  const address = new URL("../", clientIdUrl).href;
+  return {
+    client_id: clientIdUrl,
+    client_name: "AFM",
+    client_uri: address,
+    redirect_uris: [address],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  };
+}
+
 function productionCsp(proxyOrigin: string | null): Plugin {
   return {
     name: "afm-production-csp",
@@ -67,7 +80,7 @@ function productionCsp(proxyOrigin: string | null): Plugin {
   };
 }
 
-function deploymentFiles(proxyOrigin: string | null): Plugin {
+function deploymentFiles(clientIdUrl: string | undefined, proxyOrigin: string | null): Plugin {
   let outDir = "";
   return {
     name: "afm-deployment-files",
@@ -76,6 +89,14 @@ function deploymentFiles(proxyOrigin: string | null): Plugin {
       outDir = resolve(config.root, config.build.outDir);
     },
     closeBundle() {
+      if (clientIdUrl !== undefined && clientIdUrl !== "") {
+        if (originOf(clientIdUrl) === null) throw new Error("VITE_OAUTH_CLIENT_ID_URL is not a URL");
+        mkdirSync(join(outDir, "oauth"), { recursive: true });
+        writeFileSync(
+          join(outDir, "oauth/client-metadata.json"),
+          `${JSON.stringify(clientMetadata(clientIdUrl), null, 2)}\n`,
+        );
+      }
       if (proxyOrigin !== null) {
         const file = join(outDir, "staticwebapp.config.json");
         const config = JSON.parse(readFileSync(file, "utf8"));
@@ -93,6 +114,6 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, "VITE_");
   const proxyOrigin = originOf(env.VITE_MCP_PROXY_URL);
   return {
-    plugins: [react(), productionCsp(proxyOrigin), deploymentFiles(proxyOrigin)],
+    plugins: [react(), productionCsp(proxyOrigin), deploymentFiles(env.VITE_OAUTH_CLIENT_ID_URL, proxyOrigin)],
   };
 });

@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+  clientMetadata,
   cspForMetaTag,
   originOf,
   withConnectSource,
@@ -146,4 +147,25 @@ describe("values that belong to one deployment", () => {
     });
   });
 
+  describe("clientMetadata", () => {
+    it("points the redirect at the folder the site is served from when it is not the root", () => {
+      const metadata = clientMetadata(
+        "https://wso2.github.io/reference-implementations-afm/oauth/client-metadata.json",
+      );
+      expect(metadata.redirect_uris).toEqual(["https://wso2.github.io/reference-implementations-afm/"]);
+      expect(metadata.client_uri).toBe("https://wso2.github.io/reference-implementations-afm/");
+    });
+
+    it("describes AFM at the origin its own document is served from", () => {
+      expect(clientMetadata("https://afm.example.com/oauth/client-metadata.json")).toEqual({
+        client_id: "https://afm.example.com/oauth/client-metadata.json",
+        client_name: "AFM",
+        client_uri: "https://afm.example.com/",
+        redirect_uris: ["https://afm.example.com/"],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      });
+    });
+  });
 });
