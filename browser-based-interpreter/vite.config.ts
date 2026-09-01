@@ -50,6 +50,28 @@ export function withConnectSource(csp: string, origin: string | null): string {
     .join("; ");
 }
 
+const BASE_URI_EXPRESSION = "new URL(self.location.origin + self.location.pathname + location.search)";
+
+export const BLOB_SAFE_BASE_URI =
+  'new URL(self.location.protocol === "blob:" ? self.location.origin + "/" : self.location.origin + self.location.pathname + location.search)';
+
+export function blobSafeBaseUri(code: string): string | null {
+  return code.includes(BASE_URI_EXPRESSION) ? code.replace(BASE_URI_EXPRESSION, BLOB_SAFE_BASE_URI) : null;
+}
+
+function schemaValidatorInBlobWorker(): Plugin {
+  return {
+    name: "afm-schema-validator-in-blob-worker",
+    transform(code, id) {
+      if (!/@cfworker[\\/]json-schema[\\/]dist[\\/]esm[\\/]dereference\.js$/.test(id.split("?")[0] ?? "")) return null;
+      const fixed = blobSafeBaseUri(code);
+      if (fixed === null)
+        this.error("The MCP schema validator no longer needs this fix: remove schemaValidatorInBlobWorker.");
+      return fixed;
+    },
+  };
+}
+
 export function clientMetadata(clientIdUrl: string) {
   const address = new URL("../", clientIdUrl).href;
   return {
@@ -115,5 +137,6 @@ export default defineConfig(({ mode }) => {
   const proxyOrigin = originOf(env.VITE_MCP_PROXY_URL);
   return {
     plugins: [react(), productionCsp(proxyOrigin), deploymentFiles(env.VITE_OAUTH_CLIENT_ID_URL, proxyOrigin)],
+    worker: { format: "es" as const, plugins: () => [schemaValidatorInBlobWorker()] },
   };
 });

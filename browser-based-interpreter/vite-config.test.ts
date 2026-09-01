@@ -16,8 +16,12 @@
 
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  BLOB_SAFE_BASE_URI,
+  blobSafeBaseUri,
   clientMetadata,
   cspForMetaTag,
   originOf,
@@ -167,5 +171,34 @@ describe("values that belong to one deployment", () => {
         token_endpoint_auth_method: "none",
       });
     });
+  });
+});
+
+describe("the fix that lets the MCP schema validator start inside a blob worker", () => {
+  const location = (origin: string, protocol: string, pathname: string) => ({ origin, protocol, pathname, search: "" });
+  const baseUri = (where: ReturnType<typeof location>) =>
+    (new Function("self", "location", `return ${BLOB_SAFE_BASE_URI}`)({ location: where }, where) as URL).href;
+
+  it("applies to the validator that is installed", () => {
+    const toolRequire = createRequire(createRequire(import.meta.url).resolve("@afm/adapter-tool/package.json"));
+    const source = join(dirname(toolRequire.resolve("@cfworker/json-schema")), "../esm/dereference.js");
+    expect(blobSafeBaseUri(readFileSync(source, "utf8"))).not.toBeNull();
+  });
+
+  it("gives a usable base address in a blob worker, with or without a port in the origin", () => {
+    expect(baseUri(location("https://afm.example", "blob:", "https://afm.example/id"))).toBe("https://afm.example/");
+    expect(baseUri(location("http://localhost:4173", "blob:", "http://localhost:4173/id"))).toBe(
+      "http://localhost:4173/",
+    );
+  });
+
+  it("leaves the validator's own base address alone everywhere else", () => {
+    expect(baseUri(location("https://afm.example", "https:", "/assets/worker.js"))).toBe(
+      "https://afm.example/assets/worker.js",
+    );
+  });
+
+  it("leaves code without that line to the caller", () => {
+    expect(blobSafeBaseUri("export const x = 1;")).toBeNull();
   });
 });
