@@ -21,6 +21,7 @@
     "@afm/adapter-secret": "file:../typescript-interpreter/packages/adapters/secret",
     "@afm/adapter-tool": "file:../typescript-interpreter/packages/adapters/tool",
     "@afm/engine": "file:../typescript-interpreter/packages/engine",
+    "pdfjs-dist": "6.3.289",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
