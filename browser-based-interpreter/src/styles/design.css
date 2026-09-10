@@ -1,0 +1,35 @@
+svg {
+  display: block;
+}
+code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: max(0.86em, 11.5px);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.u-mk {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+.u-mk-img {
+  display: block;
+  object-fit: cover;
+  background: var(--ground);
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

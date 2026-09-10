@@ -1,0 +1,72 @@
+.syn-delimiter {
+  color: var(--faint);
+}
+.syn-root-key {
+  color: #7a50c8;
+  font-weight: 600;
+}
+.syn-key {
+  color: #7a50c8;
+}
+.syn-url,
+.syn-link {
+  color: var(--accent);
+}
+.syn-italic {
+  color: var(--ink2);
+  font-style: italic;
+}
+.syn-punct {
+  color: var(--faint);
+}
+.syn-string {
+  color: var(--ok);
+}
+.syn-number {
+  color: var(--ink2);
+}
+.syn-literal {
+  color: #7a50c8;
+}
+.syn-comment {
+  color: var(--faint);
+  font-style: italic;
+}
+.syn-variable {
+  color: var(--bad);
+  font-weight: 600;
+}
+.syn-heading {
+  color: var(--accent);
+  font-weight: 600;
+}
+.syn-emphasis {
+  color: var(--ink);
+  font-weight: 700;
+}
+.syn-code {
+  color: var(--ink2);
+}
+.syn-marker {
+  color: var(--accent);
+}
+[data-theme="dark"] .syn-root-key,
+[data-theme="dark"] .syn-key,
+[data-theme="dark"] .syn-literal {
+  color: #b79bf0;
+}
+[data-theme="dark"] .syn-string {
+  color: #6fc49b;
+}
+.u-mk.lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  font-size: 20px;
+}
+.has-img img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
