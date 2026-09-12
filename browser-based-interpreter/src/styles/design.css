@@ -27,6 +27,17 @@ code {
   outline: 1px solid var(--line);
   outline-offset: -1px;
 }
+.u-raw {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.8;
+  padding: 10px 0;
+}
 .u-issues {
   border: 1px solid var(--line);
   border-radius: 11px;

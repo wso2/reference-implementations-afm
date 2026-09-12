@@ -1,3 +1,63 @@
+.code-editor-face {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 10px 16px 10px 60px;
+  border: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.8;
+  letter-spacing: normal;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.code-editor-view {
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--ink2);
+  user-select: none;
+  counter-reset: code-line;
+}
+.code-editor-line {
+  position: relative;
+  display: block;
+  counter-increment: code-line;
+  min-height: 1.8em;
+  margin: 0 -16px 0 0;
+  padding: 0 16px 0 0;
+}
+.code-editor-line.is-error-line {
+  background: var(--bad-soft);
+}
+.code-editor-line::before {
+  content: counter(code-line);
+  position: absolute;
+  top: 0;
+  right: 100%;
+  margin-right: 14px;
+  color: var(--faint);
+}
+.code-editor-input {
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.code-editor-input::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.code-editor-input::selection {
+  background: rgba(122, 80, 200, 0.22);
+}
+[data-theme="dark"] .code-editor-input::selection {
+  background: rgba(183, 155, 240, 0.32);
+}
 .syn-delimiter {
   color: var(--faint);
 }
