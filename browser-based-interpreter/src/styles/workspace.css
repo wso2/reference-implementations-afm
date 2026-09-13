@@ -130,3 +130,184 @@
   height: 100%;
   object-fit: cover;
 }
+@keyframes need-pop {
+  from {
+    opacity: 0;
+    scale: 0.55;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@keyframes need-open {
+  from {
+    grid-template-columns: 0fr;
+  }
+  to {
+    grid-template-columns: 1fr;
+  }
+}
+@keyframes need-close {
+  from {
+    grid-template-columns: 1fr;
+  }
+  to {
+    grid-template-columns: 0fr;
+  }
+}
+@keyframes need-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes need-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes need-vanish {
+  to {
+    opacity: 0;
+    scale: 0.55;
+  }
+}
+.u-pill-wrap {
+  position: relative;
+  max-width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.u-pill {
+  --need-ease: cubic-bezier(0.22, 1.18, 0.36, 1);
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--ink2);
+  white-space: nowrap;
+  animation: need-pop 0.32s var(--need-ease) both;
+}
+.u-pill-dot {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--bad);
+}
+.u-pill-dot svg {
+  width: 20px;
+  height: 20px;
+}
+.u-pill-track {
+  stroke: currentColor;
+  opacity: 0.2;
+}
+.u-pill-arc {
+  stroke: currentColor;
+}
+.u-pill-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-width: 0;
+  overflow: hidden;
+  animation: need-open 0.5s 0.1s var(--need-ease) both;
+}
+.u-pill-in {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 8px 0 2px;
+  animation: need-fade-in 0.22s 0.3s ease both;
+}
+.u-pill-lead {
+  flex: none;
+  font-weight: 650;
+  color: var(--ink);
+}
+.u-pill-line {
+  flex: none;
+  font-weight: 650;
+  color: var(--bad);
+}
+.u-pill-msg {
+  min-width: 0;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.u-pill-msg:hover {
+  color: var(--ink);
+}
+.u-pill-msg code {
+  font-size: 0.9em;
+}
+.u-pill-more {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--sunk);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.u-pill-more:hover {
+  border-color: var(--line-hover);
+}
+.u-pill.is-warn .u-pill-dot,
+.u-pill.is-warn .u-pill-line {
+  color: var(--warn);
+}
+.u-pill.is-leaving {
+  animation: need-vanish 0.16s 0.4s ease-in both;
+}
+.u-pill.is-leaving .u-pill-in {
+  animation: need-fade-out 0.14s ease both;
+}
+.u-pill.is-leaving .u-pill-body {
+  animation: need-close 0.34s 0.1s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.u-pill-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  translate: -50% 0;
+  z-index: 6;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(14, 18, 40, 0.18);
+  animation: need-fade-in 0.18s ease both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .u-pill,
+  .u-pill-body,
+  .u-pill-in,
+  .u-pill.is-leaving .u-pill-body,
+  .u-pill.is-leaving .u-pill-in,
+  .u-pill-pop {
+    animation: none;
+  }
+  .u-pill.is-leaving {
+    animation: need-fade-out 0.2s both;
+  }
+}
