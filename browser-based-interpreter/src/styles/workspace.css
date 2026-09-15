@@ -130,6 +130,12 @@
   height: 100%;
   object-fit: cover;
 }
+.rich-text {
+  outline: none;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
 @keyframes need-pop {
   from {
     opacity: 0;
@@ -171,6 +177,124 @@
     opacity: 0;
     scale: 0.55;
   }
+}
+.rich-text[hidden] {
+  display: none !important;
+}
+.rich-text.ProseMirror {
+  min-width: 0;
+}
+.rich-text ul,
+.rich-text ol {
+  padding-left: 1.5em;
+  margin: 0.65em 0;
+}
+.rich-text ul {
+  list-style-type: disc;
+}
+.rich-text ul ul {
+  list-style-type: circle;
+}
+.rich-text ul ul ul {
+  list-style-type: square;
+}
+.rich-text ol {
+  list-style-type: decimal;
+}
+.rich-text li {
+  margin: 0.25em 0;
+}
+.rich-text li > p {
+  margin: 0;
+}
+.rich-text li > ul,
+.rich-text li > ol {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+.rich-text p {
+  margin: 0.65em 0;
+}
+.rich-text h1,
+.rich-text h2,
+.rich-text h3,
+.rich-text h4,
+.rich-text h5,
+.rich-text h6 {
+  color: var(--ink);
+  line-height: 1.35;
+  margin: 1em 0 0.5em;
+}
+.rich-text h1 {
+  font-size: 1.5em;
+}
+.rich-text h2 {
+  font-size: 1.3em;
+}
+.rich-text h3 {
+  font-size: 1.15em;
+}
+.rich-text h4,
+.rich-text h5,
+.rich-text h6 {
+  font-size: 1em;
+}
+.rich-text blockquote {
+  margin: 0.75em 0;
+  padding-left: 1em;
+  border-left: 3px solid var(--line);
+}
+.rich-text pre {
+  padding: 0.75em 1em;
+  background: var(--sunk);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.rich-text code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.88em;
+}
+.rich-text a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rich-text > :first-child {
+  margin-top: 0;
+}
+.rich-text hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.2em 0;
+}
+.rich-text table {
+  width: 100%;
+  margin: 0.8em 0;
+  border-collapse: collapse;
+  overflow-wrap: anywhere;
+}
+.rich-text th,
+.rich-text td {
+  position: relative;
+  min-width: 3em;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+.rich-text th {
+  background: var(--sunk);
+  font-weight: 600;
+}
+.rich-text .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+.rich-text .ProseMirror-gapcursor::after {
+  border-top-color: var(--ink);
 }
 .u-pill-wrap {
   position: relative;
