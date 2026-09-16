@@ -9,6 +9,35 @@ code {
   border-radius: 5px;
   padding: 1px 5px;
 }
+.u-seg {
+  display: inline-flex;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.u-seg button {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 0;
+  background: none;
+  padding: 5px 15px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.u-seg button.on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(20, 24, 50, 0.1);
+}
+[data-theme="dark"] .u-seg button.on {
+  box-shadow: none;
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
 .u-mk {
   width: 28px;
   height: 28px;
