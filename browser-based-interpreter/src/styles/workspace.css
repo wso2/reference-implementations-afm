@@ -118,6 +118,93 @@
 [data-theme="dark"] .syn-string {
   color: #6fc49b;
 }
+.u-focus {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 20, 40, 0.34);
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 30px;
+}
+.u-focus-panel {
+  width: 100%;
+  max-width: 880px;
+  height: 100%;
+  background: var(--surface);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(14, 18, 40, 0.3);
+  max-height: 100%;
+}
+.u-tool-group {
+  display: flex;
+  gap: 3px;
+}
+.u-tool-group + .u-tool-group::before {
+  content: "";
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--line);
+}
+.u-tool-group + .u-tool-group {
+  display: flex;
+  align-items: center;
+}
+.u-focus-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.u-focus-body {
+  flex: 1;
+  padding: 26px 34px;
+  font-size: 15.5px;
+  line-height: 1.78;
+  color: var(--ink2);
+  overflow: hidden;
+  min-height: 0;
+  overflow-y: auto;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.u-focus-body.is-empty::before {
+  content: attr(data-placeholder);
+  display: block;
+  height: 0;
+  position: relative;
+  top: 1em;
+  color: var(--faint);
+  pointer-events: none;
+}
+.u-focus-body.is-empty:empty::before {
+  top: 0;
+}
+.u-focus-raw {
+  border: 0;
+  resize: none;
+  background: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink2);
+}
+.u-focus-link {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line-2);
+}
+.u-spacer {
+  flex: 1;
+}
 .u-mk.lg {
   width: 48px;
   height: 48px;
@@ -177,6 +264,19 @@
     opacity: 0;
     scale: 0.55;
   }
+}
+.u-btn.primary.is-blocked {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line-strong);
+  cursor: default;
+}
+.u-ico.is-blocked {
+  opacity: 0.45;
+  cursor: default;
+}
+.u-ico.is-blocked:hover {
+  background: none;
 }
 .rich-text[hidden] {
   display: none !important;
@@ -295,6 +395,17 @@
 }
 .rich-text .ProseMirror-gapcursor::after {
   border-top-color: var(--ink);
+}
+.u-tbtn[aria-pressed="true"] {
+  background: var(--sunk);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.u-input.is-placeholder {
+  color: var(--muted);
+}
+.u-input:disabled {
+  opacity: 0.6;
 }
 .u-pill-wrap {
   position: relative;

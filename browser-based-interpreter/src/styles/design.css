@@ -1,3 +1,8 @@
+[data-theme="dark"] .u-btn.primary {
+  box-shadow:
+    0 6px 18px -6px rgba(255, 255, 255, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
 svg {
   display: block;
 }
@@ -8,6 +13,79 @@ code {
   border: 1px solid var(--line);
   border-radius: 5px;
   padding: 1px 5px;
+}
+.u-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  background: none;
+  color: var(--ink2);
+  white-space: nowrap;
+  flex: none;
+}
+.u-btn.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.u-btn.ghost {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink2);
+}
+.u-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex: none;
+}
+.u-btn.sm {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.u-btn[disabled] {
+  opacity: 0.45;
+}
+.u-btn.primary[disabled] {
+  opacity: 1;
+  background: var(--line);
+  border-color: var(--line-strong);
+  color: var(--muted);
+  box-shadow: none;
+}
+.u-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: none;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+  font-family: inherit;
+}
+.u-ico svg {
+  width: 16px;
+  height: 16px;
+}
+.u-ico:hover {
+  background: var(--sunk);
+}
+.u-ico.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
 }
 .u-seg {
   display: inline-flex;
@@ -56,6 +134,24 @@ code {
   outline: 1px solid var(--line);
   outline-offset: -1px;
 }
+.u-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  padding: 8px 11px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+}
+.u-input::placeholder {
+  color: var(--faint);
+}
+.u-input:read-only {
+  background: var(--sunk);
+  color: var(--muted);
+  cursor: default;
+}
 .u-raw {
   flex: 1;
   background: var(--surface);
@@ -66,6 +162,59 @@ code {
   font-size: 12.5px;
   line-height: 1.8;
   padding: 10px 0;
+}
+.u-focus-head {
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.u-focus-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.u-focus-hint {
+  font-size: 12px;
+  color: var(--faint);
+  font-style: italic;
+}
+.u-tools {
+  display: flex;
+  gap: 3px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line-2);
+  align-items: center;
+}
+.u-tbtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.u-tbtn:hover {
+  background: var(--sunk);
+}
+.u-focus-body h5 {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.u-focus-body ul {
+  margin: 0 0 0 20px;
+}
+.u-focus-body li {
+  margin-bottom: 7px;
 }
 .u-issues {
   border: 1px solid var(--line);
