@@ -3,6 +3,10 @@
     0 6px 18px -6px rgba(255, 255, 255, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
+[data-theme="dark"] .u-brief,
+[data-theme="dark"] .u-node {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
 svg {
   display: block;
 }
@@ -116,6 +120,171 @@ code {
   background: var(--accent-soft);
   color: var(--accent-2);
 }
+.u-flow-mid {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.u-brief {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 4px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 3px rgba(20, 24, 50, 0.05);
+}
+.u-brief.live {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.u-field {
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.u-field.grow {
+  flex: 1;
+}
+.u-field + .u-field {
+  border-top: 1px solid var(--line-2);
+}
+.u-field-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 11px;
+  flex: none;
+}
+.u-field-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--sunk);
+  box-shadow: 0 0 0 1px var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  flex: none;
+}
+.u-field-ico svg {
+  width: 16px;
+  height: 16px;
+}
+.u-field-name {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.u-field-hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+.u-field-tools {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.u-field-tools .u-ico svg {
+  width: 16px;
+  height: 16px;
+}
+.u-field-text {
+  font-size: 15px;
+  line-height: 1.68;
+  color: var(--ink2);
+  flex: 1;
+  min-height: 0;
+  outline: none;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.u-field-text ul {
+  margin-left: 20px;
+}
+.u-rail-row {
+  display: flex;
+  align-items: center;
+}
+.u-lead {
+  width: var(--lead);
+  height: 1.5px;
+  background: var(--line-strong);
+  flex: none;
+  position: relative;
+}
+.u-lead::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: -2.25px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+.u-lead.live {
+  background: var(--accent);
+  height: 2px;
+}
+.u-lead.live::after {
+  background: var(--accent);
+  width: 7px;
+  height: 7px;
+  top: -2.5px;
+}
+.u-lead.broken {
+  background: repeating-linear-gradient(90deg, var(--bad) 0 4px, transparent 4px 8px);
+}
+.u-lead.broken::after {
+  background: var(--bad);
+}
+.u-rail-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: var(--faint);
+  margin: 14px 0 1px var(--lead);
+}
+.u-node {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+}
+.u-node:hover {
+  border-color: var(--line-hover);
+}
+.u-node.live {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.u-node.add {
+  color: var(--muted);
+  justify-content: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  gap: 6px;
+}
 .u-mk {
   width: 28px;
   height: 28px;
@@ -133,6 +302,46 @@ code {
   background: var(--ground);
   outline: 1px solid var(--line);
   outline-offset: -1px;
+}
+.u-node-body {
+  min-width: 0;
+  flex: 1;
+}
+.u-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.u-node-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 1px;
+  display: block;
+}
+.u-node-add-sm {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 0;
+  background: var(--surface);
+  color: var(--ink2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+  font-family: inherit;
+}
+.u-node-add-sm:hover {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.u-node-add-sm svg {
+  width: 13px;
+  height: 13px;
 }
 .u-input {
   width: 100%;
