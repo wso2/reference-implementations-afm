@@ -333,6 +333,103 @@
   margin: 0 auto;
   gap: 0;
 }
+.u-need {
+  --need-ease: cubic-bezier(0.22, 1.18, 0.36, 1);
+  position: absolute;
+  left: var(--need-x, 50%);
+  top: 15px;
+  translate: -50% 0;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--ink2);
+  white-space: nowrap;
+  animation: need-pop 0.32s var(--need-ease) both;
+}
+.u-need-dot {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--ink2);
+}
+.u-need-dot svg {
+  width: 20px;
+  height: 20px;
+}
+.u-need-track {
+  stroke: currentColor;
+  opacity: 0.2;
+}
+.u-need-arc {
+  stroke: currentColor;
+  transition: stroke-dasharray 0.4s ease;
+}
+.u-need-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+  animation: need-open 0.5s 0.1s var(--need-ease) both;
+}
+.u-need-in {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 15px 0 2px;
+  animation: need-fade-in 0.22s 0.3s ease both;
+}
+.u-need-lead {
+  font-weight: 650;
+  color: var(--ink);
+}
+.u-need-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.u-need-item svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.u-need-item.done {
+  color: var(--ok);
+}
+.u-need-item.done span {
+  color: var(--ink2);
+}
+.u-need-item.todo {
+  color: var(--bad);
+  font-weight: 650;
+}
+.u-need.ready {
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 22%, var(--surface));
+  font-weight: 650;
+}
+.u-need.ready .u-need-dot,
+.u-need.ready .u-need-lead {
+  color: var(--ok);
+}
+.u-need.ready .u-need-track {
+  opacity: 0.25;
+}
+.u-need.is-leaving {
+  animation: need-vanish 0.16s 0.4s ease-in both;
+}
+.u-need.is-leaving .u-need-in {
+  animation: need-fade-out 0.14s ease both;
+}
+.u-need.is-leaving .u-need-body {
+  animation: need-close 0.34s 0.1s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
 @keyframes need-pop {
   from {
     opacity: 0;
@@ -373,6 +470,18 @@
   to {
     opacity: 0;
     scale: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .u-need,
+  .u-need-body,
+  .u-need-in,
+  .u-need.is-leaving .u-need-body,
+  .u-need.is-leaving .u-need-in {
+    animation: none;
+  }
+  .u-need.is-leaving {
+    animation: need-fade-out 0.2s both;
   }
 }
 .u-btn.primary.is-blocked {
