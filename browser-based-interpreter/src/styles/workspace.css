@@ -649,6 +649,47 @@
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--line);
 }
+.u-confirm {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: -12px;
+  z-index: 30;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(14, 18, 40, 0.22);
+}
+.u-confirm::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 34px;
+  width: 11px;
+  height: 11px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  transform: rotate(45deg);
+}
+.u-confirm b {
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.u-confirm p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.u-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
 .u-node.is-locked {
   background: transparent;
   opacity: 0.7;
@@ -811,4 +852,12 @@
   .u-pill.is-leaving {
     animation: need-fade-out 0.2s both;
   }
+}
+.u-confirm.is-end {
+  left: auto;
+  right: -6px;
+}
+.u-confirm.is-end::before {
+  left: auto;
+  right: 22px;
 }
