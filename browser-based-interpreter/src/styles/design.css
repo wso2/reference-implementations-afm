@@ -120,6 +120,12 @@ code {
   background: var(--accent-soft);
   color: var(--accent-2);
 }
+.u-stage-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 24px 0;
+}
 .u-flow-mid {
   flex: 1;
   min-width: 0;
