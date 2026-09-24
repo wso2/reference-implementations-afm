@@ -56,6 +56,10 @@ code {
   font-size: 12.5px;
   border-radius: 8px;
 }
+.u-btn.wide {
+  width: 100%;
+  justify-content: center;
+}
 .u-btn[disabled] {
   opacity: 0.45;
 }
@@ -349,6 +353,26 @@ code {
   width: 13px;
   height: 13px;
 }
+.u-group {
+  margin-bottom: 16px;
+}
+.u-group.grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+.u-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  display: block;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
 .u-input {
   width: 100%;
   border: 1px solid var(--line);
@@ -366,6 +390,23 @@ code {
   background: var(--sunk);
   color: var(--muted);
   cursor: default;
+}
+.u-input-row {
+  display: flex;
+  gap: 7px;
+}
+.u-rows {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  overflow: hidden;
+}
+.u-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 0 4px;
 }
 .u-raw {
   flex: 1;
@@ -431,6 +472,117 @@ code {
 .u-focus-body li {
   margin-bottom: 7px;
 }
+.u-start-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.u-start-opt {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 12px 13px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink);
+}
+.u-start-opt:hover,
+.u-start-opt.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.u-start-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--sunk);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  flex: none;
+}
+.u-start-ico svg {
+  width: 15px;
+  height: 15px;
+}
+.u-start-opt.on .u-start-ico {
+  background: var(--surface);
+}
+.u-start-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: block;
+}
+.u-start-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  display: block;
+  margin-top: 2px;
+  line-height: 1.45;
+}
+.u-drop {
+  border: 1.5px dashed var(--line);
+  border-radius: 12px;
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.u-drop.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.u-drop-ico {
+  margin: 0 auto 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+.u-drop-ico svg {
+  width: 17px;
+  height: 17px;
+}
+.u-draft {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ink2);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  white-space: pre-wrap;
+}
+.u-area {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.55;
+  resize: none;
+  min-height: 92px;
+}
+.u-area::placeholder {
+  color: var(--faint);
+}
 .u-issues {
   border: 1px solid var(--line);
   border-radius: 11px;
@@ -465,6 +617,16 @@ code {
   color: var(--faint);
   display: block;
   margin-top: 2px;
+}
+.u-errcard {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--bad);
+  background: var(--bad-soft);
+  border-radius: 11px;
+  padding: 11px 12px;
+  font-size: 12.5px;
+  color: var(--bad);
+  line-height: 1.5;
 }
 @media (prefers-reduced-motion: reduce) {
   * {

@@ -87,6 +87,13 @@
   flex: 1;
   min-height: 0;
 }
+.u-dlg-body .u-group {
+  margin-bottom: 12px;
+}
+.u-dlg-body .u-draft {
+  max-height: 300px;
+  overflow: auto;
+}
 .u-dlg-foot {
   margin: 0;
   padding: 11px 22px;
@@ -140,6 +147,69 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
+}
+.u-dlg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.u-dlg-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  min-height: 106px;
+  cursor: pointer;
+}
+.u-dlg-card:hover {
+  background: var(--sunk);
+  border-color: var(--line-hover);
+}
+.u-dlg-card.on {
+  border-color: transparent;
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.u-dlg-card:focus-visible {
+  border-color: transparent;
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+.u-dlg-card.row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 0;
+}
+.u-dlg-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--sunk);
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+}
+.u-dlg-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.u-dlg-desc {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 3px;
 }
 @media (prefers-reduced-motion: no-preference) {
   .u-dlg-scrim {
