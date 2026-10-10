@@ -50,6 +50,9 @@ code {
   display: block;
   flex: none;
 }
+.u-btn.quiet {
+  color: var(--muted);
+}
 .u-btn.sm {
   height: 28px;
   padding: 0 11px;
@@ -394,6 +397,9 @@ code {
 .u-group {
   margin-bottom: 16px;
 }
+.u-group.is-last {
+  margin-bottom: 0;
+}
 .u-group.grow {
   flex: 1;
   min-height: 0;
@@ -429,6 +435,10 @@ code {
   font-family: inherit;
   font-size: 13px;
   color: var(--ink);
+}
+.u-input.mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
 }
 .u-input::placeholder {
   color: var(--faint);
@@ -594,6 +604,10 @@ code {
 }
 .u-focus-body li {
   margin-bottom: 7px;
+}
+[data-theme="dark"] .xc-av,
+[data-theme="dark"] .u-info-avatar {
+  color: #2b1708;
 }
 .u-start-list {
   display: flex;

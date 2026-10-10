@@ -436,11 +436,316 @@ label.u-group {
 .u-back:hover svg {
   transform: translateX(-2px);
 }
+.u-info-id {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.u-desc {
+  margin-bottom: 14px;
+}
+.u-desc .u-label {
+  margin-bottom: 6px;
+}
+.u-desc-box {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.u-desc-box:hover {
+  border-color: var(--line-strong);
+}
+.u-desc-box:focus-within {
+  border-color: var(--line-hover);
+  box-shadow: 0 0 0 1px var(--line-hover);
+}
+.u-desc-box.is-off {
+  background: var(--sunk);
+}
+.u-desc-field {
+  display: block;
+  width: 100%;
+  max-height: 200px;
+  padding: 9px 11px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: none;
+  overflow-y: auto;
+}
+.u-desc-field::placeholder {
+  color: var(--faint);
+}
+.u-desc-field:disabled {
+  color: var(--muted);
+}
+.u-info-id-fields {
+  flex: 1;
+  min-width: 0;
+}
+.u-info-avatar-wrap {
+  position: relative;
+  flex: none;
+}
+.u-info-edit {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: 0 0 0 2px var(--surface);
+  cursor: pointer;
+}
+.u-info-edit svg {
+  width: 12px;
+  height: 12px;
+}
+.u-info-edit:disabled {
+  display: none;
+}
+.xc-av.has-img,
+.u-info-avatar.has-img {
+  overflow: hidden;
+  background: var(--sunk);
+}
 .has-img img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.u-info-icon {
+  margin: 0 0 14px;
+  padding: 11px 12px 12px;
+  border-radius: 12px;
+  background: var(--sunk);
+}
+.u-info-icon .u-label {
+  margin-bottom: 6px;
+}
+.u-info-icon-row {
+  display: flex;
+  gap: 8px;
+}
+.u-info-icon .u-ghost {
+  flex: 1;
+  background: var(--surface);
+}
+.u-info-icon .u-hint,
+.u-info-icon .u-info-error {
+  margin: 7px 0 0;
+  text-align: left;
+}
+.u-info-icon .u-btn.quiet {
+  margin: 6px 0 0 -11px;
+}
+.u-ghost {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  transition: background 0.15s;
+}
+.u-ghost::placeholder {
+  color: var(--faint);
+}
+.u-ghost:hover {
+  background: var(--sunk);
+}
+.u-ghost:focus {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+.u-ghost:disabled {
+  background: transparent;
+  color: var(--muted);
+}
+.u-ghost.name {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.u-info-id-fields .u-ghost {
+  width: calc(100% + 8px);
+  margin-left: -8px;
+}
+.u-info-row.edit {
+  align-items: center;
+  padding: 3px 0;
+}
+.u-info-row.edit .u-ghost {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin-right: -8px;
+  text-align: right;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.u-info-row.edit .u-ghost:focus {
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+.u-info-row.edit .u-info-label {
+  width: 84px;
+}
+.u-select {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.u-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: auto;
+  margin-right: -8px;
+  cursor: pointer;
+}
+.u-select-btn svg {
+  width: 14px;
+  height: 14px;
+  color: var(--faint);
+  transition: transform 0.15s;
+}
+.u-select-btn[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.u-select-empty {
+  color: var(--faint);
+}
+.u-select-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: -8px;
+  width: min(290px, calc(100vw - 48px));
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 14px 36px -10px rgba(20, 24, 50, 0.3);
+  animation: tip-in 0.12s ease-out;
+}
+.u-select-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+}
+.u-select-opt:hover,
+.u-select-opt:focus-visible {
+  outline: 0;
+  background: var(--sunk);
+}
+.u-select-opt[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+.u-select-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.u-select-note {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.u-select-check {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  opacity: 0;
+}
+.u-select-opt[aria-selected="true"] .u-select-check {
+  opacity: 1;
+}
+.u-info-error {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  color: var(--bad);
+  text-align: right;
+}
+.u-panel-foot.end {
+  justify-content: flex-end;
+}
+.u-info-avatar {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 17px;
+  background: linear-gradient(150deg, var(--agent-2), var(--agent));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+  font-weight: 700;
+}
+.u-info-placeholder {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  font-style: italic;
+  color: var(--faint);
+}
+.u-info-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+}
+.u-info-row.bordered + .u-info-row.bordered {
+  border-top: 1px solid var(--line);
+}
+.u-info-label {
+  font-size: 13px;
+  color: var(--ink2);
+  flex: none;
+}
+.u-info-value {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: right;
+}
+.u-info-value.mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
 }
 .u-setup-col {
   width: 100%;
@@ -461,6 +766,14 @@ label.u-group {
   height: 1px;
   margin: 16px 0;
   background: var(--line);
+}
+.u-row-name.mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+.u-btn.quiet:hover {
+  color: var(--ink);
+  background: var(--sunk);
 }
 .u-panel-body .u-setup {
   justify-content: flex-start;
