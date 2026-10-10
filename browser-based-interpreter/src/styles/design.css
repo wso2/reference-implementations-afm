@@ -122,6 +122,14 @@ code {
   color: var(--ink);
   box-shadow: 0 1px 2px rgba(20, 24, 50, 0.1);
 }
+.u-seg.fill {
+  display: flex;
+  width: 100%;
+}
+.u-seg.fill button {
+  flex: 1;
+  text-align: center;
+}
 [data-theme="dark"] .u-seg button.on {
   box-shadow: none;
   background: var(--accent-soft);
@@ -458,6 +466,15 @@ code {
   line-height: 1.5;
   margin-top: 7px;
 }
+.u-hint.is-flush {
+  margin-top: 0;
+}
+.u-hint.is-spaced {
+  margin-bottom: 10px;
+}
+.u-btn.below {
+  margin-top: 8px;
+}
 .u-pills {
   display: flex;
   flex-wrap: wrap;
@@ -521,6 +538,39 @@ code {
   height: 7px;
   border-radius: 999px;
   background: var(--accent);
+}
+.u-share .u-group {
+  margin-bottom: 36px;
+}
+.u-share .u-group:last-child {
+  margin-bottom: 0;
+}
+.u-todo {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: space-between;
+  gap: 6px 10px;
+  margin-bottom: -4px;
+}
+.u-todo-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.u-todo-item svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--line-strong);
+}
+.u-todo-item.on {
+  color: var(--ink2);
+}
+.u-todo-item.on svg {
+  color: var(--ok);
 }
 .u-row-name {
   font-size: 13px;
