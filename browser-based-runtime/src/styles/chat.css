@@ -1,0 +1,286 @@
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.msg-image {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  object-fit: cover;
+  display: block;
+}
+.attachment-row {
+  align-self: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 86%;
+  animation: fade-up 0.25s ease;
+}
+.xc-turn,
+.xc-notready {
+  animation: fade-up 0.25s ease;
+}
+.attachment-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 280px;
+  padding: 8px 13px 8px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.attachment-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: scale(0.85);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.attachment-card:hover .attachment-remove,
+.attachment-card:focus-within .attachment-remove {
+  opacity: 1;
+  transform: none;
+}
+.attachment-remove:hover {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.attachment-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.attachment-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.attachment-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.notice-marker {
+  align-self: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  max-width: 86%;
+  text-align: center;
+  animation: fade-up 0.25s ease;
+}
+.composer-drop-overlay {
+  position: absolute;
+  inset: 6px 16px 8px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface) 85%);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  z-index: 5;
+  pointer-events: none;
+}
+.composer-attach-status {
+  max-width: var(--chat-column);
+  margin: 0 auto 8px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.composer-image-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: var(--chat-column);
+  margin: 0 auto 10px;
+}
+.composer-image-chip {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.composer-image-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.composer-image-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: var(--shadow);
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.composer-image-remove:hover {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.composer-attach-menu-anchor {
+  position: relative;
+  flex: none;
+}
+.composer-attach-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  z-index: 10;
+}
+.composer-attach-menu button {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: none;
+}
+.composer-attach-menu button:hover {
+  background: var(--sunk);
+}
+.composer-attach-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.composer-attach-menu button:disabled:hover {
+  background: none;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.scroll-bottom {
+  position: sticky;
+  bottom: 16px;
+  align-self: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 6px 16px -4px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+}
+.scroll-bottom:hover {
+  background: var(--accent-2);
+}
+.code-wrap {
+  position: relative;
+}
+.code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-wrap:hover .code-copy {
+  opacity: 1;
+}
+.code-copy:hover {
+  color: var(--ink);
+}
+.reply-failure {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--bad);
+  animation: fade-up 0.25s ease;
+}
+.reply-failure-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--bad);
+}
+.reply-failure-text {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
