@@ -1,0 +1,50 @@
+name: TypeScript Interpreter CI
+
+on:
+  push:
+    paths:
+      - "typescript-interpreter/**"
+      - ".github/workflows/typescript-interpreter.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "typescript-interpreter/**"
+      - ".github/workflows/typescript-interpreter.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: typescript-interpreter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: typescript-interpreter/package.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: typescript-interpreter/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high --ignore-registry-errors
