@@ -1,0 +1,84 @@
+name: Browser-based Interpreter Dependency Audit
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ISSUE_TITLE: "Dependency audit: high or critical findings in browser-based-interpreter"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-based-interpreter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: browser-based-interpreter/package.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Audit dependencies
+        id: audit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm audit --audit-level=high 2>&1 | tee "$RUNNER_TEMP/audit.txt"
+
+      - name: Open or update the audit issue
+        if: steps.audit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          owners=$(awk '$1 == "*" { $1 = ""; print }' ../.github/CODEOWNERS | xargs)
+          {
+            echo "${owners}"
+            echo
+            echo "The daily \`pnpm audit --audit-level=high\` found high or critical vulnerabilities in the dependencies of the browser-based interpreter. Update or replace the affected packages."
+            echo
+            echo "Run: ${RUN_URL}"
+            echo
+            echo '```'
+            head -n 80 "$RUNNER_TEMP/audit.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          number=$(gh issue list --state open --search "\"${ISSUE_TITLE}\" in:title" --json number,title \
+            | jq -r --arg title "${ISSUE_TITLE}" '.[] | select(.title == $title) | .number' | head -n 1)
+          if [ -n "${number}" ]; then
+            gh issue edit "${number}" --body-file "$RUNNER_TEMP/issue.md"
+          else
+            gh issue create --title "${ISSUE_TITLE}" --body-file "$RUNNER_TEMP/issue.md"
+          fi
+
+      - name: Close the audit issue when it is clean
+        if: steps.audit.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh issue list --state open --search "\"${ISSUE_TITLE}\" in:title" --json number,title \
+            | jq -r --arg title "${ISSUE_TITLE}" '.[] | select(.title == $title) | .number' | head -n 1)
+          if [ -n "${number}" ]; then
+            gh issue close "${number}" --comment "The audit now finds no high or critical vulnerabilities."
+          fi
+
+      - name: Fail the run when the audit failed
+        if: steps.audit.outcome == 'failure'
+        run: exit 1
