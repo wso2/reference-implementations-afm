@@ -770,6 +770,39 @@ code {
 .u-area::placeholder {
   color: var(--faint);
 }
+.u-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-align: center;
+  gap: 9px;
+  padding: 18px;
+}
+.u-empty-ico {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--sunk);
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+}
+.u-empty-ico svg {
+  width: 19px;
+  height: 19px;
+}
+.u-empty h4 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.u-empty p {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 240px;
+}
 .u-issues {
   border: 1px solid var(--line);
   border-radius: 11px;
@@ -814,6 +847,40 @@ code {
   font-size: 12.5px;
   color: var(--bad);
   line-height: 1.5;
+}
+.u-toast {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  animation: fade-up 0.25s ease;
+  bottom: 20px;
+  z-index: 9;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 8px 8px 18px;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 8px 28px rgba(16, 20, 44, 0.28);
+  white-space: nowrap;
+}
+[data-theme="dark"] .u-toast {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+.u-toast button {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 6px 13px;
 }
 @media (prefers-reduced-motion: reduce) {
   * {
