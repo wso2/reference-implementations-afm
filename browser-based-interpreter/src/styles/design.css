@@ -387,6 +387,43 @@ code {
   width: 13px;
   height: 13px;
 }
+.u-panel {
+  position: absolute;
+  inset: 10px 10px 10px 4px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 1px 3px rgba(20, 24, 50, 0.05);
+  overflow: hidden;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  z-index: 3;
+}
+[data-theme="dark"] .u-panel {
+  box-shadow: none;
+}
+.u-panel-tools {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.u-panel-head {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.u-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .u-panel-body {
   flex: 1;
   overflow-y: auto;

@@ -5,6 +5,12 @@
   display: flex;
   overflow: hidden;
 }
+.u-panel.is-over {
+  z-index: 4;
+}
+.u-panel:focus {
+  outline: none;
+}
 .u-role {
   flex: none;
   min-height: 62px;
@@ -921,6 +927,26 @@ label.u-group {
 .u-info-value.mono {
   font-family: "IBM Plex Mono", monospace;
   font-size: 12.5px;
+}
+.u-panel.is-floating > .u-panel-head {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 3;
+  height: auto;
+  padding: 10px 12px;
+  border-bottom: 0;
+  background: none;
+  pointer-events: none;
+}
+.u-panel.is-floating > .u-panel-head::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -18px;
+  background: linear-gradient(var(--surface) 55%, transparent);
+}
+.u-panel.is-floating > .u-panel-head > * {
+  position: relative;
+  pointer-events: auto;
 }
 .u-setup-col {
   width: 100%;
