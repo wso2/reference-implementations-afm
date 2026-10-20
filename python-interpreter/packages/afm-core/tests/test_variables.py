@@ -17,7 +17,14 @@
 import pytest
 
 from afm.exceptions import AFMValidationError, VariableResolutionError
-from afm.models import AFMRecord, AgentMetadata, MCPServer, StdioTransport, Tools
+from afm.models import (
+    AFMRecord,
+    AgentMetadata,
+    MCPServer,
+    Model,
+    StdioTransport,
+    Tools,
+)
 from afm.variables import resolve_variables, validate_http_variables
 
 
@@ -129,3 +136,25 @@ class TestValidateHttpVariablesStdioTransport:
         )
         # Should not raise
         validate_http_variables(record)
+
+
+class TestValidateHttpVariablesModelProviderOptions:
+    def test_reports_individual_keys(self) -> None:
+        record = AFMRecord(
+            metadata=AgentMetadata(
+                model=Model(
+                    provider="gemini",
+                    provider_options={
+                        "project": "${http:payload.project}",
+                        "location": "us-central1",
+                    },
+                )
+            ),
+            role="Role",
+            instructions="Instructions",
+        )
+        with pytest.raises(AFMValidationError) as exc_info:
+            validate_http_variables(record)
+        msg = str(exc_info.value)
+        assert "model.provider_options.project" in msg
+        assert "model.provider_options.location" not in msg

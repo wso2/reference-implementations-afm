@@ -26,18 +26,32 @@ from afm.models import ClientAuthentication, Model
 
 if TYPE_CHECKING:
     from langchain_anthropic import ChatAnthropic
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_ollama import ChatOllama
     from langchain_openai import ChatOpenAI
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_OLLAMA_MODEL = "llama3.1"
 
 DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 # Environment variable names for API keys
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
+
+# Keys accepted under `provider_options`, per provider
+SUPPORTED_PROVIDER_OPTIONS: dict[str, frozenset[str]] = {
+    "openai": frozenset(),
+    "anthropic": frozenset(),
+    "gemini": frozenset({"project", "location"}),
+    "ollama": frozenset(),
+}
 
 
 def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
@@ -46,11 +60,17 @@ def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
 
     provider = (afm_model.provider or "openai").lower()
 
+    _validate_provider_options(afm_model, provider)
+
     match provider:
         case "openai":
             return _create_openai_model(afm_model)
         case "anthropic":
             return _create_anthropic_model(afm_model)
+        case "gemini":
+            return _create_gemini_model(afm_model)
+        case "ollama":
+            return _create_ollama_model(afm_model)
         case _:
             raise ProviderError(f"Unsupported provider: {provider}", provider=provider)
 
@@ -111,6 +131,113 @@ def _create_anthropic_model(afm_model: Model) -> ChatAnthropic:
         kwargs["base_url"] = base_url
 
     return ChatAnthropic(**kwargs)
+
+
+def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
+    """Create a Gemini chat model for the Gemini Developer API or Vertex AI."""
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as e:
+        raise ProviderError(
+            "langchain-google-genai package is required for Gemini models. "
+            "Install it with: pip install langchain-google-genai",
+            provider="gemini",
+        ) from e
+
+    model_name = afm_model.name if afm_model.name else DEFAULT_GEMINI_MODEL
+    base_url = afm_model.url if afm_model.url else None
+
+    kwargs: dict = {
+        "model": model_name,
+    }
+
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    options = afm_model.provider_options or {}
+    project = options.get("project")
+    location = options.get("location")
+
+    if project:
+        if afm_model.authentication:
+            raise ProviderError(
+                "The 'authentication' field is not supported when "
+                "'provider_options.project' is set. Vertex AI requests are "
+                "authenticated with Application Default Credentials.",
+                provider="gemini",
+            )
+        kwargs["project"] = project
+        kwargs["vertexai"] = True
+        if location:
+            kwargs["location"] = location
+    else:
+        if location:
+            raise ProviderError(
+                "'provider_options.location' requires 'provider_options.project'.",
+                provider="gemini",
+            )
+        kwargs["api_key"] = _get_api_key(
+            afm_model.authentication,
+            GOOGLE_API_KEY_ENV,
+            "gemini",
+        )
+
+    return ChatGoogleGenerativeAI(**kwargs)
+
+
+def _create_ollama_model(afm_model: Model) -> ChatOllama:
+    """Create an Ollama chat model for a local or remote Ollama server."""
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError as e:
+        raise ProviderError(
+            "langchain-ollama package is required for Ollama models. "
+            "Install it with: pip install langchain-ollama",
+            provider="ollama",
+        ) from e
+
+    if afm_model.authentication:
+        raise ProviderError(
+            "The 'authentication' field is not supported.",
+            provider="ollama",
+        )
+
+    model_name = afm_model.name if afm_model.name else DEFAULT_OLLAMA_MODEL
+    base_url = afm_model.url if afm_model.url else DEFAULT_OLLAMA_URL
+
+    kwargs: dict = {
+        "model": model_name,
+        "base_url": base_url,
+    }
+
+    return ChatOllama(**kwargs)
+
+
+def _validate_provider_options(afm_model: Model, provider: str) -> None:
+    """Reject unsupported or blank provider_options for the given provider."""
+    options = afm_model.provider_options
+    supported = SUPPORTED_PROVIDER_OPTIONS.get(provider)
+    if not options or supported is None:
+        return
+
+    unsupported = sorted(set(options) - supported)
+    if unsupported:
+        hint = (
+            f"Supported keys: {', '.join(sorted(supported))}."
+            if supported
+            else "This provider does not accept provider_options."
+        )
+        raise ProviderError(
+            f"Unsupported provider_options key(s): {', '.join(unsupported)}. {hint}",
+            provider=provider,
+        )
+
+    blank = sorted(key for key, value in options.items() if not value.strip())
+    if blank:
+        raise ProviderError(
+            f"provider_options value(s) must not be blank: {', '.join(blank)}.",
+            provider=provider,
+        )
 
 
 def _get_api_key(

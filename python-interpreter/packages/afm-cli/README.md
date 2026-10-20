@@ -8,7 +8,7 @@ A command-line interface for running [Agent-Flavored Markdown (AFM)](https://git
 
 This package provides everything you need to run AFM agents, including:
 - **afm-core**: Parser, validation, and interface implementations
-- **afm-langchain**: LangChain-based execution backend with support for OpenAI and Anthropic
+- **afm-langchain**: LangChain-based execution backend with support for OpenAI, Anthropic, Google Gemini and Ollama
 
 ## Installation
 
@@ -93,6 +93,7 @@ afm framework list
 
 - `OPENAI_API_KEY` - Required for OpenAI models
 - `ANTHROPIC_API_KEY` - Required for Anthropic models
+- `GOOGLE_API_KEY` - Required for Gemini models, unless Vertex AI is used (see [Google Gemini](https://github.com/wso2/reference-implementations-afm/tree/main/python-interpreter/packages/afm-langchain#google-gemini))
 
 ### CLI Options
 

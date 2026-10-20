@@ -37,6 +37,59 @@ afmFilePath = "path/to/agent.afm.md"
 
 The AFM file path can also be passed as a command-line argument.
 
+## Model Providers
+
+The model is configured via the `model` block in the AFM frontmatter. Supported providers:
+
+| `provider` | Required fields | Credentials |
+|---|---|---|
+| _(no `model` block)_ | — | `WSO2_MODEL_PROVIDER_TOKEN` env var (WSO2 default model) |
+| `wso2` | — | `authentication` (bearer) |
+| `openai` | `name` | `authentication` (api-key) |
+| `anthropic` | `name` | `authentication` (api-key) |
+| `ollama` | `name` | none (optional `url`, defaults to `http://localhost:11434`) |
+| `gemini` | `name`, `provider_options.project` | Google credentials file via `GOOGLE_APPLICATION_CREDENTIALS` |
+
+Provider-specific settings go under `provider_options`. Keys that the selected provider does not support are rejected.
+
+### Gemini (Vertex AI)
+
+The Ballerina interpreter runs Gemini on Vertex AI only. Set the project, and optionally the location, under `provider_options`:
+
+```yaml
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+  provider_options:
+    project: your-gcp-project-id
+    location: us-central1        # optional, defaults to global
+```
+
+The `authentication` field is not used. Credentials are read from the file referenced by the `GOOGLE_APPLICATION_CREDENTIALS` environment variable, which can be either:
+
+- **Application Default Credentials** (`authorized_user`), created by `gcloud auth application-default login`.
+- **A service account key** (`service_account`), a downloaded JSON key file.
+
+Other credential types, such as `external_account` files or credentials provided by the metadata server (for example workload identity on GKE or Cloud Run), are not supported.
+
+**Local development:**
+
+```bash
+gcloud auth application-default login
+export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/application_default_credentials.json"
+bal run -- agent-vertex.afm.md
+```
+
+**Docker:** mount the credentials file read-only and point the environment variable at it. The file must be readable by the container user (UID 10014).
+
+```bash
+docker run -it --rm \
+  -v $(pwd)/agent-vertex.afm.md:/app/agent.afm.md \
+  -v $HOME/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json \
+  afm-ballerina-interpreter /app/agent.afm.md
+```
+
 ## Running with Docker
 
 ```bash

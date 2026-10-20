@@ -151,6 +151,10 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
             errored_fields.append("model.provider")
         if model.url and contains_http_variable(model.url):
             errored_fields.append("model.url")
+        if model.provider_options:
+            for key, value in model.provider_options.items():
+                if contains_http_variable(value):
+                    errored_fields.append(f"model.provider_options.{key}")
         if _auth_contains_http_variable(model.authentication):
             errored_fields.append("model.authentication")
 

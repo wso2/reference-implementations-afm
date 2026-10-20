@@ -62,6 +62,7 @@ class Model(BaseModel):
     name: str | None = None
     provider: str | None = None
     url: str | None = None
+    provider_options: dict[str, str] | None = None
     authentication: ClientAuthentication | None = None
 
 

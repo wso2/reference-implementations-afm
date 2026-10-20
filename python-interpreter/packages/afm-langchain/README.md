@@ -11,7 +11,7 @@ This package implements the `AgentRunner` protocol from `afm-core`, providing LL
 ## Features
 
 - **AgentRunner Protocol Implementation**: Pluggable backend for AFM agents
-- **LLM Provider Support**: OpenAI and Anthropic models
+- **LLM Provider Support**: OpenAI, Anthropic, Google Gemini and Ollama models
 - **MCP Tool Integration**: Connect external tools via Model Context Protocol
 - **Conversation Management**: Session history and state management
 - **Plugin Registration**: Auto-discovered via Python entry points
@@ -45,6 +45,40 @@ model:
 ```
 
 Requires: `ANTHROPIC_API_KEY` environment variable
+
+### Google Gemini
+
+```yaml
+model:
+  provider: gemini
+  name: gemini-2.5-flash  # or other Gemini models
+```
+
+Requires: `GOOGLE_API_KEY` environment variable, or an `authentication` block
+
+To use Vertex AI instead of the Gemini Developer API, set the project, and optionally the location, under `provider_options`:
+
+```yaml
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+  provider_options:
+    project: your-gcp-project-id
+    location: us-central1  # optional, defaults to GOOGLE_CLOUD_LOCATION or global
+```
+
+Vertex AI authenticates with [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials), for example through `gcloud auth application-default login` or the `GOOGLE_APPLICATION_CREDENTIALS` environment variable. The `authentication` field is not supported in this mode.
+
+### Ollama
+
+```yaml
+model:
+  provider: ollama
+  name: llama3.1  # or other local models
+  url: http://localhost:11434  # optional
+```
+
+Requires: a running [Ollama](https://ollama.com) server with the model pulled (for example `ollama pull llama3.1`). No API key is needed. Agents that use tools or skills need a model with tool-calling support. If `name` is omitted, `llama3.1` is used.
 
 ## Development
 

@@ -189,10 +189,18 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
     }
 
     if model is Model {
-        Model {authentication, ...modelRest} = model;
+        Model {authentication, provider_options, ...modelRest} = model;
         foreach [string, string] [k, v] in modelRest.entries() {
             if containsHttpVariable(<string> v) {
                 erroredKeys.push("model." + k); 
+            }
+        }
+
+        if provider_options is map<string> {
+            foreach [string, string] [k, v] in provider_options.entries() {
+                if containsHttpVariable(v) {
+                    erroredKeys.push("model.provider_options." + k);
+                }
             }
         }
 

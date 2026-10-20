@@ -1199,3 +1199,40 @@ function testMapToHttpClientAuthUnsupportedType() {
     }
     test:assertEquals(result.message(), "Unsupported authentication type: custom-auth");
 }
+
+@test:Config
+function testValidateHttpVariablesInModelProviderOptions() {
+    AFMRecord afmRecord = {
+        metadata: {
+            spec_version: "0.4.0",
+            model: {
+                provider: "gemini",
+                name: "gemini-2.5-flash",
+                provider_options: {project: "${http:payload.project}", location: "us-central1"}
+            }
+        },
+        role: "",
+        instructions: ""
+    };
+
+    error? result = validateHttpVariables(afmRecord);
+    if result is () {
+        test:assertFail("Expected error for http: variables in model provider_options");
+    }
+    test:assertTrue(result.message().includes("model.provider_options.project"));
+    test:assertFalse(result.message().includes("model.provider_options.location"));
+}
+
+@test:Config
+function testParseAfmRejectsUnknownModelField() {
+    string content = "---\nname: test\nmodel:\n  provider: gemini\n  projet: test-project\n---\n# Role\nrole\n# Instructions\ninstructions\n";
+    AFMRecord|error result = parseAfm(content);
+    test:assertTrue(result is error);
+}
+
+@test:Config
+function testParseAfmWithModelProviderOptions() returns error? {
+    string content = "---\nname: test\nmodel:\n  provider: gemini\n  name: gemini-2.5-flash\n  provider_options:\n    project: test-project\n    location: us-central1\n---\n# Role\nrole\n# Instructions\ninstructions\n";
+    AFMRecord parsed = check parseAfm(content);
+    test:assertEquals(parsed.metadata?.model?.provider_options, {project: "test-project", location: "us-central1"});
+}

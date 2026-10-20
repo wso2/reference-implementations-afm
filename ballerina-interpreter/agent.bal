@@ -17,10 +17,13 @@
 import afm_ballerina.everit.validator;
 
 import ballerina/ai;
+import ballerina/io;
 import ballerina/log;
 import ballerina/os;
 import ballerina/http;
 import ballerinax/ai.anthropic;
+import ballerinax/ai.googleapis.vertex;
+import ballerinax/ai.ollama;
 import ballerinax/ai.openai;
 
 function createAgent(AFMRecord afmRecord, string afmFileDir) returns ai:Agent|error {
@@ -100,6 +103,8 @@ function getModel(Model? model) returns ai:ModelProvider|error {
 
     string providerLower = provider.toLowerAscii();
 
+    check validateProviderOptions(model.provider_options, providerLower);
+
     if providerLower == "wso2" {
         return new ai:Wso2ModelProvider(
             model.url ?: "https://dev-tools.wso2.com/ballerina-copilot/v2.0",
@@ -127,8 +132,126 @@ function getModel(Model? model) returns ai:ModelProvider|error {
                 model.url ?: "https://api.anthropic.com/v1"
             );
         }
+        "ollama" => {
+            if model.authentication !is () {
+                return error("The 'authentication' field is not supported for the 'ollama' provider");
+            }
+
+            string? url = model.url;
+            return url is string ?
+                new ollama:ModelProvider(check name.ensureType(), url) :
+                new ollama:ModelProvider(check name.ensureType());
+        }
+        "gemini" => {
+            return getGeminiModel(model, name);
+        }
     }
     return error(string `Model provider: ${provider} not yet supported`);
+}
+
+// Standard Google environment variable holding the path to a service account key
+// or an Application Default Credentials file.
+const GOOGLE_APP_CREDENTIALS_ENV = "GOOGLE_APPLICATION_CREDENTIALS";
+
+// Keys accepted under `provider_options`, per provider.
+const map<string[]> SUPPORTED_PROVIDER_OPTIONS = {
+    "wso2": [],
+    "openai": [],
+    "anthropic": [],
+    "ollama": [],
+    "gemini": ["project", "location"]
+};
+
+function validateProviderOptions(map<string>? providerOptions, string provider) returns error? {
+    string[]? supportedKeys = SUPPORTED_PROVIDER_OPTIONS[provider];
+    if providerOptions is () || supportedKeys is () {
+        return;
+    }
+
+    string[] unsupportedKeys = [];
+    string[] blankKeys = [];
+    foreach [string, string] [key, value] in providerOptions.entries() {
+        if supportedKeys.indexOf(key) is () {
+            unsupportedKeys.push(key);
+        } else if value.trim() == "" {
+            blankKeys.push(key);
+        }
+    }
+
+    if unsupportedKeys.length() > 0 {
+        string hint = supportedKeys.length() == 0 ? "This provider does not accept provider_options" :
+            string `Supported keys: ${string:'join(", ", ...supportedKeys)}`;
+        return error(string `Unsupported provider_options key(s) for provider '${provider}': ` +
+            string `${string:'join(", ", ...unsupportedKeys)}. ${hint}`);
+    }
+
+    if blankKeys.length() > 0 {
+        return error(string `provider_options value(s) must not be blank: ${string:'join(", ", ...blankKeys)}`);
+    }
+}
+
+function getGeminiModel(Model model, string name) returns ai:ModelProvider|error {
+    map<string> providerOptions = model.provider_options ?: {};
+    string? project = providerOptions["project"];
+    if project is () {
+        return error("The 'gemini' provider requires 'provider_options.project': " +
+            "the Ballerina interpreter supports Gemini on Vertex AI only");
+    }
+
+    if model.authentication !is () {
+        return error("The 'authentication' field is not supported for the 'gemini' provider. Vertex AI " +
+            string `authenticates with the credentials file referenced by '${GOOGLE_APP_CREDENTIALS_ENV}'`);
+    }
+
+    string? credentialsPath = os:getEnv(GOOGLE_APP_CREDENTIALS_ENV);
+    if credentialsPath is () || credentialsPath.trim() == "" {
+        return error(string `Vertex AI authentication requires Google credentials. Set the ` +
+            string `'${GOOGLE_APP_CREDENTIALS_ENV}' environment variable to the path of a service account ` +
+            string `JSON key file or a gcloud Application Default Credentials file.`);
+    }
+
+    vertex:VertexAiAuth auth = check resolveVertexAuth(credentialsPath);
+
+    string? location = providerOptions["location"];
+    vertex:ModelProvider|error vertexModel = location is string ?
+        trap new (auth, project, name, location = location) :
+        trap new (auth, project, name);
+    if vertexModel is error {
+        return error(string `Failed to initialize the Vertex AI model provider: ${vertexModel.message()}`, vertexModel);
+    }
+    return vertexModel;
+}
+
+function resolveVertexAuth(string credentialsPath) returns vertex:VertexAiAuth|error {
+    json|error credsJson = io:fileReadJson(credentialsPath);
+    if credsJson is error {
+        return error(string `Unable to read Google credentials file at '${credentialsPath}': ${credsJson.message()}`, credsJson);
+    }
+
+    map<json>|error creds = credsJson.ensureType();
+    if creds is error {
+        return error(string `Google credentials file at '${credentialsPath}' is not a valid JSON object`);
+    }
+
+    if creds["type"] == "authorized_user" {
+        json clientId = creds["client_id"];
+        json clientSecret = creds["client_secret"];
+        json refreshToken = creds["refresh_token"];
+        if clientId !is string || clientSecret !is string || refreshToken !is string {
+            return error("Authorized-user (ADC) credentials must contain string 'client_id', " +
+                "'client_secret', and 'refresh_token' fields");
+        }
+        vertex:OAuth2RefreshConfig oauth2Config = {clientId, clientSecret, refreshToken};
+        return oauth2Config;
+    }
+
+    json credentialsType = creds["type"];
+    if credentialsType is string && credentialsType != "service_account" {
+        return error(string `Unsupported Google credentials type '${credentialsType}'. ` +
+            "Supported types are 'authorized_user' and 'service_account'");
+    }
+
+    return credentialsPath;
 }
 
 const DEFAULT_SESSION_ID = "sessionId";
