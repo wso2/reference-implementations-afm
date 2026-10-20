@@ -29,6 +29,7 @@ from fastapi import FastAPI
 
 from .constants import DEFAULT_HTTP_PORT
 from .exceptions import AFMError
+from .http_auth import build_httpx_auth
 from .interfaces.base import get_http_path, get_interfaces
 from .interfaces.console_chat import async_run_console_chat
 from .interfaces.web_chat import create_webchat_router
@@ -97,6 +98,9 @@ def create_unified_app(
                 topic=subscription.topic,
                 callback=callback_url,
                 secret=secret,
+                auth=build_httpx_auth(
+                    subscription.authentication, base_dir=agent.afm.source_dir
+                ),
             )
 
     # Create lifespan for MCP connection management and WebSub
@@ -459,7 +463,10 @@ def run(
         raise click.ClickException(str(e)) from e
 
     # Create agent
-    agent = runner_cls(afm)
+    try:
+        agent = runner_cls(afm)
+    except AFMError as e:
+        raise click.ClickException(f"Failed to create agent: {e}") from e
 
     # Print startup info
     click.echo("")
@@ -531,6 +538,13 @@ def framework_list() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _create_app(agent: AgentRunner, **kwargs: Any) -> FastAPI:
+    try:
+        return create_unified_app(agent, **kwargs)
+    except AFMError as e:
+        raise click.ClickException(f"Failed to create the HTTP app: {e}") from e
+
+
 async def _run_http_and_console(
     agent: AgentRunner,
     webchat: WebChatInterface | None,
@@ -545,7 +559,7 @@ async def _run_http_and_console(
     startup_event = asyncio.Event()
 
     # Create unified app (lifespan handles MCP connection)
-    app = create_unified_app(
+    app = _create_app(
         agent,
         webchat_interface=webchat,
         webhook_interface=webhook,
@@ -633,7 +647,7 @@ def _run_http_only(
     log_file: Path | None = None,
 ) -> None:
     # Create unified app (lifespan handles MCP connections)
-    app = create_unified_app(
+    app = _create_app(
         agent,
         webchat_interface=webchat,
         webhook_interface=webhook,

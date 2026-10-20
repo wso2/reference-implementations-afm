@@ -218,92 +218,20 @@ function testGetFilteredToolsEmptyAllow() returns error? {
 }
 
 @test:Config
-function testGetAuthTokenOrApiKeyNullAuth() returns error? {
-    string|error result = getAuthTokenOrApiKey((), "bearer", "token");
-    test:assertTrue(result is error);
-    test:assertEquals((<error>result).message(), "No authentication provided");
+function testGetCredentialBearer() returns error? {
+    ModelAuthentication auth = {token: "my-token-123"};
+    test:assertEquals(check getCredential(auth), "my-token-123");
 }
 
 @test:Config
-function testGetAuthTokenOrApiKeyTypeMismatch() returns error? {
-    ClientAuthentication auth = {
-        'type: "basic"
-    };
-    string|error result = getAuthTokenOrApiKey(auth, "bearer", "token");
-    test:assertTrue(result is error);
-    test:assertTrue((<error>result).message().includes("Unsupported authentication type"));
+function testGetCredentialApiKey() returns error? {
+    ModelAuthentication auth = {api_key: "my-api-key-456"};
+    test:assertEquals(check getCredential(auth), "my-api-key-456");
 }
 
 @test:Config
-function testGetAuthTokenOrApiKeyMissingKey() returns error? {
-    ClientAuthentication auth = {
-        'type: "bearer"
-    };
-    string|error result = getAuthTokenOrApiKey(auth, "bearer", "token");
-    test:assertTrue(result is error);
-    test:assertEquals((<error>result).message(), "token not found in 'authentication'");
-}
-
-@test:Config
-function testGetAuthTokenOrApiKeyValidBearer() returns error? {
-    ClientAuthentication auth = {
-        'type: "bearer",
-        "token": "my-token-123"
-    };
-    string result = check getAuthTokenOrApiKey(auth, "bearer", "token");
-    test:assertEquals(result, "my-token-123");
-}
-
-@test:Config
-function testGetAuthTokenOrApiKeyValidApiKey() returns error? {
-    ClientAuthentication auth = {
-        'type: "api-key",
-        "api_key": "my-api-key-456"
-    };
-    string result = check getAuthTokenOrApiKey(auth, "api-key", "api_key");
-    test:assertEquals(result, "my-api-key-456");
-}
-
-@test:Config
-function testGetAuthTokenOrApiKeyCaseInsensitive() returns error? {
-    ClientAuthentication auth = {
-        'type: "BEARER",
-        "token": "case-insensitive-token"
-    };
-    string result = check getAuthTokenOrApiKey(auth, "bearer", "token");
-    test:assertEquals(result, "case-insensitive-token");
-}
-
-@test:Config
-function testGetApiKeyValid() returns error? {
-    ClientAuthentication auth = {
-        'type: "api-key",
-        "api_key": "test-api-key"
-    };
-    string result = check getApiKey(auth);
-    test:assertEquals(result, "test-api-key");
-}
-
-@test:Config
-function testGetApiKeyNull() returns error? {
-    string|error result = getApiKey(());
-    test:assertTrue(result is error);
-    test:assertEquals((<error>result).message(), "No authentication provided");
-}
-
-@test:Config
-function testGetTokenValid() returns error? {
-    ClientAuthentication auth = {
-        'type: "bearer",
-        "token": "test-token"
-    };
-    string result = check getToken(auth);
-    test:assertEquals(result, "test-token");
-}
-
-@test:Config
-function testGetTokenNull() returns error? {
-    string|error result = getToken(());
+function testGetCredentialNoAuthentication() {
+    string|error result = getCredential(());
     test:assertTrue(result is error);
     test:assertEquals((<error>result).message(), "No authentication provided");
 }

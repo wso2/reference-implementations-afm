@@ -17,16 +17,18 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import httpx
 from afm.exceptions import (
+    AuthenticationError,
     MCPAuthenticationError,
     MCPConnectionError,
     MCPError,
 )
+from afm.http_auth import build_httpx_auth
 from afm.models import (
     AFMRecord,
-    ClientAuthentication,
     HttpTransport,
     MCPServer,
     StdioTransport,
@@ -37,57 +39,6 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StdioConnection, StreamableHttpConnection
 
 logger = logging.getLogger(__name__)
-
-
-class BearerAuth(httpx.Auth):
-    def __init__(self, token: str) -> None:
-        self.token = token
-
-    def auth_flow(self, request: httpx.Request):
-        request.headers["Authorization"] = f"Bearer {self.token}"
-        yield request
-
-
-class ApiKeyAuth(httpx.Auth):
-    def __init__(self, api_key: str, header_name: str = "Authorization") -> None:
-        self.api_key = api_key
-        self.header_name = header_name
-
-    def auth_flow(self, request: httpx.Request):
-        request.headers[self.header_name] = self.api_key
-        yield request
-
-
-def build_httpx_auth(auth: ClientAuthentication | None) -> httpx.Auth | None:
-    if auth is None:
-        return None
-
-    auth_type = auth.type.lower()
-
-    if auth_type == "bearer":
-        if auth.token is None:
-            raise MCPAuthenticationError("Bearer auth requires 'token' field")
-        return BearerAuth(auth.token)
-
-    elif auth_type == "basic":
-        if auth.username is None or auth.password is None:
-            raise MCPAuthenticationError(
-                "Basic auth requires 'username' and 'password' fields"
-            )
-        return httpx.BasicAuth(auth.username, auth.password)
-
-    elif auth_type == "api-key":
-        if auth.api_key is None:
-            raise MCPAuthenticationError("API key auth requires 'api_key' field")
-        return ApiKeyAuth(auth.api_key)
-
-    elif auth_type in ("oauth2", "jwt"):
-        raise MCPAuthenticationError(
-            f"Authentication type '{auth_type}' not yet supported"
-        )
-
-    else:
-        raise MCPAuthenticationError(f"Unsupported authentication type: {auth_type}")
 
 
 def filter_tools(
@@ -128,15 +79,19 @@ class MCPClient:
         name: str,
         transport: HttpTransport | StdioTransport,
         tool_filter: ToolFilter | None = None,
+        auth: httpx.Auth | None = None,
     ) -> None:
         """Initialize an MCP client."""
         self.name = name
         self.transport = transport
         self.tool_filter = tool_filter
+        self.auth = auth
         self._tools: list[BaseTool] | None = None
 
     @classmethod
-    def from_mcp_server(cls, server: MCPServer) -> "MCPClient":
+    def from_mcp_server(
+        cls, server: MCPServer, base_dir: Path | None = None
+    ) -> "MCPClient":
         transport = server.transport
 
         if not isinstance(transport, (HttpTransport, StdioTransport)):
@@ -145,10 +100,22 @@ class MCPClient:
                 server_name=server.name,
             )
 
+        auth = None
+        if isinstance(transport, HttpTransport):
+            try:
+                auth = build_httpx_auth(
+                    transport.authentication,
+                    base_dir=base_dir,
+                    mcp_url=transport.url,
+                )
+            except AuthenticationError as e:
+                raise MCPAuthenticationError(str(e), server_name=server.name) from None
+
         return cls(
             name=server.name,
             transport=transport,
             tool_filter=server.tool_filter,
+            auth=auth,
         )
 
     def _build_connection_config(self) -> StreamableHttpConnection | StdioConnection:
@@ -157,9 +124,8 @@ class MCPClient:
                 "transport": "streamable_http",
                 "url": self.transport.url,
             }
-            auth = build_httpx_auth(self.transport.authentication)
-            if auth is not None:
-                config["auth"] = auth
+            if self.auth is not None:
+                config["auth"] = self.auth
             return config
 
         else:
@@ -201,7 +167,7 @@ class MCPClient:
 
 
 class MCPManager:
-    def __init__(self, servers: list[MCPServer]) -> None:
+    def __init__(self, servers: list[MCPServer], base_dir: Path | None = None) -> None:
         """Initialize the MCP manager."""
         self._servers = servers
         self._clients: list[MCPClient] = []
@@ -210,8 +176,10 @@ class MCPManager:
         # Create clients for each server
         for server in servers:
             try:
-                client = MCPClient.from_mcp_server(server)
+                client = MCPClient.from_mcp_server(server, base_dir)
                 self._clients.append(client)
+            except MCPAuthenticationError:
+                raise
             except MCPError as e:
                 logger.warning(f"Skipping MCP server: {e}")
 
@@ -225,7 +193,7 @@ class MCPManager:
         if mcp_servers is None or len(mcp_servers) == 0:
             return None
 
-        return cls(mcp_servers)
+        return cls(mcp_servers, base_dir=afm.source_dir)
 
     @property
     def server_names(self) -> list[str]:

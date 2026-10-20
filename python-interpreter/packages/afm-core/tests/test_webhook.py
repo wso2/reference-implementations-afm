@@ -19,12 +19,15 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
-
-from afm.runner import AgentRunner
+from afm.authentication import ClientAuthentication
+from afm.exceptions import AuthenticationError
+from afm.http_auth import HeaderAuth, JwtAuth, build_httpx_auth
 from afm.interfaces.webhook import (
     WebSubSubscriber,
     create_webhook_app,
@@ -38,6 +41,12 @@ from afm.models import (
     Subscription,
     WebhookInterface,
 )
+from afm.parser import parse_afm
+from afm.runner import AgentRunner
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 
 
 @pytest.fixture
@@ -424,3 +433,183 @@ class TestWebSubVerification:
         )
 
         assert response.status_code == 404
+
+
+class TestWebSubSubscriberAuthentication:
+    @staticmethod
+    def hub(statuses: list[int] | None = None):
+        requests: list[httpx.Request] = []
+        answers = list(statuses or [202])
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(answers.pop(0) if len(answers) > 1 else answers[0])
+
+        return requests, httpx.MockTransport(handler)
+
+    @staticmethod
+    def subscriber(auth, transport) -> WebSubSubscriber:
+        subscriber = WebSubSubscriber(
+            hub="https://hub.example.com/",
+            topic="https://example.com/topic",
+            callback="https://agent.example.com/webhook",
+            secret="hub-secret",
+            auth=auth,
+        )
+        real_client = httpx.AsyncClient
+        patcher = patch(
+            "afm.interfaces.webhook.httpx.AsyncClient",
+            lambda *args, **kwargs: real_client(
+                *args, **{"transport": transport, **kwargs}
+            ),
+        )
+        patcher.start()
+        subscriber._patcher = patcher  # type: ignore[attr-defined]
+        return subscriber
+
+    @pytest.fixture(autouse=True)
+    def _stop_patches(self):
+        yield
+        patch.stopall()
+
+    @pytest.mark.parametrize(
+        ("authentication", "header", "value"),
+        [
+            ({"type": "bearer", "token": "abc"}, "Authorization", "Bearer abc"),
+            (
+                {"type": "api-key", "api_key": "k", "header_name": "X-API-Key"},
+                "X-API-Key",
+                "k",
+            ),
+            (
+                {"type": "basic", "username": "u", "password": "p"},
+                "Authorization",
+                "Basic dTpw",
+            ),
+        ],
+    )
+    async def test_the_authentication_is_sent_on_subscribe_and_unsubscribe(
+        self, authentication: dict, header: str, value: str
+    ) -> None:
+        requests, transport = self.hub()
+        auth = build_httpx_auth(
+            TypeAdapter(ClientAuthentication).validate_python(authentication)
+        )
+        subscriber = self.subscriber(auth, transport)
+
+        assert await subscriber.subscribe() is True
+        assert await subscriber.unsubscribe() is True
+
+        assert [r.headers[header] for r in requests] == [
+            value,
+            value,
+        ]
+        assert [parse_qs(r.content.decode())["hub.mode"] for r in requests] == [
+            ["subscribe"],
+            ["unsubscribe"],
+        ]
+
+    async def test_without_authentication_nothing_is_added(self) -> None:
+        requests, transport = self.hub()
+        subscriber = self.subscriber(None, transport)
+
+        await subscriber.subscribe()
+
+        assert "Authorization" not in requests[0].headers
+
+    async def test_oauth2_renews_the_token_after_a_401_from_the_hub(self) -> None:
+        tokens = iter(["old", "new"])
+        token_requests: list[httpx.Request] = []
+
+        def token_endpoint(request: httpx.Request) -> httpx.Response:
+            token_requests.append(request)
+            return httpx.Response(
+                200, json={"access_token": next(tokens), "token_type": "Bearer"}
+            )
+
+        def hub_handler(request: httpx.Request) -> httpx.Response:
+            token = request.headers["Authorization"].removeprefix("Bearer ")
+            return httpx.Response(202 if token == "new" else 401)
+
+        auth = build_httpx_auth(
+            TypeAdapter(ClientAuthentication).validate_python(
+                {
+                    "type": "oauth2",
+                    "grant_type": "client_credentials",
+                    "token_url": "https://idp.example.com/token",
+                    "client_id": "c",
+                    "client_secret": "s",
+                }
+            )
+        )
+        auth._transport = httpx.MockTransport(token_endpoint)
+        subscriber = self.subscriber(auth, httpx.MockTransport(hub_handler))
+
+        assert await subscriber.subscribe() is True
+        assert len(token_requests) == 2
+
+
+class TestWebhookAppAuthentication:
+    def agent_for(self, front_matter: str, source_dir: Path | None = None) -> MagicMock:
+        afm = parse_afm(f"---\n{front_matter}---\n# Role\nr\n# Instructions\ni\n")
+        afm.source_dir = source_dir
+        agent = MagicMock(spec=AgentRunner)
+        agent.name = "Agent"
+        agent.description = "Agent"
+        agent.afm = afm
+        return agent
+
+    SUBSCRIPTION = (
+        "interfaces:\n  - type: webhook\n    subscription:\n      protocol: websub\n"
+        "      hub: https://hub.example.com\n      topic: https://example.com/topic\n"
+        "      callback: https://agent.example.com/webhook\n"
+    )
+
+    def test_the_subscription_authentication_reaches_the_subscriber(self) -> None:
+        agent = self.agent_for(
+            self.SUBSCRIPTION
+            + "      authentication:\n        type: bearer\n        token: abc\n"
+        )
+
+        app = create_webhook_app(agent)
+
+        assert isinstance(app.state.websub_subscriber.auth, HeaderAuth)
+
+    def test_a_relative_signing_key_is_resolved_against_the_afm_directory(
+        self, tmp_path: Path
+    ) -> None:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        (tmp_path / "signing.pem").write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        agent = self.agent_for(
+            self.SUBSCRIPTION
+            + "      authentication:\n        type: jwt\n        issuer: i\n"
+            "        audience: a\n        signing_key: signing.pem\n",
+            tmp_path,
+        )
+
+        app = create_webhook_app(agent)
+
+        assert isinstance(app.state.websub_subscriber.auth, JwtAuth)
+
+    def test_an_unusable_signing_key_fails_before_any_request(
+        self, tmp_path: Path
+    ) -> None:
+        agent = self.agent_for(
+            self.SUBSCRIPTION
+            + "      authentication:\n        type: jwt\n        issuer: i\n"
+            "        audience: a\n        signing_key: missing.pem\n",
+            tmp_path,
+        )
+
+        with pytest.raises(AuthenticationError, match="cannot be read"):
+            create_webhook_app(agent)
+
+    def test_no_authentication_means_no_auth(self) -> None:
+        app = create_webhook_app(self.agent_for(self.SUBSCRIPTION))
+        assert app.state.websub_subscriber.auth is None

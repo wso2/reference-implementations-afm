@@ -19,14 +19,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from langchain_core.tools import BaseTool
-from langchain_mcp_adapters.sessions import StdioConnection
-
-from afm.exceptions import MCPConnectionError
+from afm.authentication import (
+    ApiKeyAuthentication,
+    BasicAuthentication,
+    BearerAuthentication,
+    ClientAuthentication,
+    JwtAuthentication,
+    OAuth2Authentication,
+)
+from afm.exceptions import MCPAuthenticationError, MCPConnectionError, MCPError
+from afm.http_auth import HeaderAuth, JwtAuth, OAuth2Auth
 from afm.models import (
     AFMRecord,
     AgentMetadata,
-    ClientAuthentication,
     HttpTransport,
     MCPServer,
     StdioTransport,
@@ -34,13 +39,15 @@ from afm.models import (
     Tools,
 )
 from afm_langchain.tools.mcp import (
-    ApiKeyAuth,
-    BearerAuth,
     MCPClient,
     MCPManager,
-    build_httpx_auth,
     filter_tools,
 )
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from langchain_core.tools import BaseTool
+from langchain_mcp_adapters.sessions import StdioConnection
+from pydantic import TypeAdapter
 
 
 def make_mcp_server(
@@ -51,15 +58,25 @@ def make_mcp_server(
 ) -> MCPServer:
     auth = None
     if auth_type == "bearer":
-        auth = ClientAuthentication(type="bearer", token="test-token")
+        auth = BearerAuthentication(token="test-token")
     elif auth_type == "basic":
-        auth = ClientAuthentication(type="basic", username="user", password="pass")
+        auth = BasicAuthentication(username="user", password="pass")
     elif auth_type == "api-key":
-        auth = ClientAuthentication(type="api-key", api_key="test-api-key")
+        auth = ApiKeyAuthentication(api_key="test-api-key")
     elif auth_type == "oauth2":
-        auth = ClientAuthentication(type="oauth2")
+        auth = OAuth2Authentication(
+            grant_type="client_credentials",
+            token_url="https://idp.example.com/token",
+            client_id="client",
+            client_secret="secret",
+        )
     elif auth_type == "jwt":
-        auth = ClientAuthentication(type="jwt")
+        auth = JwtAuthentication(
+            issuer="issuer",
+            audience="audience",
+            signing_key="k" * 32,
+            algorithm="HS256",
+        )
 
     return MCPServer(
         name=name,
@@ -109,29 +126,6 @@ def make_mock_tool(name: str, description: str = "A test tool") -> MagicMock:
 
     tool.args_schema = MockArgsSchema
     return tool
-
-
-class TestBuildHttpxAuth:
-    def test_none_auth_returns_none(self):
-        result = build_httpx_auth(None)
-        assert result is None
-
-    def test_bearer_auth_returns_bearer_auth_instance(self):
-        auth = ClientAuthentication(type="bearer", token="my-token")
-        result = build_httpx_auth(auth)
-        assert isinstance(result, BearerAuth)
-        assert result.token == "my-token"
-
-    def test_basic_auth_returns_httpx_basic_auth(self):
-        auth = ClientAuthentication(type="basic", username="user", password="pass")
-        result = build_httpx_auth(auth)
-        assert isinstance(result, httpx.BasicAuth)
-
-    def test_api_key_auth_returns_api_key_auth_instance(self):
-        auth = ClientAuthentication(type="api-key", api_key="my-api-key")
-        result = build_httpx_auth(auth)
-        assert isinstance(result, ApiKeyAuth)
-        assert result.api_key == "my-api-key"
 
 
 class TestFilterTools:
@@ -242,7 +236,7 @@ class TestMCPClient:
 
         assert config["transport"] == "streamable_http"
         assert "auth" in config
-        assert isinstance(config["auth"], BearerAuth)
+        assert isinstance(config["auth"], HeaderAuth)
 
     def test_build_connection_config_stdio(self):
         server = make_stdio_mcp_server(
@@ -569,3 +563,91 @@ class TestMCPManager:
         assert len(tools) == 2
         assert tools[0].name == "http_tool"
         assert tools[1].name == "stdio_tool"
+
+
+class TestMCPAuthentication:
+    @pytest.mark.parametrize(
+        ("auth_type", "expected"),
+        [
+            ("bearer", HeaderAuth),
+            ("api-key", HeaderAuth),
+            ("basic", httpx.BasicAuth),
+            ("jwt", JwtAuth),
+            ("oauth2", OAuth2Auth),
+        ],
+    )
+    def test_every_type_is_applied_to_the_http_transport(self, auth_type, expected):
+        client = MCPClient.from_mcp_server(make_mcp_server(auth_type=auth_type))
+
+        assert isinstance(client._build_connection_config()["auth"], expected)
+
+    def test_stdio_transports_have_no_authentication(self):
+        client = MCPClient.from_mcp_server(make_stdio_mcp_server())
+        assert client.auth is None
+
+    def test_the_transport_url_is_the_default_oauth2_resource(self):
+        server = make_mcp_server(
+            url="HTTPS://MCP.Example.com/mcp#frag", auth_type="oauth2"
+        )
+        client = MCPClient.from_mcp_server(server)
+        assert client.auth._resource == "https://mcp.example.com/mcp"
+
+    def test_the_afm_directory_resolves_relative_signing_keys(self, tmp_path):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        (tmp_path / "signing.pem").write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        server = make_mcp_server()
+        server.transport.authentication = TypeAdapter(
+            ClientAuthentication
+        ).validate_python(
+            {
+                "type": "jwt",
+                "issuer": "i",
+                "audience": "a",
+                "signing_key": "signing.pem",
+            }
+        )
+        afm = make_afm_with_mcp([server])
+        afm.source_dir = tmp_path
+
+        manager = MCPManager.from_afm(afm)
+
+        assert isinstance(manager._clients[0].auth, JwtAuth)
+
+    def test_an_unusable_key_fails_when_the_manager_is_created(self, tmp_path):
+        server = make_mcp_server(name="secured")
+        server.transport.authentication = TypeAdapter(
+            ClientAuthentication
+        ).validate_python(
+            {
+                "type": "jwt",
+                "issuer": "i",
+                "audience": "a",
+                "signing_key": "missing.pem",
+            }
+        )
+        afm = make_afm_with_mcp([server])
+        afm.source_dir = tmp_path
+
+        with pytest.raises(MCPAuthenticationError, match="MCP server 'secured'"):
+            MCPManager.from_afm(afm)
+
+    def test_other_mcp_errors_still_skip_the_server(self, caplog):
+        good, bad = make_mcp_server(name="good"), make_mcp_server(name="bad")
+        real = MCPClient.from_mcp_server
+
+        def from_mcp_server(server, base_dir=None):
+            if server.name == "bad":
+                raise MCPError("Unsupported transport type", server_name=server.name)
+            return real(server, base_dir)
+
+        with patch.object(MCPClient, "from_mcp_server", side_effect=from_mcp_server):
+            manager = MCPManager([good, bad])
+
+        assert manager.server_names == ["good"]
+        assert "Skipping MCP server" in caplog.text

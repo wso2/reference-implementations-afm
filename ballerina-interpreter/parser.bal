@@ -35,6 +35,7 @@ function parseAfm(string content) returns AFMRecord|error {
     if resolvedLines.length() > 0 && resolvedLines[0].trim() == FRONTMATTER_DELIMITER {
         map<json> frontmatterMap;
         [frontmatterMap, body] = check extractFrontMatter(resolvedContent);
+        check normalizeAuthentications(frontmatterMap);
         metadata = check frontmatterMap.fromJsonWithType();
     } else {
         body = resolvedContent;
@@ -74,6 +75,43 @@ function parseAfm(string content) returns AFMRecord|error {
     check validateHttpVariables(afmRecord);
 
     return afmRecord;
+}
+
+function normalizeAuthentications(map<json> frontmatter) returns error? {
+    json model = frontmatter["model"];
+    if model is map<json> {
+        check normalizeAuthentication(model, "model.authentication", true);
+    }
+
+    json tools = frontmatter["tools"];
+    json servers = tools is map<json> ? tools["mcp"] : ();
+    if servers is json[] {
+        foreach int index in 0 ..< servers.length() {
+            json server = servers[index];
+            json transport = server is map<json> ? server["transport"] : ();
+            if transport is map<json> {
+                check normalizeAuthentication(transport, string `tools.mcp[${index}].transport.authentication`);
+            }
+        }
+    }
+
+    json interfaces = frontmatter["interfaces"];
+    if interfaces is json[] {
+        foreach int index in 0 ..< interfaces.length() {
+            json interface = interfaces[index];
+            json subscription = interface is map<json> ? interface["subscription"] : ();
+            if subscription is map<json> {
+                check normalizeAuthentication(subscription, string `interfaces[${index}].subscription.authentication`);
+            }
+        }
+    }
+}
+
+function normalizeAuthentication(map<json> owner, string location, boolean forModel = false) returns error? {
+    json authentication = owner["authentication"];
+    if authentication !is () {
+        owner["authentication"] = check validateAuthentication(authentication, location, forModel);
+    }
 }
 
 function resolveVariables(string content) returns string|error {
@@ -301,14 +339,25 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
 function containsHttpVariable(string content) returns boolean =>
     content.indexOf("${http:") != ();
 
-function authenticationContainsHttpVariable(ClientAuthentication? authentication) returns boolean {
-    if authentication is () {
-        return false;
-    }
+function authenticationContainsHttpVariable(ClientAuthentication? authentication) returns boolean =>
+    authentication is () ? false : jsonContainsHttpVariable(authentication.toJson());
 
-    foreach anydata value in authentication {
-        if value is string && containsHttpVariable(value) {
-            return true;
+function jsonContainsHttpVariable(json value) returns boolean {
+    if value is string {
+        return containsHttpVariable(value);
+    }
+    if value is json[] {
+        foreach json item in value {
+            if jsonContainsHttpVariable(item) {
+                return true;
+            }
+        }
+    }
+    if value is map<json> {
+        foreach json item in value {
+            if jsonContainsHttpVariable(item) {
+                return true;
+            }
         }
     }
     return false;

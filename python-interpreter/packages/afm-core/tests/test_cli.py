@@ -24,6 +24,7 @@ from afm.cli import (
     cli,
     create_unified_app,
 )
+from afm.exceptions import MCPAuthenticationError
 from afm.models import (
     Subscription,
     WebChatInterface,
@@ -244,6 +245,65 @@ class TestCLIIntegration:
             cli, ["run", str(sample_agent_path), "--dry-run", "--verbose"]
         )
         assert result.exit_code == 0
+
+
+class TestAuthenticationFailures:
+    AFM = """---
+interfaces:
+  - type: webhook
+    subscription:
+      protocol: websub
+      hub: https://hub.example.com
+      topic: https://example.com/topic
+      callback: https://agent.example.com/webhook
+      authentication:
+        type: jwt
+        issuer: issuer
+        audience: audience
+        signing_key: missing.pem
+---
+# Role
+Role
+# Instructions
+Instructions
+"""
+
+    @patch("afm.cli.uvicorn")
+    @patch("afm.cli.load_runner")
+    def test_an_unusable_signing_key_is_reported_before_the_server_starts(
+        self,
+        mock_load_runner: MagicMock,
+        mock_uvicorn: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ):
+        agent_file = tmp_path / "agent.afm.md"
+        agent_file.write_text(self.AFM)
+        agent = _make_mock_agent()
+        agent.afm.source_dir = tmp_path
+        mock_load_runner.return_value = MagicMock(return_value=agent)
+
+        result = runner.invoke(cli, ["run", str(agent_file)])
+
+        assert result.exit_code != 0
+        assert "Failed to create the HTTP app" in result.output
+        assert "signing_key file cannot be read" in result.output
+        assert "missing.pem" not in result.output
+        assert not mock_uvicorn.run.called
+
+    @patch("afm.cli.load_runner")
+    def test_an_authentication_error_while_creating_the_agent_is_reported(
+        self, mock_load_runner: MagicMock, runner: CliRunner, sample_agent_path: Path
+    ):
+        mock_load_runner.return_value = MagicMock(
+            side_effect=MCPAuthenticationError("bad key", server_name="docs")
+        )
+
+        result = runner.invoke(cli, ["run", str(sample_agent_path)])
+
+        assert result.exit_code != 0
+        assert "Failed to create agent: MCP server 'docs': bad key" in result.output
+        assert "Traceback" not in result.output
 
 
 class TestFrameworkCommand:

@@ -30,7 +30,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from ..constants import DEFAULT_HTTP_PORT
-from ..exceptions import TemplateEvaluationError
+from ..exceptions import AuthenticationError, TemplateEvaluationError
+from ..http_auth import build_httpx_auth
 from ..templates import compile_template, evaluate_template
 from .base import InterfaceNotFoundError, get_http_path, get_webhook_interface
 
@@ -39,6 +40,12 @@ if TYPE_CHECKING:
     from ..models import CompiledTemplate, WebhookInterface
 
 logger = logging.getLogger(__name__)
+
+
+def _describe(error: Exception) -> str:
+    return (
+        str(error) if isinstance(error, AuthenticationError) else type(error).__name__
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -59,12 +66,14 @@ class WebSubSubscriber:
         *,
         secret: str | None = None,
         lease_seconds: int = 86400,  # 24 hours default
+        auth: httpx.Auth | None = None,
     ) -> None:
         self.hub = hub
         self.topic = topic
         self.callback = callback
         self.secret = secret
         self.lease_seconds = lease_seconds
+        self.auth = auth
         self._verified = False
         self._challenge: str | None = None
 
@@ -90,6 +99,7 @@ class WebSubSubscriber:
                     data=data,
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                     timeout=30.0,
+                    auth=self.auth,
                 )
 
                 # WebSub spec: 202 Accepted means subscription request received
@@ -100,14 +110,11 @@ class WebSubSubscriber:
                     )
                     return True
                 else:
-                    logger.error(
-                        f"WebSub subscription failed: {response.status_code} "
-                        f"{response.text}"
-                    )
+                    logger.error(f"WebSub subscription failed: {response.status_code}")
                     return False
 
         except Exception as e:
-            logger.error(f"WebSub subscription error: {e}")
+            logger.error(f"WebSub subscription error: {_describe(e)}")
             return False
 
     async def unsubscribe(self) -> bool:
@@ -124,6 +131,7 @@ class WebSubSubscriber:
                     data=data,
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                     timeout=30.0,
+                    auth=self.auth,
                 )
 
                 if response.status_code in (200, 202, 204):
@@ -136,7 +144,7 @@ class WebSubSubscriber:
                     return False
 
         except Exception as e:
-            logger.error(f"WebSub unsubscription error: {e}")
+            logger.error(f"WebSub unsubscription error: {_describe(e)}")
             return False
 
     def verify_challenge(
@@ -364,6 +372,9 @@ def create_webhook_app(
             topic=subscription.topic,
             callback=callback_url,
             secret=secret,
+            auth=build_httpx_auth(
+                subscription.authentication, base_dir=agent.afm.source_dir
+            ),
         )
 
     # Create lifespan context manager for startup/shutdown

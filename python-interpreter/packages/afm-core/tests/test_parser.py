@@ -518,3 +518,80 @@ Test instructions
         assert result.metadata.model is not None
         assert result.metadata.model.authentication is not None
         assert result.metadata.model.authentication.token == "secret-token-123"
+
+
+class TestAuthenticationVariables:
+    def test_variables_are_resolved_inside_nested_authentication_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCOPE", "read")
+        monkeypatch.setenv("TENANT", "t1")
+        content = """---
+tools:
+  mcp:
+    - name: server
+      transport:
+        type: http
+        url: https://mcp.example.com
+        authentication:
+          type: oauth2
+          grant_type: client_credentials
+          token_url: https://idp.example.com/token
+          client_id: id
+          client_secret: secret
+          scopes: ["${env:SCOPE}"]
+          extra_params:
+            tenant: "${env:TENANT}"
+---
+# Role
+r
+# Instructions
+i
+"""
+        auth = parse_afm(content).metadata.tools.mcp[0].transport.authentication
+
+        assert auth.scopes == ["read"]
+        assert auth.extra_params == {"tenant": "t1"}
+
+    def test_a_resolved_value_is_validated_without_echoing_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TOKEN", "has a space")
+        content = """---
+model:
+  provider: openai
+  name: gpt-4o
+  authentication:
+    type: bearer
+    token: "${env:TOKEN}"
+---
+# Role
+r
+# Instructions
+i
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+
+        assert "whitespace" in str(exc_info.value)
+        assert "has a space" not in str(exc_info.value)
+
+    def test_variables_are_kept_and_not_validated_when_resolution_is_disabled(
+        self,
+    ) -> None:
+        content = """---
+model:
+  provider: openai
+  name: gpt-4o
+  authentication:
+    type: bearer
+    token: "${env:NOT_SET_ANYWHERE}"
+---
+# Role
+r
+# Instructions
+i
+"""
+        auth = parse_afm(content, resolve_env=False).metadata.model.authentication
+
+        assert auth.token == "${env:NOT_SET_ANYWHERE}"

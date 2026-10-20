@@ -1,4 +1,3 @@
-import ballerina/http;
 import ballerina/io;
 import ballerina/os;
 import ballerina/test;
@@ -392,64 +391,6 @@ function testGetFilteredToolsDenyOnly() {
     ToolFilter filter = {deny: ["tool1"]};
     string[]? result = getFilteredTools(filter);
     test:assertTrue(result is ());
-}
-
-// ============================================
-// Authentication Helper Tests
-// ============================================
-
-@test:Config
-function testGetApiKeySuccess() returns error? {
-    ClientAuthentication auth = {'type: "api-key", "api_key": "test-key-123"};
-    string apiKey = check getApiKey(auth);
-    test:assertEquals(apiKey, "test-key-123");
-}
-
-@test:Config
-function testGetApiKeyWrongType() {
-    ClientAuthentication auth = {'type: "bearer", "token": "test-token"};
-    string|error result = getApiKey(auth);
-    if result is string {
-        test:assertFail("Expected error for wrong authentication type");
-    }
-    test:assertEquals(result.message(), "Unsupported authentication type for api-key: bearer");
-}
-
-@test:Config
-function testGetApiKeyMissingKey() {
-    ClientAuthentication auth = {'type: "api-key"};
-    string|error result = getApiKey(auth);
-    if result is string {
-        test:assertFail("Expected error for missing API key");
-    }
-    test:assertEquals(result.message(), "api_key not found in 'authentication'");
-}
-
-@test:Config
-function testGetTokenSuccess() returns error? {
-    ClientAuthentication auth = {'type: "bearer", "token": "test-token-456"};
-    string token = check getToken(auth);
-    test:assertEquals(token, "test-token-456");
-}
-
-@test:Config
-function testGetTokenWrongType() {
-    ClientAuthentication auth = {'type: "api-key", "api_key": "test-key"};
-    string|error result = getToken(auth);
-    if result is string {
-        test:assertFail("Expected error for wrong authentication type");
-    }
-    test:assertEquals(result.message(), "Unsupported authentication type for bearer: api-key");
-}
-
-@test:Config
-function testGetTokenNoAuth() {
-    ClientAuthentication? auth = ();
-    string|error result = getToken(auth);
-    if result is string {
-        test:assertFail("Expected error for null authentication");
-    }
-    test:assertEquals(result.message(), "No authentication provided");
 }
 
 // ============================================
@@ -1126,76 +1067,4 @@ function testHandlePayloadVariableNonStringValue() returns error? {
 
     test:assertEquals(parts.length(), 1);
     test:assertEquals(parts[0], "30");
-}
-
-// ============================================
-// Authentication Mapping Tests
-// ============================================
-
-@test:Config
-function testMapToHttpClientAuthNoAuth() returns error? {
-    http:ClientAuthConfig? result = check mapToHttpClientAuth(());
-    test:assertTrue(result is ());
-}
-
-@test:Config
-function testMapToHttpClientAuthBasic() returns error? {
-    ClientAuthentication auth = {
-        'type: "Basic",
-        "username": "user",
-        "password": "pass"
-    };
-
-    http:ClientAuthConfig? result = check mapToHttpClientAuth(auth);
-    test:assertTrue(result is http:CredentialsConfig);
-}
-
-@test:Config
-function testMapToHttpClientAuthBearer() returns error? {
-    ClientAuthentication auth = {
-        'type: "Bearer",
-        "token": "test-token"
-    };
-
-    http:ClientAuthConfig? result = check mapToHttpClientAuth(auth);
-    test:assertTrue(result is http:BearerTokenConfig);
-}
-
-@test:Config
-function testMapToHttpClientAuthOAuth2NotSupported() {
-    ClientAuthentication auth = {
-        'type: "oauth2"
-    };
-
-    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
-    if result is http:ClientAuthConfig? {
-        test:assertFail("Expected error for OAuth2 authentication");
-    }
-    test:assertEquals(result.message(), "OAuth2 authentication not yet supported");
-}
-
-@test:Config
-function testMapToHttpClientAuthJWTNotSupported() {
-    ClientAuthentication auth = {
-        'type: "jwt"
-    };
-
-    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
-    if result is http:ClientAuthConfig? {
-        test:assertFail("Expected error for JWT authentication");
-    }
-    test:assertEquals(result.message(), "JWT authentication not yet supported");
-}
-
-@test:Config
-function testMapToHttpClientAuthUnsupportedType() {
-    ClientAuthentication auth = {
-        'type: "custom-auth"
-    };
-
-    http:ClientAuthConfig|error? result = mapToHttpClientAuth(auth);
-    if result is http:ClientAuthConfig? {
-        test:assertFail("Expected error for unsupported authentication type");
-    }
-    test:assertEquals(result.message(), "Unsupported authentication type: custom-auth");
 }

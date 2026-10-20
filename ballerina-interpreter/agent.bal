@@ -19,28 +19,25 @@ import afm_ballerina.everit.validator;
 import ballerina/ai;
 import ballerina/log;
 import ballerina/os;
-import ballerina/http;
 import ballerinax/ai.anthropic;
 import ballerinax/ai.openai;
 
 function createAgent(AFMRecord afmRecord, string afmFileDir) returns ai:Agent|error {
     AFMRecord {metadata, role, instructions} = afmRecord;
 
-    ai:McpToolKit[] mcpToolKits = [];
+    ai:McpBaseToolKit[] mcpToolKits = [];
     MCPServer[]? mcpServers = metadata?.tools?.mcp;
     if mcpServers is MCPServer[] {
-        foreach MCPServer mcpConn in mcpServers {
+        foreach int index in 0 ..< mcpServers.length() {
+            MCPServer mcpConn = mcpServers[index];
             Transport transport = mcpConn.transport;
             if transport is StdioTransport {
                 return error("Stdio transport is not yet supported by the Ballerina interpreter");
             }
 
-            string[]? filteredTools = getFilteredTools(mcpConn.tool_filter);
-            mcpToolKits.push(check new ai:McpToolKit(
-                transport.url,
-                permittedTools = filteredTools,
-                auth = check mapToHttpClientAuth(transport.authentication)
-            ));
+            ai:McpBaseToolKit mcpToolKit = check createMcpToolKit(transport, mcpConn.tool_filter, afmFileDir,
+                string `tools.mcp[${index}]`);
+            mcpToolKits.push(mcpToolKit);
         }
     }
 
@@ -103,7 +100,7 @@ function getModel(Model? model) returns ai:ModelProvider|error {
     if providerLower == "wso2" {
         return new ai:Wso2ModelProvider(
             model.url ?: "https://dev-tools.wso2.com/ballerina-copilot/v2.0",
-            check getToken(model.authentication)
+            check getCredential(model.authentication)
         );
     }
 
@@ -115,14 +112,14 @@ function getModel(Model? model) returns ai:ModelProvider|error {
     match providerLower {
         "openai" => {
             return new openai:ModelProvider(
-                check getApiKey(model.authentication),
+                check getCredential(model.authentication),
                 check name.ensureType(),
                 model.url ?: "https://api.openai.com/v1"
             );
         }
         "anthropic" => {
             return new anthropic:ModelProvider(
-                check getApiKey(model.authentication),
+                check getCredential(model.authentication),
                 check name.ensureType(),
                 model.url ?: "https://api.anthropic.com/v1"
             );
@@ -312,75 +309,9 @@ isolated function validateJsonSchema(map<json>? jsonSchemaVal, json sampleJson) 
     }
 }
 
-function getApiKey(ClientAuthentication? auth) returns string|error =>
-    getAuthTokenOrApiKey(auth, "api-key", "api_key");
-
-function getToken(ClientAuthentication? auth) returns string|error =>
-    getAuthTokenOrApiKey(auth, "bearer", "token");
-
-function getAuthTokenOrApiKey(ClientAuthentication? auth, string expectedType, string expectedKey) returns string|error {
+function getCredential(ModelAuthentication? auth) returns string|error {
     if auth is () {
         return error("No authentication provided");
     }
-
-    if auth.'type.toLowerAscii() != expectedType {
-        return error(string `Unsupported authentication type for ${expectedType}: ${auth.'type}`);
-    }
-
-    if !auth.hasKey(expectedKey) {
-        return error(string `${expectedKey} not found in 'authentication'`);
-    }
-    
-    return auth.get(expectedKey).ensureType();
-}
-
-function mapToHttpClientAuth(ClientAuthentication? auth) returns http:ClientAuthConfig|error? {
-    if auth is () {
-        return ();
-    }
-    
-    ClientAuthentication {'type, ...rest} = auth;
-
-    'type = 'type.toLowerAscii();
-    
-    match 'type {
-        "basic" => {
-            return rest.cloneWithType(http:CredentialsConfig);
-        }
-        "bearer" => {
-            return rest.cloneWithType(http:BearerTokenConfig);
-        }
-        "oauth2" => {
-            // record {string grantType;}|error oauth2Config = check rest.cloneWithType();
-            // if oauth2Config is error {
-            //     return error("OAuth2 authentication requires 'grantType' field", oauth2Config);
-            // }
-            
-            // var {grantType, ...oauth2ConfigRest} = oauth2Config;
-
-            // match grantType.toLowerAscii() {
-            //     "client_credentials" => {
-            //         return oauth2ConfigRest.cloneWithType(http:OAuth2ClientCredentialsGrantConfig);
-            //     }
-            //     "password" => {
-            //         return oauth2ConfigRest.cloneWithType(http:OAuth2PasswordGrantConfig);
-            //     }
-            //     "refresh_token" => {
-            //         return oauth2ConfigRest.cloneWithType(http:OAuth2RefreshTokenGrantConfig);
-            //     }
-            //     "jwt" => {
-            //         return oauth2Config.cloneWithType(http:OAuth2JwtBearerGrantConfig);
-            //     }
-            // }
-            // panic error(string `Unsupported OAuth2 grant type: ${grantType}`);
-            return error("OAuth2 authentication not yet supported");
-        }
-        "jwt" => {
-            // return rest.cloneWithType(http:JwtIssuerConfig);
-            return error("JWT authentication not yet supported");
-        }
-        _ => {
-            return error(string `Unsupported authentication type: ${'type}`);
-        }
-    }
+    return auth is BearerAuthentication ? auth.token : auth.api_key;
 }

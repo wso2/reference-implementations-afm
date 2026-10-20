@@ -15,13 +15,12 @@
 // under the License.
 
 import ballerina/ai;
-import ballerina/http;
 import ballerina/lang.regexp;
 import ballerina/log;
 import ballerina/websub;
 
 function attachWebhookService(websub:Listener websubListener, ai:Agent agent, WebhookInterface webhookInterface,
-                              HTTPExposure httpExposure) returns error? {
+                              HTTPExposure httpExposure, string afmFileDir) returns error? {
     Subscription subscription = webhookInterface.subscription;
     log:printInfo(string `Webhook subscription configured: ${subscription.protocol} protocol`);
 
@@ -34,8 +33,9 @@ function attachWebhookService(websub:Listener websubListener, ai:Agent agent, We
     // Doesn't work due to a bug.
     // Subscription {hub, topic, callback, secret, authentication} = subscription;
 
-    // Can't specify inline due to a bug.
-    http:ClientAuthConfig? auth = check mapToHttpClientAuth(subscription.authentication);
+    HeaderProvider? headerProvider = check createHeaderProvider(subscription.authentication, afmFileDir,
+        "interfaces.webhook.subscription.authentication");
+    map<string> customHeaders = headerProvider is () ? {} : check headerProvider.getHeaders();
 
     // Only set target when hub and topic are provided (automatic subscription)
     // When not provided, this is a manually registered webhook
@@ -47,10 +47,8 @@ function attachWebhookService(websub:Listener websubListener, ai:Agent agent, We
         @websub:SubscriberServiceConfig {
             target: target,
             secret: subscription.secret,
-            httpConfig: {
-                auth
-            },
-            callback: subscription.callback
+            callback: subscription.callback,
+            customHeaders
         }
         isolated service object {
             isolated remote function onEventNotification(readonly & websub:ContentDistributionMessage msg)
@@ -62,6 +60,11 @@ function attachWebhookService(websub:Listener websubListener, ai:Agent agent, We
 
     return websubListener.attach(webhookService, httpExposure.path);
 }
+
+function webhookStartError(error cause) returns error =>
+    cause.message().startsWith("Subscription initiation failed")
+        ? error("Subscription initiation failed: the hub refused the request or could not be reached")
+        : cause;
 
 isolated function runAgentOnWebSubEventNotification(readonly & CompiledTemplate? compiledPrompt,
                    readonly & websub:ContentDistributionMessage msg,
