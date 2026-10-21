@@ -1,3 +1,9 @@
+.workspace-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .u-bar {
   height: 52px;
   background: var(--surface);
@@ -10,6 +16,14 @@
   position: relative;
   z-index: 20;
 }
+.u-body {
+  display: flex;
+  height: auto;
+  background: var(--ground);
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
 .u-stage-canvas {
   flex: 1;
   min-height: 0;
@@ -17,11 +31,63 @@
   display: flex;
   overflow: hidden;
 }
+.u-body:not(.has-side) .u-side,
+.u-body:not(.has-left) .u-side-left {
+  width: 0;
+  overflow: hidden;
+  border-left: none;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.16s ease,
+    visibility 0s linear 0.16s;
+}
+.u-body.is-chat-full .u-stage {
+  display: none;
+}
+.u-body.is-chat-full .u-side {
+  width: 100%;
+  border-left: none;
+}
+@media (min-width: 641px) {
+  .u-body.is-chat-full .u-side .u-panel:not(.is-over) {
+    inset: 10px;
+  }
+}
+.u-side-left .u-panel {
+  inset: 10px 4px 10px 10px;
+  animation: panel-slide 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
 .u-panel.is-over {
   z-index: 4;
 }
 .u-panel:focus {
   outline: none;
+}
+.u-float-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(16, 20, 40, 0.16);
+  z-index: 2;
+  display: none;
+}
+@media (max-width: 1100px) {
+  .u-side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 12;
+    box-shadow: -18px 0 44px rgba(31, 38, 51, 0.14);
+  }
+  .u-body.has-side .u-float-scrim {
+    display: block;
+  }
+  .u-body.is-chat-full .u-float-scrim {
+    display: none;
+  }
 }
 .u-role {
   flex: none;
@@ -1001,6 +1067,22 @@ label.u-group {
   overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+.draft-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--warn-soft);
+  font-size: 12.5px;
+  color: var(--warn);
+}
+.draft-banner-error {
+  background: var(--bad-soft);
+  border-bottom-color: var(--bad);
+  color: var(--bad);
 }
 .u-flow {
   display: flex;
