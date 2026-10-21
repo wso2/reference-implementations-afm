@@ -1,3 +1,15 @@
+.u-bar {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  flex: none;
+  position: relative;
+  z-index: 20;
+}
 .u-stage-canvas {
   flex: 1;
   min-height: 0;
@@ -1000,6 +1012,12 @@ label.u-group {
   margin: 0 auto;
   gap: 0;
 }
+.u-bar .u-btn.primary {
+  height: 30px;
+  padding: 0 13px;
+  font-size: 12.5px;
+}
+
 .u-stage-top {
   position: relative;
 }
