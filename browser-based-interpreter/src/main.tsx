@@ -15,8 +15,25 @@
 // under the License.
 
 import { createRoot } from "react-dom/client";
+import { RouterRoot } from "./app/App";
+import { isFramed, openLastAgent } from "./core/links/landing";
+import { relayOAuthCallback } from "./core/oauth/oauth-signin";
 
-const container = document.getElementById("root");
-if (container !== null) {
-  createRoot(container).render(<h1>AFM Browser-based Interpreter</h1>);
+import "@fontsource/instrument-sans/400.css";
+import "@fontsource/instrument-sans/500.css";
+import "@fontsource/instrument-sans/600.css";
+import "@fontsource/instrument-sans/700.css";
+import "@fontsource/instrument-sans/400-italic.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import "./styles/index.css";
+
+if (!isFramed() && !relayOAuthCallback()) {
+  openLastAgent();
+
+  const container = document.getElementById("root");
+  if (container !== null) {
+    createRoot(container).render(<RouterRoot />);
+  }
 }
