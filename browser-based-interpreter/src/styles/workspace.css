@@ -413,6 +413,14 @@
 .u-spacer {
   flex: 1;
 }
+.u-trust-actions {
+  display: flex;
+  gap: 8px;
+}
+.u-trust-actions .u-btn {
+  flex: 1;
+  justify-content: center;
+}
 .u-field-text ul,
 .u-field-text ol {
   margin: 0 0 0 20px;
