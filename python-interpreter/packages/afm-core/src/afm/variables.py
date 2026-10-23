@@ -24,6 +24,7 @@ from .exceptions import AFMValidationError, VariableResolutionError
 from .models import (
     ConsoleChatInterface,
     HttpTransport,
+    PlatformChatInterface,
     StdioTransport,
     WebChatInterface,
     WebhookInterface,
@@ -174,6 +175,20 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
                         errored_fields.append("interfaces.webhook.exposure")
                     if _subscription_contains_http_variable(interface.subscription):
                         errored_fields.append("interfaces.webhook.subscription")
+                case PlatformChatInterface():
+                    # Note: platformchat.prompt is allowed to contain http: variables
+                    if _signature_contains_http_variable(interface.signature):
+                        errored_fields.append("interfaces.platformchat.signature")
+                    if _exposure_contains_http_variable(interface.exposure):
+                        errored_fields.append("interfaces.platformchat.exposure")
+                    if contains_http_variable(interface.platform):
+                        errored_fields.append("interfaces.platformchat.platform")
+                    if interface.platform_config and _nested_contains_http_variable(
+                        interface.platform_config
+                    ):
+                        errored_fields.append("interfaces.platformchat.platform_config")
+                    if _auth_contains_http_variable(interface.authentication):
+                        errored_fields.append("interfaces.platformchat.authentication")
 
     # Check tools
     if metadata.tools and metadata.tools.mcp:
@@ -202,8 +217,8 @@ def validate_http_variables(afm_record: AFMRecord) -> None:
     if errored_fields:
         fields_str = ", ".join(errored_fields)
         raise AFMValidationError(
-            f"http: variables are only supported in webhook prompt fields, "
-            f"found in: {fields_str}"
+            f"http: variables are only supported in webhook/platformchat "
+            f"prompt fields, found in: {fields_str}"
         )
 
 
@@ -247,10 +262,10 @@ def _json_schema_contains_http_variable(schema: JSONSchema) -> bool:
     return _check_value(schema_dict)
 
 
-def _exposure_contains_http_variable(exposure: Exposure) -> bool:
-    if exposure.http and contains_http_variable(exposure.http.path):
-        return True
-    return False
+def _exposure_contains_http_variable(exposure: Exposure | None) -> bool:
+    if exposure is None:
+        return False
+    return contains_http_variable(exposure.http.path)
 
 
 def _subscription_contains_http_variable(subscription: Subscription) -> bool:
@@ -266,6 +281,16 @@ def _subscription_contains_http_variable(subscription: Subscription) -> bool:
         return True
     if _auth_contains_http_variable(subscription.authentication):
         return True
+    return False
+
+
+def _nested_contains_http_variable(value: Any) -> bool:
+    if isinstance(value, str):
+        return contains_http_variable(value)
+    if isinstance(value, dict):
+        return any(_nested_contains_http_variable(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_nested_contains_http_variable(item) for item in value)
     return False
 
 

@@ -15,7 +15,17 @@
 // under the License.
 
 import ballerina/data.yaml;
+import ballerina/log;
 import ballerina/os;
+
+const HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS = "webhook and platformchat prompt fields";
+
+// AFM spec versions this implementation knows how to parse. Add new versions here;
+// keep older entries while changes remain backwards-compatible.
+final readonly & string[] SUPPORTED_SPEC_VERSIONS = ["0.3.0", "0.4.0"];
+
+// Minimum spec version that introduced the platformchat interface.
+final readonly & int[] PLATFORMCHAT_MIN_SPEC_VERSION = [0, 4, 0];
 
 function parseAfm(string content) returns AFMRecord|error {
     string resolvedContent = check resolveVariables(content);
@@ -70,11 +80,62 @@ function parseAfm(string content) returns AFMRecord|error {
         instructions: instructions.trim()
     };
 
+    string? specVersion = metadata?.spec_version;
+    warnOnSpecVersion(specVersion);
+    check checkFeatureSpecVersionRequirements(specVersion, metadata?.interfaces);
+
     // Validate that http: variables only appear in webhook prompts
     check validateHttpVariables(afmRecord);
 
     return afmRecord;
 }
+
+function warnOnSpecVersion(string? specVersion) {
+    string supported = string:'join(", ", ...SUPPORTED_SPEC_VERSIONS);
+    if specVersion is () {
+        log:printWarn(string `AFM file has no 'spec_version'; expected one of: ${supported}. Proceeding anyway.`);
+        return;
+    }
+
+    if SUPPORTED_SPEC_VERSIONS.indexOf(specVersion) is () {
+        log:printWarn(string `AFM file 'spec_version' '${specVersion}' is not in the supported set (${supported}). ` +
+                "Proceeding anyway; some fields may not be recognized.");
+    }
+}
+
+function checkFeatureSpecVersionRequirements(string? specVersion, Interface[]? interfaces) returns error? {
+    if specVersion is () || interfaces is () {
+        return;
+    }
+
+    int[]? declared = parseSpecVersion(specVersion);
+    if declared is () || declared >= PLATFORMCHAT_MIN_SPEC_VERSION {
+        return;
+    }
+
+    foreach Interface interface in interfaces {
+        if interface is PlatformChatInterface {
+            return error(string `'platformchat' interface requires spec_version ` +
+                    string `${formatSpecVersion(PLATFORMCHAT_MIN_SPEC_VERSION)} or later (found '${specVersion}').`);
+        }
+    }
+}
+
+// Returns the numeric components of a dotted version string, or `()` if any component is not an integer.
+function parseSpecVersion(string specVersion) returns int[]? {
+    int[] components = [];
+    foreach string component in re `\.`.split(specVersion) {
+        int|error parsed = int:fromString(component);
+        if parsed is error {
+            return ();
+        }
+        components.push(parsed);
+    }
+    return components;
+}
+
+function formatSpecVersion(int[] components) returns string =>
+    string:'join(".", ...components.'map(component => component.toString()));
 
 function resolveVariables(string content) returns string|error {
     string result = content;
@@ -148,26 +209,55 @@ function resolveVariables(string content) returns string|error {
 }
 
 function validateHttpVariables(AFMRecord afmRecord) returns error? {
-    if containsHttpVariable(afmRecord.role) {
-        return error("http: variables are only supported in webhook prompt fields, found in role section");
-    }
-
-    if containsHttpVariable(afmRecord.instructions) {
-        return error("http: variables are only supported in webhook prompt fields, found in instructions section");
-    }
+    check validateRoleAndInstructions(afmRecord);
 
     AgentMetadata? metadata = afmRecord?.metadata;
     if metadata is () {
         return;
     }
 
-    AgentMetadata {authors, provider, model, interfaces, tools, skills, max_iterations: _, ...rest} = metadata;
+    string[] erroredKeys = collectMetadataFieldErrors(metadata);
+
+    Interface[]? interfaces = metadata?.interfaces;
+    if interfaces is Interface[] {
+        erroredKeys.push(...collectInterfaceErrors(interfaces));
+    }
+
+    Tools? tools = metadata?.tools;
+    if tools is Tools {
+        erroredKeys.push(...collectToolsErrors(tools));
+    }
+
+    SkillSource[]? skills = metadata?.skills;
+    if skills is SkillSource[] {
+        erroredKeys.push(...collectSkillsErrors(skills));
+    }
+
+    if erroredKeys.length() > 0 {
+        return error(string `http: variables are only supported in ${HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS}, ` +
+                string `found in metadata fields: ${string:'join(", ", ...erroredKeys)}`);
+    }
+}
+
+function validateRoleAndInstructions(AFMRecord afmRecord) returns error? {
+    if containsHttpVariable(afmRecord.role) {
+        return error(string `http: variables are only supported in ` +
+                string `${HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS}, found in role section`);
+    }
+    if containsHttpVariable(afmRecord.instructions) {
+        return error(string `http: variables are only supported in ` +
+                string `${HTTP_VARIABLE_ALLOWED_PROMPT_FIELDS}, found in instructions section`);
+    }
+}
+
+function collectMetadataFieldErrors(AgentMetadata metadata) returns string[] {
+    AgentMetadata {authors, provider, model, interfaces: _, tools: _, skills: _, max_iterations: _, ...rest} = metadata;
 
     string[] erroredKeys = [];
 
-    foreach [string, string] [k, v] in rest.entries() {
-        if containsHttpVariable(<string> v) {
-            erroredKeys.push(k);
+    foreach [string, json] [key, value] in rest.entries() {
+        if jsonContainsHttpVariable(value) {
+            erroredKeys.push(key);
         }
     }
 
@@ -181,18 +271,18 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
     }
 
     if provider is Provider {
-        foreach [string, string] [k, v] in provider.entries() {
-            if containsHttpVariable(v) {
-                erroredKeys.push("provider." + k);
+        foreach [string, string] [key, value] in provider.entries() {
+            if containsHttpVariable(value) {
+                erroredKeys.push("provider." + key);
             }
         }
     }
 
     if model is Model {
         Model {authentication, ...modelRest} = model;
-        foreach [string, string] [k, v] in modelRest.entries() {
-            if containsHttpVariable(<string> v) {
-                erroredKeys.push("model." + k); 
+        foreach [string, anydata] [key, value] in modelRest.entries() {
+            if jsonContainsHttpVariable(value.toJson()) {
+                erroredKeys.push("model." + key);
             }
         }
 
@@ -201,101 +291,129 @@ function validateHttpVariables(AFMRecord afmRecord) returns error? {
         }
     }
 
-    if interfaces is Interface[] {
-        foreach Interface interface in interfaces {
-            if interface is ConsoleChatInterface {
-                if signatureContainsHttpVariable(interface.signature) {
-                    erroredKeys.push("interfaces.consolechat.signature");
-                }
-                continue;
+    return erroredKeys;
+}
+
+function collectInterfaceErrors(Interface[] interfaces) returns string[] {
+    string[] erroredKeys = [];
+
+    foreach Interface interface in interfaces {
+        if interface is ConsoleChatInterface {
+            if signatureContainsHttpVariable(interface.signature) {
+                erroredKeys.push("interfaces.consolechat.signature");
+            }
+            continue;
+        }
+
+        if interface is WebChatInterface {
+            if signatureContainsHttpVariable(interface.signature) {
+                erroredKeys.push("interfaces.webchat.signature");
+            }
+            if exposureContainsHttpVariable(interface.exposure) {
+                erroredKeys.push("interfaces.webchat.exposure");
+            }
+            continue;
+        }
+
+        if interface is PlatformChatInterface {
+            if containsHttpVariable(interface.platform) {
+                erroredKeys.push("interfaces.platformchat.platform");
             }
 
-            if interface is WebChatInterface {
+            if interface is NonPollingPlatformChatInterface {
                 if signatureContainsHttpVariable(interface.signature) {
-                    erroredKeys.push("interfaces.webchat.signature");
+                    erroredKeys.push("interfaces.platformchat.signature");
                 }
 
                 if exposureContainsHttpVariable(interface.exposure) {
-                    erroredKeys.push("interfaces.webchat.exposure");
+                    erroredKeys.push("interfaces.platformchat.exposure");
                 }
-
-                continue;
+            } else if authenticationContainsHttpVariable(interface?.authentication) {
+                erroredKeys.push("interfaces.platformchat.authentication");
             }
 
-            if signatureContainsHttpVariable(interface.signature) {
-                erroredKeys.push("interfaces.webhook.signature");
+            SlackConfig|GChatConfig|TelegramConfig? platformConfig = interface?.platform_config;
+            if platformConfig !is () && jsonContainsHttpVariable(platformConfig.toJson()) {
+                erroredKeys.push("interfaces.platformchat.platform_config");
             }
+            continue;
+        }
 
-            if exposureContainsHttpVariable(interface.exposure) {
-                erroredKeys.push("interfaces.webhook.exposure");
-            }
-
-            if subscriptionContainsHttpVariable(interface.subscription) {
-                erroredKeys.push("interfaces.webhook.subscription");
-            }
+        if signatureContainsHttpVariable(interface.signature) {
+            erroredKeys.push("interfaces.webhook.signature");
+        }
+        if exposureContainsHttpVariable(interface.exposure) {
+            erroredKeys.push("interfaces.webhook.exposure");
+        }
+        if subscriptionContainsHttpVariable(interface.subscription) {
+            erroredKeys.push("interfaces.webhook.subscription");
         }
     }
 
-    if tools !is () {
-        MCPServer[]? mcp = tools.mcp;
+    return erroredKeys;
+}
 
-        if mcp is MCPServer[] {
-            foreach MCPServer server in mcp {
-                if containsHttpVariable(server.name) {
-                    erroredKeys.push("tools.mcp.name");
-                }
+function collectToolsErrors(Tools tools) returns string[] {
+    string[] erroredKeys = [];
 
-                Transport transport = server.transport;
-                if transport is HttpTransport {
-                    if containsHttpVariable(transport.url) {
-                        erroredKeys.push("tools.mcp.transport.url");
-                    }
+    MCPServer[]? mcp = tools.mcp;
+    if mcp !is MCPServer[] {
+        return erroredKeys;
+    }
 
-                    if authenticationContainsHttpVariable(transport.authentication) {
-                        erroredKeys.push("tools.mcp.transport.authentication");
-                    }
-                } else {
-                    if containsHttpVariable(transport.command) {
-                        erroredKeys.push("tools.mcp.transport.command");
-                    }
+    foreach MCPServer server in mcp {
+        if containsHttpVariable(server.name) {
+            erroredKeys.push("tools.mcp.name");
+        }
 
-                    string[]? args = transport.args;
-                    if args is string[] {
-                        foreach int idx in 0 ..< args.length() {
-                            if containsHttpVariable(args[idx]) {
-                                erroredKeys.push(string `tools.mcp.transport.args[${idx}]`);
-                            }
-                        }
-                    }
+        Transport transport = server.transport;
+        if transport is HttpTransport {
+            if containsHttpVariable(transport.url) {
+                erroredKeys.push("tools.mcp.transport.url");
+            }
+            if authenticationContainsHttpVariable(transport.authentication) {
+                erroredKeys.push("tools.mcp.transport.authentication");
+            }
+        } else {
+            if containsHttpVariable(transport.command) {
+                erroredKeys.push("tools.mcp.transport.command");
+            }
 
-                    map<string>? env = transport.env;
-                    if env is map<string> {
-                        foreach [string, string] [k, val] in env.entries() {
-                            if containsHttpVariable(val) {
-                                erroredKeys.push("tools.mcp.transport.env." + k);
-                            }
-                        }
+            string[]? args = transport.args;
+            if args is string[] {
+                foreach int idx in 0 ..< args.length() {
+                    if containsHttpVariable(args[idx]) {
+                        erroredKeys.push(string `tools.mcp.transport.args[${idx}]`);
                     }
                 }
+            }
 
-                if toolFilterContainsHttpVariable(server.tool_filter) {
-                    erroredKeys.push("tools.mcp.filter");
+            map<string>? env = transport.env;
+            if env is map<string> {
+                foreach [string, string] [key, value] in env.entries() {
+                    if containsHttpVariable(value) {
+                        erroredKeys.push("tools.mcp.transport.env." + key);
+                    }
                 }
             }
         }
-    }
 
-    if skills is SkillSource[] {
-        foreach SkillSource skillSource in skills {
-            if containsHttpVariable(skillSource.path) {
-                erroredKeys.push("skills.path");
-            }
+        if toolFilterContainsHttpVariable(server.tool_filter) {
+            erroredKeys.push("tools.mcp.filter");
         }
     }
 
-    if erroredKeys.length() > 0 {
-        return error(string `http: variables are only supported in webhook prompt fields, found in metadata fields: ${string:'join(", ", ...erroredKeys)}`);
+    return erroredKeys;
+}
+
+function collectSkillsErrors(SkillSource[] skills) returns string[] {
+    string[] erroredKeys = [];
+    foreach SkillSource skillSource in skills {
+        if containsHttpVariable(skillSource.path) {
+            erroredKeys.push("skills.path");
+        }
     }
+    return erroredKeys;
 }
 
 function containsHttpVariable(string content) returns boolean =>
@@ -357,9 +475,7 @@ function jsonSchemaContainsHttpVariable(JSONSchema schema) returns boolean {
 }
 
 function exposureContainsHttpVariable(Exposure exposure) returns boolean =>
-    let HTTPExposure? httpExposure = exposure.http in
-        httpExposure is HTTPExposure && 
-            containsHttpVariable(httpExposure.path);
+    containsHttpVariable(exposure.http.path);
 
 function subscriptionContainsHttpVariable(Subscription subscription) returns boolean {
     if containsHttpVariable(subscription.protocol) {
@@ -402,6 +518,29 @@ function toolFilterContainsHttpVariable(ToolFilter? filter) returns boolean {
         if containsHttpVariable(value) {
             return true;
         }
+    }
+    return false;
+}
+
+function jsonContainsHttpVariable(json value) returns boolean {
+    if value is string {
+        return containsHttpVariable(value);
+    }
+    if value is map<json> {
+        foreach json v in value {
+            if jsonContainsHttpVariable(v) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if value is json[] {
+        foreach json v in value {
+            if jsonContainsHttpVariable(v) {
+                return true;
+            }
+        }
+        return false;
     }
     return false;
 }

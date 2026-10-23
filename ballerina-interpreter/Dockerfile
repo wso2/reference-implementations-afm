@@ -1,5 +1,5 @@
 # Build stage (discarded after build)
-FROM ballerina/ballerina:2201.12.10 AS builder
+FROM ballerina/ballerina:2201.13.3 AS builder
 
 USER root
 

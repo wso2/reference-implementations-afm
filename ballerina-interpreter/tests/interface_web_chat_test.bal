@@ -24,7 +24,7 @@ function testWebChatInterfaceDefaultValues() {
     test:assertEquals(webChat.'type, WEB_CHAT);
     test:assertEquals(webChat.signature.input.'type, "string");
     test:assertEquals(webChat.signature.output.'type, "string");
-    test:assertEquals(webChat.exposure.http?.path, "/chat");
+    test:assertEquals(webChat.exposure.http.path, "/chat");
 }
 
 @test:Config
@@ -33,7 +33,7 @@ function testWebChatInterfaceCustomPath() {
         exposure: {http: {path: "/custom"}}
     };
 
-    test:assertEquals(webChat.exposure.http?.path, "/custom");
+    test:assertEquals(webChat.exposure.http.path, "/custom");
 }
 
 @test:Config

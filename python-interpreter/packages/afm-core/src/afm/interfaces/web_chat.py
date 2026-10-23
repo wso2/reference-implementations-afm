@@ -72,8 +72,7 @@ class HealthResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    error: str = Field(..., description="Error message")
-    detail: str | None = Field(None, description="Detailed error information")
+    detail: str = Field(..., description="Error message")
 
 
 def create_webchat_router(

@@ -251,6 +251,42 @@ function testValidateHttpVariablesInStdioTransportEnv() {
 }
 
 @test:Config
+function testValidateHttpVariablesMessageMentionsPlatformChatPrompt() {
+    AFMRecord afmRecord = {
+        role: "${http:payload.text}",
+        instructions: ""
+    };
+
+    error? result = validateHttpVariables(afmRecord);
+    if result is () {
+        test:assertFail("Expected error for http: variables in role");
+    }
+    test:assertTrue(result.message().includes("webhook and platformchat prompt fields"));
+}
+
+@test:Config
+function testValidateHttpVariablesInPlatformChatConfig() {
+    AFMRecord afmRecord = {
+        metadata: {
+            spec_version: "0.4.0",
+            interfaces: [
+                <SlackPlatformChatInterface>{
+                    platform_config: {signing_secret: "${http:header.Authorization}"}
+                }
+            ]
+        },
+        role: "",
+        instructions: ""
+    };
+
+    error? result = validateHttpVariables(afmRecord);
+    if result is () {
+        test:assertFail("Expected error for http: variables in platformchat config");
+    }
+    test:assertTrue(result.message().includes("interfaces.platformchat.platform_config"));
+}
+
+@test:Config
 function testParseAfmWithoutFrontmatter() returns error? {
     string content = string `# Role
 This is the role.
@@ -282,6 +318,66 @@ Agent instructions here.`;
     test:assertEquals(parsed.instructions, "Agent instructions here.");
 }
 
+function platformChatAfmWithSpecVersion(string specVersion) returns string => string `---
+spec_version: "${specVersion}"
+interfaces:
+  - type: platformchat
+    platform: slack
+    prompt: "hi"
+    platform_config:
+      signing_secret: "secret"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.`;
+
+@test:Config
+function testParseAfmRejectsPlatformChatOnSpecVersion030() {
+    AFMRecord|error result = parseAfm(platformChatAfmWithSpecVersion("0.3.0"));
+    if result is AFMRecord {
+        test:assertFail("Expected platformchat to be rejected on spec_version 0.3.0");
+    }
+    test:assertEquals(result.message(),
+            "'platformchat' interface requires spec_version 0.4.0 or later (found '0.3.0').");
+}
+
+@test:Config
+function testParseAfmAcceptsPlatformChatOnSpecVersion040() returns error? {
+    AFMRecord parsed = check parseAfm(platformChatAfmWithSpecVersion("0.4.0"));
+    test:assertTrue((parsed?.metadata?.interfaces ?: [])[0] is SlackPlatformChatInterface);
+}
+
+@test:Config
+function testParseAfmAcceptsPlatformChatOnNewerUnknownSpecVersion() returns error? {
+    AFMRecord parsed = check parseAfm(platformChatAfmWithSpecVersion("9.9.9"));
+    test:assertEquals(parsed?.metadata?.spec_version, "9.9.9");
+}
+
+@test:Config
+function testParseAfmAcceptsPlatformChatOnNonNumericSpecVersion() returns error? {
+    AFMRecord parsed = check parseAfm(platformChatAfmWithSpecVersion("next"));
+    test:assertEquals(parsed?.metadata?.spec_version, "next");
+}
+
+@test:Config
+function testParseSpecVersion() {
+    test:assertEquals(parseSpecVersion("0.4.0"), [0, 4, 0]);
+    test:assertEquals(parseSpecVersion("1.2"), [1, 2]);
+    test:assertEquals(parseSpecVersion("0.4.x"), ());
+    test:assertEquals(parseSpecVersion(""), ());
+}
+
+@test:Config
+function testSpecVersionOrdering() {
+    test:assertTrue(<int[]>parseSpecVersion("0.3.9") < PLATFORMCHAT_MIN_SPEC_VERSION);
+    test:assertTrue(<int[]>parseSpecVersion("0.4") < PLATFORMCHAT_MIN_SPEC_VERSION);
+    test:assertFalse(<int[]>parseSpecVersion("0.4.0") < PLATFORMCHAT_MIN_SPEC_VERSION);
+    test:assertFalse(<int[]>parseSpecVersion("0.10.0") < PLATFORMCHAT_MIN_SPEC_VERSION);
+}
+
 // ============================================
 // Interface Validation Tests
 // ============================================
@@ -289,19 +385,21 @@ Agent instructions here.`;
 @test:Config
 function testValidateAndExtractInterfacesSingleConsoleChat() returns error? {
     Interface[] interfaces = [<ConsoleChatInterface>{}];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ConsoleChatInterface);
     test:assertTrue(web is ());
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
 function testValidateAndExtractInterfacesSingleWebChat() returns error? {
     Interface[] interfaces = [<WebChatInterface>{}];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ());
     test:assertTrue(web is WebChatInterface);
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
@@ -310,10 +408,11 @@ function testValidateAndExtractInterfacesMixed() returns error? {
         <ConsoleChatInterface>{},
         <WebChatInterface>{}
     ];
-    var [console, web, webhook] = check validateAndExtractInterfaces(interfaces);
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
     test:assertTrue(console is ConsoleChatInterface);
     test:assertTrue(web is WebChatInterface);
     test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 0);
 }
 
 @test:Config
@@ -326,7 +425,8 @@ function testValidateAndExtractInterfacesDuplicateConsoleChat() {
     if result !is error {
         test:assertFail("Expected error for duplicate console chat interfaces");
     }
-    test:assertEquals(result.message(), "Multiple interfaces of the same type are not supported");
+    test:assertEquals(result.message(),
+        "Multiple consolechat, webchat, or webhook interfaces are not supported");
 }
 
 @test:Config
@@ -339,7 +439,33 @@ function testValidateAndExtractInterfacesDuplicateWebChat() {
     if result !is error {
         test:assertFail("Expected error for duplicate web chat interfaces");
     }
-    test:assertEquals(result.message(), "Multiple interfaces of the same type are not supported");
+    test:assertEquals(result.message(),
+        "Multiple consolechat, webchat, or webhook interfaces are not supported");
+}
+
+@test:Config
+function testValidateAndExtractInterfacesMultiplePlatformChats() returns error? {
+    Interface[] interfaces = [
+        <PlatformChatInterface>{platform: "slack", mode: NOTIFICATION},
+        <PlatformChatInterface>{platform: "gchat", mode: NOTIFICATION}
+    ];
+    var [console, web, webhook, platformChats] = check validateAndExtractInterfaces(interfaces);
+    test:assertTrue(console is ());
+    test:assertTrue(web is ());
+    test:assertTrue(webhook is ());
+    test:assertEquals(platformChats.length(), 2);
+}
+
+@test:Config
+function testValidateAndExtractInterfacesRejectsInvalidPollingInterval() {
+    Interface[] interfaces = [
+        <TelegramPollingPlatformChatInterface>{
+            platform_config: {bot_token: "123:abc"},
+            polling: {interval: 0}
+        }
+    ];
+    var result = validateAndExtractInterfaces(interfaces);
+    test:assertTrue(result is ConfigError);
 }
 
 // ============================================
@@ -1198,4 +1324,32 @@ function testMapToHttpClientAuthUnsupportedType() {
         test:assertFail("Expected error for unsupported authentication type");
     }
     test:assertEquals(result.message(), "Unsupported authentication type: custom-auth");
+}
+
+// ============================================
+// validateUniqueHttpPaths Tests
+// ============================================
+
+@test:Config
+function testValidateUniqueHttpPathsPlatformChatCollidesWithWebChatUi() {
+    WebChatInterface webChat = {};
+    SlackPlatformChatInterface slack = {exposure: {http: {path: "/chat/ui"}}};
+    error? result = validateUniqueHttpPaths(webChat, (), [slack]);
+    if result is () {
+        test:assertFail("Expected platformchat path '/chat/ui' to collide with webchat UI");
+    }
+    test:assertTrue(result.message().includes("'/chat/ui'"));
+    test:assertTrue(result.message().includes("webchat UI"));
+}
+
+@test:Config
+function testValidateUniqueHttpPathsChatUiAvailableWhenNotStringIo() returns error? {
+    WebChatInterface webChat = {
+        signature: {
+            input: {"type": "object", "properties": {}},
+            output: {"type": "object", "properties": {}}
+        }
+    };
+    SlackPlatformChatInterface slack = {exposure: {http: {path: "/chat/ui"}}};
+    check validateUniqueHttpPaths(webChat, (), [slack]);
 }

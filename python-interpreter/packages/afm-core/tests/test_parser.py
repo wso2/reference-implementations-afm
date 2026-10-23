@@ -22,6 +22,8 @@ from afm.exceptions import AFMParseError, AFMValidationError, VariableResolution
 from afm.models import (
     ConsoleChatInterface,
     HttpTransport,
+    PlatformChatInterface,
+    PlatformChatMode,
     StdioTransport,
     WebChatInterface,
     WebhookInterface,
@@ -121,6 +123,38 @@ class TestParseAfm:
         assert interface.subscription.protocol == "websub"
         assert interface.subscription.hub == "http://localhost:9193/websub/hub"
 
+    def test_parse_slack_platform_chat_agent(
+        self, sample_slack_platform_chat_path: Path
+    ) -> None:
+        content = sample_slack_platform_chat_path.read_text()
+        result = parse_afm(content)
+
+        assert result.metadata.interfaces is not None
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, PlatformChatInterface)
+        assert interface.platform == "slack"
+        assert interface.mode == PlatformChatMode.NOTIFICATION
+        assert interface.platform_config == {"signing_secret": "test-signing-secret"}
+        assert interface.has_explicit_output_schema is False
+        assert interface.exposure is not None
+        assert interface.exposure.http.path == "/slack"
+
+    def test_parse_gchat_platform_chat_agent(
+        self, sample_gchat_platform_chat_path: Path
+    ) -> None:
+        content = sample_gchat_platform_chat_path.read_text()
+        result = parse_afm(content)
+
+        assert result.metadata.interfaces is not None
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, PlatformChatInterface)
+        assert interface.platform == "gchat"
+        assert interface.mode == PlatformChatMode.NOTIFICATION
+        assert interface.platform_config == {"project_number": "test-project-number"}
+        assert interface.has_explicit_output_schema is False
+        assert interface.exposure is not None
+        assert interface.exposure.http.path == "/gchat"
+
     def test_parse_minimal_agent(self, sample_minimal_path: Path) -> None:
         content = sample_minimal_path.read_text()
         result = parse_afm(content)
@@ -168,7 +202,7 @@ The instructions.
 
     def test_parse_unclosed_frontmatter(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 
 # Role
 The role.
@@ -179,7 +213,7 @@ The role.
 
     def test_parse_invalid_yaml(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 invalid: [unclosed
 ---
 
@@ -195,7 +229,7 @@ Instructions.
 
     def test_parse_invalid_field_type(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 max_iterations: "not a number"
 ---
 
@@ -208,9 +242,251 @@ Instructions.
         with pytest.raises(AFMValidationError):
             parse_afm(content)
 
+    def test_websub_rejects_unknown_fields(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: webhook
+    subscription:
+      protocol: "websub"
+      provider: "someprovider"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError, match="provider"):
+            parse_afm(content)
+
+    def test_platform_chat_notification_rejects_explicit_output_schema(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    signature:
+      output:
+        type: object
+        properties:
+          text:
+            type: string
+    platform_config:
+      signing_secret: "secret"
+    exposure:
+      http:
+        path: "/slack"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+
+        assert "does not support synchronous" in str(exc_info.value)
+
+    def test_platform_chat_request_allows_explicit_output_schema(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: gchat
+    mode: request
+    signature:
+      output:
+        type: object
+        properties:
+          text:
+            type: string
+    platform_config:
+      project_number: "1234567890"
+    exposure:
+      http:
+        path: "/gchat"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, PlatformChatInterface)
+        assert interface.has_explicit_output_schema is True
+        assert interface.mode == PlatformChatMode.REQUEST
+
+    def test_platform_chat_notification_allows_missing_exposure(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    platform_config:
+      signing_secret: "secret"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, PlatformChatInterface)
+        assert interface.exposure is None
+
+    def test_platform_chat_polling_parses(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+    polling:
+      interval: 15
+      timeout: 10
+    authentication:
+      type: api-key
+      api_key: "tok"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, PlatformChatInterface)
+        assert interface.mode == PlatformChatMode.POLLING
+        assert interface.polling is not None
+        assert interface.polling.interval == 15
+        assert interface.polling.timeout == 10
+
+    def test_platform_chat_polling_default_interval(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        interface = result.metadata.interfaces[0]
+        assert isinstance(interface, PlatformChatInterface)
+        assert interface.polling is None
+
+    def test_platform_chat_polling_rejects_exposure(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+    exposure:
+      http:
+        path: "/telegram"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError, match="exposure"):
+            parse_afm(content)
+
+    def test_platform_chat_polling_rejects_explicit_output_schema(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: telegram
+    mode: polling
+    signature:
+      output:
+        type: object
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError, match="synchronous"):
+            parse_afm(content)
+
+    def test_platform_chat_authentication_rejected_for_non_polling(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    authentication:
+      type: api-key
+      api_key: "tok"
+    exposure:
+      http:
+        path: "/slack"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError, match="authentication"):
+            parse_afm(content)
+
+    def test_platform_chat_polling_field_rejected_for_other_modes(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    polling:
+      interval: 30
+    exposure:
+      http:
+        path: "/slack"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError, match="polling"):
+            parse_afm(content)
+
     def test_parse_multiline_role_and_instructions(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 ---
 
 # Role
@@ -231,7 +507,7 @@ Line 2 of instructions.
 
     def test_role_heading_exact_match_only(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 ---
 
 # Roleplay
@@ -250,7 +526,7 @@ These are instructions.
 
     def test_instructions_heading_exact_match_only(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 ---
 
 # Role
@@ -269,7 +545,7 @@ These are the actual instructions.
 
     def test_case_insensitive_headings(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 ---
 
 # ROLE
@@ -281,6 +557,110 @@ These are the instructions.
         result = parse_afm(content)
         assert result.role == "This is the role."
         assert result.instructions == "These are the instructions."
+
+
+class TestSpecVersion:
+    _BODY = """---
+spec_version: {version}
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+
+    def test_supported_version_emits_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level("WARNING", logger="afm.parser")
+        parse_afm(self._BODY.format(version='"0.4.0"'))
+        assert "spec_version" not in caplog.text
+
+    def test_older_supported_version_emits_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level("WARNING", logger="afm.parser")
+        parse_afm(self._BODY.format(version='"0.3.0"'))
+        assert "spec_version" not in caplog.text
+
+    def test_unknown_version_warns_and_parses(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level("WARNING", logger="afm.parser")
+        result = parse_afm(self._BODY.format(version='"9.9.9"'))
+        assert result.metadata.spec_version == "9.9.9"
+        assert "spec_version" in caplog.text
+        assert "9.9.9" in caplog.text
+
+    def test_missing_version_warns_and_parses(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = """---
+name: "Foo"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        caplog.set_level("WARNING", logger="afm.parser")
+        result = parse_afm(content)
+        assert result.metadata.spec_version is None
+        assert "no 'spec_version'" in caplog.text
+
+
+class TestPlatformChatVersionGate:
+    _PLATFORMCHAT_BODY = """---
+spec_version: {version}
+interfaces:
+  - type: platformchat
+    platform: slack
+    mode: notification
+    platform_config:
+      signing_secret: "s"
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+
+    def test_rejects_platformchat_on_0_3_0(self) -> None:
+        with pytest.raises(AFMValidationError, match="platformchat"):
+            parse_afm(self._PLATFORMCHAT_BODY.format(version='"0.3.0"'))
+
+    def test_accepts_platformchat_on_0_4_0(self) -> None:
+        result = parse_afm(self._PLATFORMCHAT_BODY.format(version='"0.4.0"'))
+        assert isinstance(result.metadata.interfaces[0], PlatformChatInterface)
+
+    def test_accepts_platformchat_on_future_version(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level("WARNING", logger="afm.parser")
+        result = parse_afm(self._PLATFORMCHAT_BODY.format(version='"0.5.0"'))
+        assert isinstance(result.metadata.interfaces[0], PlatformChatInterface)
+
+    def test_old_version_without_platformchat_still_parses(self) -> None:
+        content = """---
+spec_version: "0.4.0"
+interfaces:
+  - type: webchat
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        assert result.metadata.interfaces[0].type == "webchat"
 
 
 class TestParseAfmFile:
@@ -331,7 +711,7 @@ class TestParseStdioMcpTransport:
 
     def test_parse_stdio_transport_inline(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 tools:
   mcp:
     - name: "local_tool"
@@ -360,7 +740,7 @@ Test instructions.
 
     def test_parse_http_transport_produces_http_transport_instance(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 tools:
   mcp:
     - name: "remote_tool"
@@ -385,7 +765,7 @@ Test instructions.
 
     def test_parse_stdio_transport_missing_command_raises_error(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 tools:
   mcp:
     - name: "broken_tool"
@@ -404,7 +784,7 @@ Test instructions.
 
     def test_parse_mixed_http_and_stdio_transports(self) -> None:
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 tools:
   mcp:
     - name: "remote_server"
@@ -440,7 +820,7 @@ class TestResolveEnvParameter:
     def test_parse_afm_without_resolve_env_preserves_variables(self) -> None:
         """Test that resolve_env=False preserves ${env:VAR} syntax in string fields."""
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 name: "TestAgent"
 model:
   provider: "openai"
@@ -468,7 +848,7 @@ Test instructions
     def test_parse_afm_with_resolve_env_fails_on_missing_var(self) -> None:
         """Test that resolve_env=True (default) raises error for unset env variables."""
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 name: "TestAgent"
 model:
   provider: "openai"
@@ -496,7 +876,7 @@ Test instructions
         monkeypatch.setenv("TEST_TOKEN_VALUE", "secret-token-123")
 
         content = """---
-spec_version: "0.3.0"
+spec_version: "0.4.0"
 name: "TestAgent"
 model:
   provider: "openai"
