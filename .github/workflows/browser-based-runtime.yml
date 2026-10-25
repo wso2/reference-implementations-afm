@@ -1,0 +1,65 @@
+name: Browser-based Runtime CI
+
+on:
+  push:
+    paths:
+      - "browser-based-runtime/**"
+      - "typescript-interpreter/**"
+      - ".github/workflows/browser-based-runtime.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "browser-based-runtime/**"
+      - "typescript-interpreter/**"
+      - ".github/workflows/browser-based-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-based-runtime
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch the TypeScript interpreter from pull request 42
+        working-directory: .
+        run: |
+          if [ ! -d typescript-interpreter ]; then
+            git fetch --depth=1 https://github.com/Thareesha98/reference-implementations-afm.git typescript-interpreter
+            git checkout FETCH_HEAD -- typescript-interpreter
+          fi
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: browser-based-runtime/package.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: browser-based-runtime/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build web app
+        run: pnpm build
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
