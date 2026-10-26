@@ -24,11 +24,19 @@ A Python-based AFM interpreter using LangChain for agent execution.
 > [!NOTE]
 > Python-based implementations are available via a single CLI tool (`pip install afm-cli`). LangChain is currently the supported backend, with additional frameworks planned.
 
+### Browser-based Runtime
+
+A web app that runs AFM agents in the browser, on top of the TypeScript interpreter.
+
+- **Source:** [`browser-based-runtime/`](./browser-based-runtime/)
+- **[Getting Started →](./browser-based-runtime/)**
+
 ## Repository Structure
 
 ```text
 reference-implementations-afm/
 ├── ballerina-interpreter/          # Ballerina-based AFM interpreter
+├── browser-based-runtime/          # Web app that runs AFM agents in the browser
 ├── python-interpreter/             # Python-based AFM interpreters (plugin-based)
 │   └── packages/afm-langchain/     # LangChain execution backend
 └── .github/workflows/              # CI/CD
