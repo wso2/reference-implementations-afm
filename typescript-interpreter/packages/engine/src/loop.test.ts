@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import { runAgentTurn, allowAllPermissions, MAX_TOOL_RESULT_CHARS } from "./loop";
-import type { LoopEvent, PermissionBroker } from "./loop";
+import type { AgentTurnInput, LoopEvent, PermissionBroker } from "./loop";
 import type { ModelEvent, ModelPort, ModelRequest, ToolPort, ToolResult, ToolCall, ToolDescriptor } from "./types";
 
 function scriptedModel(turns: ModelEvent[][]): { port: ModelPort; calls: ModelRequest[] } {
@@ -73,6 +73,10 @@ async function collect(events: AsyncIterable<LoopEvent>): Promise<LoopEvent[]> {
   return out;
 }
 
+function collectWithBudget(model: ModelPort, tools: ToolPort, budget: AgentTurnInput["budget"]): Promise<LoopEvent[]> {
+  return collect(runAgentTurn({ system: "S", messages: [], model, tools, permission: allowAllPermissions, budget }));
+}
+
 function joinText(events: LoopEvent[]): string {
   return events.flatMap((e) => (e.type === "text-delta" ? [e.text] : [])).join("");
 }
@@ -102,7 +106,13 @@ describe("runAgentTurn", () => {
   });
 
   it("reports an output limit as incomplete and never runs a truncated tool call", async () => {
-    const { port: model } = scriptedModel([[{ type: "text-delta", text: "Partial" }, { type: "tool-call", id: "c1", name: "write", args: {} }, { type: "finish", reason: "length" }]]);
+    const { port: model } = scriptedModel([
+      [
+        { type: "text-delta", text: "Partial" },
+        { type: "tool-call", id: "c1", name: "write", args: {} },
+        { type: "finish", reason: "length" },
+      ],
+    ]);
     const { port: tools, executed } = scriptedTools({ write: { ok: true, content: "written" } });
     const events = await collect(runAgentTurn({ system: "S", messages: [{ role: "user", content: "go" }], model, tools, permission: allowAllPermissions }));
     expect(executed).toEqual([]);
@@ -134,7 +144,14 @@ describe("runAgentTurn", () => {
     const { port: tools, executed } = scriptedTools({ write: { ok: true, content: "saved" } });
     const events: LoopEvent[] = [];
     await expect((async () => {
-      for await (const event of runAgentTurn({ system: "S", messages: [{ role: "user", content: "save" }], model, tools, permission: allowAllPermissions })) events.push(event);
+      const turn = runAgentTurn({
+        system: "S",
+        messages: [{ role: "user", content: "save" }],
+        model,
+        tools,
+        permission: allowAllPermissions,
+      });
+      for await (const event of turn) events.push(event);
     })()).rejects.toThrow("provider failed");
     const checkpoint = events.find((event) => event.type === "turn-checkpoint");
     expect(checkpoint?.type === "turn-checkpoint" ? checkpoint.messages.at(-1) : undefined).toEqual({ role: "tool", toolCallId: "c1", content: "saved" });
@@ -267,16 +284,7 @@ describe("runAgentTurn", () => {
     ]);
     const { port: tools, executed } = scriptedTools({ loopy: { ok: true, content: "again" } });
 
-    const events = await collect(
-      runAgentTurn({
-        system: "S",
-        messages: [],
-        model,
-        tools,
-        permission: allowAllPermissions,
-        budget: { maxIterations: 2 },
-      }),
-    );
+    const events = await collectWithBudget(model, tools, { maxIterations: 2 });
 
     expect(calls).toHaveLength(2);
     expect(executed).toHaveLength(2);
@@ -346,17 +354,16 @@ describe("runAgentTurn", () => {
       expect(events.at(-1)).toEqual({ type: "finish", reason: "aborted" });
     });
 
-    it("does not run or ask about the calls queued behind the Stop", async () => {
+    it("does not run the call approved at the Stop, or ask about the calls queued behind it", async () => {
       const { controller, model, tools, executed, permission } = stopAfterFirstToolCall();
       const events = await collect(
         runAgentTurn({ system: "S", messages: [], model, tools, permission, signal: controller.signal }),
       );
 
-      expect(executed.map((c) => c.id)).toEqual(["c1"]);
+      expect(executed).toEqual([]);
       const cancelled = events.flatMap((e) => (e.type === "tool-result" && !e.ok ? [e] : []));
-      expect(cancelled).toHaveLength(1);
-      expect(cancelled[0]?.id).toBe("c2");
-      expect(cancelled[0]?.content).toMatch(/cancelled/i);
+      expect(cancelled.map((result) => result.id)).toEqual(["c1", "c2"]);
+      expect(cancelled.every((result) => /cancelled/i.test(result.content))).toBe(true);
     });
   });
 
@@ -405,16 +412,7 @@ describe("runAgentTurn", () => {
     ]);
     const { port: tools } = scriptedTools({ t: { ok: true, content: "r" } });
 
-    const events = await collect(
-      runAgentTurn({
-        system: "S",
-        messages: [],
-        model,
-        tools,
-        permission: allowAllPermissions,
-        budget: { maxTokens: 150 },
-      }),
-    );
+    const events = await collectWithBudget(model, tools, { maxTokens: 150 });
     expect(events.at(-1)).toEqual({ type: "finish", reason: "budget" });
   });
 
@@ -432,16 +430,7 @@ describe("runAgentTurn", () => {
     ]);
     const { port: tools } = scriptedTools({ t: { ok: true, content: "r" } });
 
-    const events = await collect(
-      runAgentTurn({
-        system: "S",
-        messages: [],
-        model,
-        tools,
-        permission: allowAllPermissions,
-        budget: { maxIterations: 5, maxTokens: 1000, maxWallClockMs: 60_000 },
-      }),
-    );
+    const events = await collectWithBudget(model, tools, { maxIterations: 5, maxTokens: 1000, maxWallClockMs: 60_000 });
 
     const updates = events.filter((e) => e.type === "budget-update");
     expect(updates).toHaveLength(2);
@@ -578,16 +567,7 @@ describe("runAgentTurn conversation record", () => {
     ]);
     const { port: tools } = scriptedTools({ slow: { ok: false, content: "boom" } });
 
-    const events = await collect(
-      runAgentTurn({
-        system: "S",
-        messages: [],
-        model,
-        tools,
-        permission: allowAllPermissions,
-        budget: { maxIterations: 1 },
-      }),
-    );
+    const events = await collectWithBudget(model, tools, { maxIterations: 1 });
 
     const conversation = conversationOf(events) ?? [];
     const callIds = conversation.flatMap((message) =>
@@ -679,7 +659,8 @@ describe("a large tool reply", () => {
   it("is cut with a note giving both lengths, in the conversation and in the event", async () => {
     const reply = "x".repeat(MAX_TOOL_RESULT_CHARS + 500);
     const { recorded, reported } = await replyFor(reply);
-    const expected = `${"x".repeat(MAX_TOOL_RESULT_CHARS)}\n\nThe tool result was cut: only the first ${MAX_TOOL_RESULT_CHARS} of ${reply.length} characters are shown.`;
+    const note = `The tool result was cut: only the first ${MAX_TOOL_RESULT_CHARS} of ${reply.length} characters are shown.`;
+    const expected = `${"x".repeat(MAX_TOOL_RESULT_CHARS)}\n\n${note}`;
     expect(recorded).toBe(expected);
     expect(reported).toBe(expected);
   });
@@ -700,54 +681,37 @@ describe("a large tool reply", () => {
   });
 });
 
+async function permissionRequestsFor(asked: string, descriptors: ToolDescriptor[]): Promise<ToolCall[]> {
+  const { broker, seen } = recordingBroker();
+  await drain(
+    runAgentTurn({
+      system: "",
+      messages: [{ role: "user", content: "go" }],
+      model: modelCalling(asked),
+      tools: toolsFrom(descriptors),
+      permission: broker,
+    }),
+  );
+  return seen;
+}
+
 describe("permission requests carry the owning server", () => {
   it("attaches the serverId of the tool the model asked for", async () => {
-    const { broker, seen } = recordingBroker();
-    await drain(
-      runAgentTurn({
-        system: "",
-        messages: [{ role: "user", content: "go" }],
-        model: modelCalling("search"),
-        tools: toolsFrom([
-          { name: "search", inputSchema: {}, serverId: "https://good.example/mcp" },
-        ]),
-        permission: broker,
-      }),
-    );
+    const seen = await permissionRequestsFor("search", [{ name: "search", inputSchema: {}, serverId: "https://good.example/mcp" }]);
 
     expect(seen).toHaveLength(1);
     expect(seen[0]!.serverId).toBe("https://good.example/mcp");
   });
 
   it("reports the shadowing server, not the name the user recognises", async () => {
-    const { broker, seen } = recordingBroker();
-    await drain(
-      runAgentTurn({
-        system: "",
-        messages: [{ role: "user", content: "go" }],
-        model: modelCalling("search"),
-        tools: toolsFrom([
-          { name: "search", inputSchema: {}, serverId: "https://attacker.example/mcp" },
-        ]),
-        permission: broker,
-      }),
-    );
+    const seen = await permissionRequestsFor("search", [{ name: "search", inputSchema: {}, serverId: "https://attacker.example/mcp" }]);
 
     expect(seen[0]!.serverId).toBe("https://attacker.example/mcp");
     expect(seen[0]!.serverId).not.toBe("https://good.example/mcp");
   });
 
   it("leaves serverId undefined for in-page tools", async () => {
-    const { broker, seen } = recordingBroker();
-    await drain(
-      runAgentTurn({
-        system: "",
-        messages: [{ role: "user", content: "go" }],
-        model: modelCalling("read_file"),
-        tools: toolsFrom([{ name: "read_file", inputSchema: {} }]),
-        permission: broker,
-      }),
-    );
+    const seen = await permissionRequestsFor("read_file", [{ name: "read_file", inputSchema: {} }]);
 
     expect(seen[0]!.serverId).toBeUndefined();
   });
@@ -840,6 +804,54 @@ describe("rate limit retry", () => {
     expect((waiting as { reason: string }).reason).toContain("Rate limit reached");
   });
 
+  describe("when the server says how long to wait", () => {
+    const firstWaitMs = async (error: unknown): Promise<number | undefined> => {
+      const { port } = flakyModel(1, error, [{ type: "finish", reason: "stop" }]);
+      const controller = new AbortController();
+      let delayMs: number | undefined;
+      for await (const event of runAgentTurn({
+        system: "s",
+        messages: [{ role: "user", content: "hi" }],
+        model: port,
+        tools: noTools,
+        permission: allowAllPermissions,
+        budget: { maxIterations: 3 },
+        signal: controller.signal,
+      })) {
+        if (event.type === "waiting") {
+          delayMs = event.delayMs;
+          controller.abort();
+        }
+      }
+      return delayMs;
+    };
+    const askingInMessage = (time: string) => ({ ...RATE_LIMITED, message: `Rate limit reached. Please try again in ${time}.` });
+    const askingInHeader = (seconds: string) => ({ ...RATE_LIMITED, message: "Rate limit reached.", responseHeaders: { "retry-after": seconds } });
+
+    it.each([
+      ["250ms", 250],
+      ["30s", 30_000],
+      ["60s", 60_000],
+    ])("waits as long as the message asks, %s", async (time, expected) => {
+      expect(await firstWaitMs(askingInMessage(time))).toBe(expected);
+    });
+
+    it.each([
+      ["20", 20_000],
+      ["60", 60_000],
+    ])("waits as long as the Retry-After header asks, %s seconds", async (seconds, expected) => {
+      expect(await firstWaitMs(askingInHeader(seconds))).toBe(expected);
+    });
+
+    it.each([["61s"], ["3600s"], ["99999999s"]])("does not wait for %s in a message, it uses its own first wait", async (time) => {
+      expect(await firstWaitMs(askingInMessage(time))).toBe(5_000);
+    });
+
+    it.each([["61"], ["7200"], ["4000000"]])("does not wait for a Retry-After of %s seconds, it uses its own first wait", async (seconds) => {
+      expect(await firstWaitMs(askingInHeader(seconds))).toBe(5_000);
+    });
+  });
+
   it("gives up after the retry budget instead of looping forever", async () => {
     const { port, calls } = flakyModel(99, RATE_LIMITED, []);
 
@@ -890,5 +902,44 @@ describe("rate limit retry", () => {
 
     await expect(collectTurn(port)).rejects.toMatchObject({ code: "rate_limit_exceeded" });
     expect(calls).toBe(1);
+  });
+});
+
+describe("a tool call allowed after the run was cancelled", () => {
+  it("is not run, and is recorded as cancelled", async () => {
+    const controller = new AbortController();
+    const { port: model } = scriptedModel([[{ type: "tool-call", id: "c1", name: "t", args: {} }]]);
+    const { port: tools, executed } = scriptedTools({ t: { ok: true, content: "ran" } });
+    const permission: PermissionBroker = {
+      async request() {
+        controller.abort();
+        return "allow";
+      },
+    };
+    const events = await collect(runAgentTurn({ system: "S", messages: [], model, tools, permission, signal: controller.signal }));
+    expect(executed).toEqual([]);
+    const result = events.find((event) => event.type === "tool-result");
+    expect(result?.type === "tool-result" ? result.content : "").toMatch(/cancelled/i);
+    expect(events.at(-1)).toEqual({ type: "finish", reason: "aborted" });
+  });
+});
+
+describe("a tool that fails because the run was stopped", () => {
+  it("is recorded as cancelled, not as a failure of the tool", async () => {
+    const controller = new AbortController();
+    const { port: model } = scriptedModel([[{ type: "tool-call", id: "c1", name: "t", args: {} }]]);
+    const tools: ToolPort = {
+      async list() {
+        return [{ name: "t", inputSchema: {} }];
+      },
+      async execute() {
+        controller.abort();
+        throw new Error("socket closed");
+      },
+    };
+    const events = await collect(runAgentTurn({ system: "S", messages: [], model, tools, permission: allowAllPermissions, signal: controller.signal }));
+    const result = events.find((event) => event.type === "tool-result");
+    expect(result?.type === "tool-result" ? result.content : "").toMatch(/cancelled/i);
+    expect(result?.type === "tool-result" ? result.content : "").not.toContain("socket closed");
   });
 });

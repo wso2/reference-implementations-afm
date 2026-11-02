@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { ModelPort, ToolPort, ChatMessage, ToolCall, ToolResult, ToolResultMedia, ModelEvent } from "./types";
-import { describeError, isRateLimited, retryAfterMs } from "./errors";
+import { describeError, isRateLimited, MAX_SERVER_RETRY_DELAY_MS, RATE_LIMIT_BACKOFF_MS, retryAfterMs, sleep } from "./errors";
+import type { ChatMessage, FinishReason, ModelPort, ToolCall, ToolDescriptor, ToolPort, ToolResult, ToolResultMedia } from "./types";
 
 export interface Budget {
   maxIterations: number;
@@ -37,6 +37,8 @@ export const allowAllPermissions: PermissionBroker = {
   },
 };
 
+export type TurnFinishReason = Exclude<FinishReason, "tool-calls"> | "max-iterations" | "budget" | "aborted";
+
 export type LoopEvent =
   | { type: "text-delta"; text: string }
   | { type: "tool-call"; id: string; name: string; args: unknown }
@@ -55,9 +57,7 @@ export type LoopEvent =
       elapsedMs: number;
       maxWallClockMs?: number;
     }
-  | { type: "finish"; reason: "stop" | "max-iterations" | "budget" | "aborted" | "length" | "content-filter" | "error" | "other" };
-
-const RATE_LIMIT_BACKOFF_MS = [5_000, 15_000, 30_000];
+  | { type: "finish"; reason: TurnFinishReason };
 
 function clipToolResult(content: string): string {
   if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
@@ -69,22 +69,9 @@ function clipToolResult(content: string): string {
 }
 
 const CANCELLED: ToolResult = { ok: false, content: "Tool call was cancelled - the user stopped the run." };
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const finish = (): void => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", finish);
-      resolve();
-    };
-    const timer = setTimeout(finish, ms);
-    signal.addEventListener("abort", finish, { once: true });
-  });
-}
+const DENIED: ToolResult = { ok: false, content: "Tool call was denied by the user." };
+const MODEL_STOPPED = "The model stopped before this tool call could run.";
+const INCOMPLETE_FINISHES: readonly FinishReason[] = ["length", "content-filter", "error", "other"];
 
 export interface AgentTurnInput {
   system: string;
@@ -96,180 +83,212 @@ export interface AgentTurnInput {
   signal?: AbortSignal;
 }
 
-export async function* runAgentTurn(input: AgentTurnInput): AsyncIterable<LoopEvent> {
-  const { system, model, tools, permission } = input;
-  const maxIterations = input.budget?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  const maxTokens = input.budget?.maxTokens;
-  const deadline =
-    input.budget?.maxWallClockMs != null ? Date.now() + input.budget.maxWallClockMs : Infinity;
-  const signal = input.signal ?? new AbortController().signal;
+interface TurnBudget {
+  maxIterations: number;
+  recordUsage(inputTokens: number, outputTokens: number, iteration: number): LoopEvent;
+  deadlinePassed(): boolean;
+  canWait(ms: number): boolean;
+  tokensExhausted(): boolean;
+}
 
-  const toolDescriptors = await tools.list();
-  const conversation: ChatMessage[] = [...input.messages];
+interface Turn {
+  system: string;
+  model: ModelPort;
+  tools: ToolPort;
+  permission: PermissionBroker;
+  signal: AbortSignal;
+  descriptors: ToolDescriptor[];
+  conversation: ChatMessage[];
+  budget: TurnBudget;
+}
+
+interface ModelResponse {
+  text: string;
+  toolCalls: ToolCall[];
+  finish: FinishReason | null;
+}
+
+function createTurnBudget(budget: Partial<Budget> | undefined, deadline: number): TurnBudget {
+  const maxIterations = budget?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const maxTokens = budget?.maxTokens;
+  const startedAt = Date.now();
   let totalTokens = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  const startedAt = Date.now();
 
-  let reason: Extract<LoopEvent, { type: "finish" }>["reason"] = "max-iterations";
-
-  turn: for (let iteration = 0; iteration < maxIterations; iteration++) {
-    if (signal.aborted) {
-      reason = "aborted";
-      break turn;
-    }
-    if (Date.now() > deadline) {
-      reason = "budget";
-      break turn;
-    }
-
-    let assistantText = "";
-    const toolCalls: ToolCall[] = [];
-    let modelFinish: Extract<ModelEvent, { type: "finish" }>["reason"] | null = null;
-    let attempt = 0;
-
-    for (;;) {
-      try {
-        for await (const event of model.stream(
-          { system, messages: [...conversation], tools: toolDescriptors },
-          signal,
-        )) {
-          if (event.type === "text-delta") {
-            assistantText += event.text;
-            yield { type: "text-delta", text: event.text };
-          } else if (event.type === "tool-call") {
-            const descriptor = toolDescriptors.find((tool) => tool.name === event.name);
-            toolCalls.push({
-              id: event.id,
-              name: event.name,
-              args: event.args,
-              serverId: descriptor?.serverId,
-            });
-            yield { type: "tool-call", id: event.id, name: event.name, args: event.args };
-          } else if (event.type === "usage") {
-            totalTokens += event.inputTokens + event.outputTokens;
-            totalInputTokens += event.inputTokens;
-            totalOutputTokens += event.outputTokens;
-            yield {
-              type: "budget-update",
-              totalTokens,
-              inputTokens: totalInputTokens,
-              outputTokens: totalOutputTokens,
-              maxTokens,
-              iteration: iteration + 1,
-              maxIterations,
-              elapsedMs: Date.now() - startedAt,
-              maxWallClockMs: input.budget?.maxWallClockMs,
-            };
-          } else if (event.type === "finish") {
-            modelFinish = event.reason;
-          }
-        }
-        break;
-      } catch (error) {
-        if (signal.aborted) break;
-        const started = assistantText !== "" || toolCalls.length > 0;
-        const waitMs = retryAfterMs(error) ?? RATE_LIMIT_BACKOFF_MS[attempt];
-        if (
-          started ||
-          waitMs === undefined ||
-          signal.aborted ||
-          !isRateLimited(error) ||
-          attempt >= RATE_LIMIT_BACKOFF_MS.length ||
-          Date.now() + waitMs > deadline
-        ) {
-          throw error;
-        }
-        attempt += 1;
-        yield {
-          type: "waiting",
-          attempt,
-          ofAttempts: RATE_LIMIT_BACKOFF_MS.length,
-          delayMs: waitMs,
-          reason: describeError(error),
-        };
-        await sleep(waitMs, signal);
-        if (signal.aborted) {
-          reason = "aborted";
-          break turn;
-        }
-      }
-    }
-
-    if (assistantText !== "" || toolCalls.length > 0) {
-      conversation.push(
-        toolCalls.length > 0
-          ? { role: "assistant", content: assistantText, toolCalls }
-          : { role: "assistant", content: assistantText },
-      );
-    }
-
-    if (signal.aborted) {
-      reason = "aborted";
-      for (const call of toolCalls) {
-        conversation.push({ role: "tool", toolCallId: call.id, content: CANCELLED.content });
-        yield { type: "tool-result", id: call.id, name: call.name, ok: false, content: CANCELLED.content };
-      }
-      break turn;
-    }
-
-    if (modelFinish === null || modelFinish === "length" || modelFinish === "content-filter" ||
-      modelFinish === "error" || modelFinish === "other") {
-      reason = modelFinish ?? "other";
-      for (const call of toolCalls) {
-        const content = "The model stopped before this tool call could run.";
-        conversation.push({ role: "tool", toolCallId: call.id, content });
-        yield { type: "tool-result", id: call.id, name: call.name, ok: false, content };
-      }
-      break turn;
-    }
-
-    if (toolCalls.length === 0) {
-      reason = modelFinish === "tool-calls" ? "other" : "stop";
-      break turn;
-    }
-
-    for (const call of toolCalls) {
-      let result: ToolResult;
-      if (signal.aborted) {
-        result = CANCELLED;
-      } else {
-        try {
-          const decision = await permission.request(call, signal);
-          if (decision === "deny") {
-            result = signal.aborted ? CANCELLED : { ok: false, content: "Tool call was denied by the user." };
-          } else {
-            result = await tools.execute(call, signal);
-          }
-        } catch (error) {
-          result = { ok: false, content: `Tool '${call.name}' failed: ${describeError(error)}` };
-        }
-      }
-      const content = clipToolResult(result.content);
-      conversation.push({ role: "tool", toolCallId: call.id, content });
-      yield {
-        type: "tool-result",
-        id: call.id,
-        name: call.name,
-        ok: result.ok,
-        content,
-        media: result.media,
+  return {
+    maxIterations,
+    recordUsage(inputTokens, outputTokens, iteration) {
+      totalTokens += inputTokens + outputTokens;
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+      return {
+        type: "budget-update",
+        totalTokens,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        maxTokens,
+        iteration: iteration + 1,
+        maxIterations,
+        elapsedMs: Date.now() - startedAt,
+        maxWallClockMs: budget?.maxWallClockMs,
       };
+    },
+    deadlinePassed: () => Date.now() > deadline,
+    canWait: (ms) => Date.now() + ms <= deadline,
+    tokensExhausted: () => maxTokens != null && totalTokens >= maxTokens,
+  };
+}
+
+async function startTurn(input: AgentTurnInput): Promise<Turn> {
+  const deadline = input.budget?.maxWallClockMs != null ? Date.now() + input.budget.maxWallClockMs : Infinity;
+  const signal = input.signal ?? new AbortController().signal;
+  const descriptors = await input.tools.list();
+  return {
+    system: input.system,
+    model: input.model,
+    tools: input.tools,
+    permission: input.permission,
+    signal,
+    descriptors,
+    conversation: [...input.messages],
+    budget: createTurnBudget(input.budget, deadline),
+  };
+}
+
+async function* readModelStream(turn: Turn, iteration: number, response: ModelResponse): AsyncGenerator<LoopEvent, void> {
+  const request = { system: turn.system, messages: [...turn.conversation], tools: turn.descriptors };
+  for await (const event of turn.model.stream(request, turn.signal)) {
+    switch (event.type) {
+      case "text-delta":
+        response.text += event.text;
+        yield { type: "text-delta", text: event.text };
+        break;
+      case "tool-call": {
+        const descriptor = turn.descriptors.find((tool) => tool.name === event.name);
+        response.toolCalls.push({ id: event.id, name: event.name, args: event.args, serverId: descriptor?.serverId });
+        yield { type: "tool-call", id: event.id, name: event.name, args: event.args };
+        break;
+      }
+      case "usage":
+        yield turn.budget.recordUsage(event.inputTokens, event.outputTokens, iteration);
+        break;
+      case "finish":
+        response.finish = event.reason;
+        break;
+    }
+  }
+}
+
+function retryDelay(error: unknown, attempt: number, started: boolean, budget: TurnBudget): number | undefined {
+  const asked = retryAfterMs(error);
+  const waitMs = asked !== undefined && asked <= MAX_SERVER_RETRY_DELAY_MS ? asked : RATE_LIMIT_BACKOFF_MS[attempt];
+  const retryable =
+    !started &&
+    waitMs !== undefined &&
+    isRateLimited(error) &&
+    attempt < RATE_LIMIT_BACKOFF_MS.length &&
+    budget.canWait(waitMs);
+  return retryable ? waitMs : undefined;
+}
+
+async function* streamModel(turn: Turn, iteration: number): AsyncGenerator<LoopEvent, ModelResponse> {
+  const response: ModelResponse = { text: "", toolCalls: [], finish: null };
+  for (let attempt = 0; ; ) {
+    try {
+      yield* readModelStream(turn, iteration, response);
+      return response;
+    } catch (error) {
+      if (turn.signal.aborted) return response;
+      const started = response.text !== "" || response.toolCalls.length > 0;
+      const delayMs = retryDelay(error, attempt, started, turn.budget);
+      if (delayMs === undefined) throw error;
+      attempt += 1;
+      yield { type: "waiting", attempt, ofAttempts: RATE_LIMIT_BACKOFF_MS.length, delayMs, reason: describeError(error) };
+      await sleep(delayMs, turn.signal);
+      if (turn.signal.aborted) return response;
+    }
+  }
+}
+
+function recordAssistantMessage(conversation: ChatMessage[], response: ModelResponse): void {
+  if (response.text === "" && response.toolCalls.length === 0) return;
+  conversation.push(
+    response.toolCalls.length > 0
+      ? { role: "assistant", content: response.text, toolCalls: response.toolCalls }
+      : { role: "assistant", content: response.text },
+  );
+}
+
+function unrunnableReason(signal: AbortSignal, finish: FinishReason | null): TurnFinishReason | null {
+  if (signal.aborted) return "aborted";
+  if (finish === null) return "other";
+  return INCOMPLETE_FINISHES.includes(finish) ? (finish as TurnFinishReason) : null;
+}
+
+function* settleUnrunCalls(turn: Turn, calls: ToolCall[], content: string): Generator<LoopEvent> {
+  for (const call of calls) {
+    turn.conversation.push({ role: "tool", toolCallId: call.id, content });
+    yield { type: "tool-result", id: call.id, name: call.name, ok: false, content };
+  }
+}
+
+async function runToolCall(turn: Turn, call: ToolCall): Promise<ToolResult> {
+  if (turn.signal.aborted) return CANCELLED;
+  try {
+    const decision = await turn.permission.request(call, turn.signal);
+    if (decision === "deny") return turn.signal.aborted ? CANCELLED : DENIED;
+    if (turn.signal.aborted) return CANCELLED;
+    return await turn.tools.execute(call, turn.signal);
+  } catch (error) {
+    if (turn.signal.aborted) return CANCELLED;
+    return { ok: false, content: `Tool '${call.name}' failed: ${describeError(error)}` };
+  }
+}
+
+async function* runToolCalls(turn: Turn, calls: ToolCall[]): AsyncGenerator<LoopEvent> {
+  for (const call of calls) {
+    const result = await runToolCall(turn, call);
+    const content = clipToolResult(result.content);
+    turn.conversation.push({ role: "tool", toolCallId: call.id, content });
+    yield { type: "tool-result", id: call.id, name: call.name, ok: result.ok, content, media: result.media };
+  }
+}
+
+export async function* runAgentTurn(input: AgentTurnInput): AsyncIterable<LoopEvent> {
+  const turn = await startTurn(input);
+  let reason: TurnFinishReason = "max-iterations";
+
+  for (let iteration = 0; iteration < turn.budget.maxIterations; iteration++) {
+    if (turn.signal.aborted || turn.budget.deadlinePassed()) {
+      reason = turn.signal.aborted ? "aborted" : "budget";
+      break;
     }
 
-    yield { type: "turn-checkpoint", messages: [...conversation] };
+    const response = yield* streamModel(turn, iteration);
+    recordAssistantMessage(turn.conversation, response);
 
-    if (signal.aborted) {
-      reason = "aborted";
-      break turn;
+    const unrunnable = unrunnableReason(turn.signal, response.finish);
+    if (unrunnable !== null) {
+      yield* settleUnrunCalls(turn, response.toolCalls, unrunnable === "aborted" ? CANCELLED.content : MODEL_STOPPED);
+      reason = unrunnable;
+      break;
     }
 
-    if (maxTokens != null && totalTokens >= maxTokens) {
-      reason = "budget";
-      break turn;
+    if (response.toolCalls.length === 0) {
+      reason = response.finish === "tool-calls" ? "other" : "stop";
+      break;
+    }
+
+    yield* runToolCalls(turn, response.toolCalls);
+    yield { type: "turn-checkpoint", messages: [...turn.conversation] };
+
+    if (turn.signal.aborted || turn.budget.tokensExhausted()) {
+      reason = turn.signal.aborted ? "aborted" : "budget";
+      break;
     }
   }
 
-  yield { type: "turn-complete", messages: conversation };
+  yield { type: "turn-complete", messages: turn.conversation };
   yield { type: "finish", reason };
 }

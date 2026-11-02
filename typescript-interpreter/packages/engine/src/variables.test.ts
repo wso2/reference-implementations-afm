@@ -14,22 +14,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, it, expect } from "vitest";
-import { resolveVariables, scanSecretUsage, referencedSecretNames, secretUseKey, serverAddress, secretDestination } from "./variables";
+import { describe, expect, it } from "vitest";
 import { VariableResolutionError } from "./errors";
+import { fakeSecrets } from "./test-support";
 import type { SecretPort } from "./types";
-
-function fakeSecrets(values: Record<string, string>): SecretPort {
-  return {
-    async resolve(ref) {
-      const v = values[ref.name];
-      if (v === undefined || v === "") {
-        return { status: "unresolved", reason: `'${ref.name}' not found` };
-      }
-      return { status: "resolved", value: v };
-    },
-  };
-}
+import {
+  isInsecureAddress,
+  isPlainHttpAddress,
+  referencedSecretNames,
+  resolveVariables,
+  scanSecretUsage,
+  secretDestination,
+  serverAddress,
+} from "./variables";
 
 describe("resolveVariables", () => {
   it("fills ${env:NAME} from the SecretPort", async () => {
@@ -311,16 +308,6 @@ i
   });
 });
 
-describe("secretUseKey", () => {
-  it("binds a secret to one destination", () => {
-    expect(secretUseKey("K", "https://good.example/mcp")).not.toBe(secretUseKey("K", "https://attacker.example/mcp"));
-  });
-
-  it("is stable", () => {
-    expect(secretUseKey("K", "https://a.example/mcp")).toBe(secretUseKey("K", "https://a.example/mcp"));
-  });
-});
-
 describe("serverAddress", () => {
   it("keeps the origin, path and query, so two paths on one host are two addresses", () => {
     expect(serverAddress("https://docs.example.com/mcp")).toBe("https://docs.example.com/mcp");
@@ -397,5 +384,58 @@ i
 
   it("sends the secret to the token url, not to the server", () => {
     expect(scanSecretUsage(file).find((u) => u.name === "DOCS_SECRET")!.address).toBe("https://auth.example.net/oauth/token");
+  });
+});
+
+describe("isInsecureAddress", () => {
+  it.each([
+    ["http://example.com/mcp"],
+    ["http://example.com:8080/mcp"],
+    ["HTTP://EXAMPLE.COM/mcp"],
+    ["http://192.168.1.20/mcp"],
+    ["http://0.0.0.0/mcp"],
+  ])("is true for the plain http address %s", (address) => {
+    expect(isInsecureAddress(address)).toBe(true);
+  });
+
+  it.each([
+    ["http://localhost.evil.com/mcp"],
+    ["http://localhost@evil.com/mcp"],
+    ["http://127.0.0.1.evil.com/mcp"],
+    ["http://evil.com/localhost"],
+    ["http://evil.com/?next=http://localhost"],
+    ["http://localhost.:8787/mcp"],
+  ])("is true for the lookalike %s, which is not this machine", (address) => {
+    expect(isInsecureAddress(address)).toBe(true);
+  });
+
+  it.each([
+    ["http://localhost/mcp"],
+    ["http://localhost:8787/mcp"],
+    ["http://LOCALHOST:8787/mcp"],
+    ["http://127.0.0.1:5000/mcp"],
+    ["http://127.8.9.10/mcp"],
+    ["http://127.1/mcp"],
+    ["http://[::1]:3000/mcp"],
+  ])("is false for the address on this machine %s", (address) => {
+    expect(isInsecureAddress(address)).toBe(false);
+  });
+
+  it.each([["https://example.com/mcp"], ["HTTPS://EXAMPLE.COM"], ["https://localhost/mcp"]])("is false for the https address %s", (address) => {
+    expect(isInsecureAddress(address)).toBe(false);
+  });
+
+  it.each([[""], ["not a url"], ["${env:MCP_URL}"], ["/relative/path"]])("is false for %j, which is not an address it can judge", (address) => {
+    expect(isInsecureAddress(address)).toBe(false);
+  });
+});
+
+describe("isPlainHttpAddress", () => {
+  it.each([["http://example.com/x"], ["http://localhost/x"], ["HTTP://127.0.0.1:80/x"]])("is true for %s, whichever host it names", (address) => {
+    expect(isPlainHttpAddress(address)).toBe(true);
+  });
+
+  it.each([["https://example.com/x"], ["ftp://example.com/x"], ["not a url"], ["${env:URL}"], [""]])("is false for %j", (address) => {
+    expect(isPlainHttpAddress(address)).toBe(false);
   });
 });

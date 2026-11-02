@@ -18,6 +18,7 @@ export type {
   ModelPort,
   ModelRequest,
   ModelEvent,
+  FinishReason,
   ToolPort,
   ToolDescriptor,
   ToolCall,
@@ -30,23 +31,14 @@ export type {
   ContentPart,
   JsonSchema,
 } from "./types";
-
-export { parseAfm, splitFrontmatter, frontmatterEndOffset, extractRoleAndInstructions } from "./parse";
-export type { ParsedAfm, FrontmatterSplit, RoleAndInstructions } from "./parse";
-
-export { validateMetadata, agentMetadataSchema } from "./schema";
-export type { AgentMetadata, ClientAuthentication, JsonSchemaData } from "./schema";
-
-export { resolveVariables, scanSecretUsage, referencedSecretNames, secretUseKey, serverAddress, secretDestination } from "./variables";
+export { parseAfm, splitFrontmatter, frontmatterEndOffset } from "./parse";
+export type { ParsedAfm, FrontmatterSplit } from "./parse";
+export { validateMetadata, agentMetadataSchema, isOAuth2MachineGrant } from "./schema";
+export type { AgentMetadata, ClientAuthentication, JsonSchemaData, OAuth2MachineGrant } from "./schema";
+export { resolveVariables, scanSecretUsage, referencedSecretNames, serverAddress, secretDestination, isInsecureAddress } from "./variables";
 export type { SecretUsage, SecretScope } from "./variables";
-
-export { planForBrowser } from "./plan";
-export type { Plan, PlanIssue, PlanSeverity } from "./plan";
-
-export { loadAfm, buildSystemPrompt } from "./load";
-export type { LoadedAfm } from "./load";
-
+export { planForBrowser, loadAfm, buildSystemPrompt } from "./load";
+export type { Plan, PlanIssue, PlanSeverity, LoadedAfm, LoadOptions } from "./load";
 export { runAgentTurn, allowAllPermissions, DEFAULT_MAX_ITERATIONS } from "./loop";
-export type { LoopEvent, AgentTurnInput, PermissionBroker, Budget } from "./loop";
-
-export { AfmParseError, AfmValidationError, VariableResolutionError, describeError, isRateLimited, retryAfterMs } from "./errors";
+export type { LoopEvent, TurnFinishReason, AgentTurnInput, PermissionBroker, Budget } from "./loop";
+export { AfmParseError, AfmValidationError, VariableResolutionError, describeError } from "./errors";

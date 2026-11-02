@@ -14,9 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, it, expect } from "vitest";
-import { validateMetadata } from "./schema";
+import { describe, expect, it } from "vitest";
 import { AfmValidationError } from "./errors";
+import { isOAuth2MachineGrant, jsonSchema, validateMetadata } from "./schema";
 
 describe("validateMetadata", () => {
   it("reads a number written as text once its variable is resolved", () => {
@@ -70,110 +70,36 @@ describe("validateMetadata", () => {
     }
   });
 
-  describe("transport (discriminated union)", () => {
-    it("requires url for http transport", () => {
-      expect(() =>
-        validateMetadata({ tools: { mcp: [{ name: "s", transport: { type: "http" } }] } }),
-      ).toThrow(AfmValidationError);
+  describe("URL fields", () => {
+    const withTransport = (url: string) => () =>
+      validateMetadata({ tools: { mcp: [{ name: "s", transport: { type: "http", url } }] } });
+
+    it("accepts http and https", () => {
+      expect(withTransport("https://mcp.example.com/mcp")).not.toThrow();
+      expect(withTransport("http://localhost:8787/")).not.toThrow();
     });
 
-    it("accepts stdio transport with a command", () => {
-      const md = validateMetadata({
-        tools: { mcp: [{ name: "s", transport: { type: "stdio", command: "python" } }] },
-      });
-      expect(md.tools?.mcp?.[0]?.transport.type).toBe("stdio");
+    it("rejects a scheme that is never a server to call", () => {
+      expect(withTransport("javascript:alert(1)")).toThrow(/http:\/\/ or https:\/\//);
+      expect(withTransport("file:///etc/passwd")).toThrow(/transport.url/);
+      expect(withTransport("data:text/plain,x")).toThrow(/transport.url/);
     });
 
-    it("rejects an unknown transport type", () => {
-      expect(() =>
-        validateMetadata({ tools: { mcp: [{ name: "s", transport: { type: "ftp" } }] } }),
-      ).toThrow(AfmValidationError);
-    });
-  });
-
-  describe("skills (discriminated union)", () => {
-    it("accepts a local skill source", () => {
-      const md = validateMetadata({ skills: [{ type: "local", path: "./skills" }] });
-      expect(md.skills?.[0]).toEqual({ type: "local", path: "./skills" });
+    it("leaves an unresolved variable alone", () => {
+      expect(withTransport("${env:MCP_URL}")).not.toThrow();
+      expect(withTransport("https://${env:REGION}.example.com/mcp")).not.toThrow();
     });
 
-    it("rejects a url skill source: the spec defines only the local one", () => {
-      expect(() =>
-        validateMetadata({ skills: [{ type: "url", url: "https://example.com/skills/pdf/SKILL.md" }] }),
-      ).toThrow(/local/);
-    });
-
-    it("requires path for a local source", () => {
-      expect(() => validateMetadata({ skills: [{ type: "local" }] })).toThrow(AfmValidationError);
-    });
-
-    it("requires url for a url source", () => {
-      expect(() => validateMetadata({ skills: [{ type: "url" }] })).toThrow(AfmValidationError);
-    });
-
-    it("rejects an unknown skill source type", () => {
-      expect(() => validateMetadata({ skills: [{ type: "s3", path: "x" }] })).toThrow(
-        AfmValidationError,
-      );
-    });
-
-    it("rejects unknown fields on a skill source", () => {
-      expect(() =>
-        validateMetadata({ skills: [{ type: "local", path: "./skills", extra: true }] }),
-      ).toThrow(AfmValidationError);
+    it("applies the same rule to model.url, provider.url and icon_url", () => {
+      expect(() => validateMetadata({ icon_url: "javascript:x" })).toThrow(/icon_url/);
+      expect(() => validateMetadata({ model: { url: "file:///x" } })).toThrow(/model.url/);
+      expect(() => validateMetadata({ provider: { url: "data:x" } })).toThrow(/provider.url/);
+      expect(() => validateMetadata({ icon_url: "https://example.com/i.png" })).not.toThrow();
     });
   });
+});
 
-  describe("interfaces (discriminated union)", () => {
-    it("rejects an unknown interface type", () => {
-      expect(() => validateMetadata({ interfaces: [{ type: "carrierpigeon" }] })).toThrow(
-        AfmValidationError,
-      );
-    });
-
-    it("accepts a webhook interface (valid file even if the browser can't run it)", () => {
-      const md = validateMetadata({
-        interfaces: [
-          { type: "webhook", subscription: { protocol: "websub" } },
-        ],
-      });
-      expect(md.interfaces?.[0]?.type).toBe("webhook");
-    });
-
-    it("accepts webhook without subscription and with an empty HTTP exposure", () => {
-      const md = validateMetadata({ interfaces: [{ type: "webhook", exposure: { http: {} }, signature: { output: { type: "object" } } }] });
-      expect(md.interfaces?.[0]?.type).toBe("webhook");
-    });
-
-    it("accepts all three platformchat modes and their mode-specific fields", () => {
-      const md = validateMetadata({ interfaces: [
-        { type: "platformchat", platform: "slack", mode: "notification", prompt: "${http:payload.event}", platform_config: { signing_secret: "${env:SLACK_SECRET}" }, signature: { input: { type: "object" } }, exposure: { http: {} } },
-        { type: "platformchat", platform: "gchat", mode: "request", signature: { output: { type: "object", properties: { text: { type: "string" } } } }, exposure: { http: { path: "/gchat" } } },
-        { type: "platformchat", platform: "telegram", mode: "polling", polling: { interval: 30, timeout: 25 }, authentication: { type: "api-key", api_key: "${env:BOT_TOKEN}" } },
-      ] });
-      expect(md.interfaces?.map((iface) => iface.type)).toEqual(["platformchat", "platformchat", "platformchat"]);
-    });
-
-    it("accepts a variable-backed poll interval until it can be resolved", () => {
-      expect(() => validateMetadata({ interfaces: [{ type: "platformchat", platform: "telegram", mode: "polling", polling: { interval: "${env:POLL_SECONDS}" } }] })).not.toThrow();
-      expect(() => validateMetadata({ interfaces: [{ type: "platformchat", platform: "telegram", mode: "polling", polling: { interval: -1 } }] })).toThrow(AfmValidationError);
-    });
-
-    it("rejects fields forbidden by a platformchat mode", () => {
-      const cases = [
-        { mode: "notification", signature: { output: { type: "string" } } },
-        { mode: "polling", signature: { output: { type: "string" } } },
-        { mode: "polling", exposure: { http: {} } },
-        { mode: "request", polling: { interval: 5 } },
-      ];
-      for (const fields of cases) {
-        expect(() => validateMetadata({ interfaces: [{ type: "platformchat", platform: "slack", ...fields }] })).toThrow(AfmValidationError);
-      }
-      expect(() => validateMetadata({ interfaces: [{ type: "platformchat", platform: "slack", mode: "later" }] })).toThrow(AfmValidationError);
-      expect(() => validateMetadata({ interfaces: [{ type: "platformchat", mode: "request" }] })).toThrow(AfmValidationError);
-    });
-  });
-
+describe("validateMetadata: authentication", () => {
   describe("authentication required fields", () => {
     it("rejects bearer without a token", () => {
       expect(() =>
@@ -281,38 +207,40 @@ describe("validateMetadata", () => {
         expect(md.model?.authentication?.type).toBe("oauth2");
       });
 
-      it("rejects a field the grant doesn't support (e.g. refresh_token on client_credentials)", () => {
-        expect(() =>
-          validateMetadata({
-            model: {
-              authentication: {
-                type: "oauth2",
-                grant_type: "client_credentials",
-                token_url: "u",
-                client_id: "i",
-                client_secret: "s",
-                refresh_token: "r",
-              },
-            },
-          }),
-        ).toThrow(/does not support 'refresh_token'/);
+      it.each([
+        ["a field the grant doesn't support (e.g. refresh_token on client_credentials)", { refresh_token: "r" }, /does not support 'refresh_token'/],
+        ["an invalid credential_bearer value", { credential_bearer: "query_param" }, /oauth2 'credential_bearer' is not supported/],
+      ])("rejects %s", (_label, extra, message) => {
+        const base = { type: "oauth2", grant_type: "client_credentials", token_url: "https://auth.example.com/token", client_id: "i", client_secret: "s" };
+        const authentication = { ...base, ...extra };
+        expect(() => validateMetadata({ model: { authentication } })).toThrow(message);
       });
 
-      it("rejects an invalid credential_bearer value", () => {
-        expect(() =>
-          validateMetadata({
-            model: {
-              authentication: {
-                type: "oauth2",
-                grant_type: "client_credentials",
-                token_url: "u",
-                client_id: "i",
-                client_secret: "s",
-                credential_bearer: "query_param",
-              },
-            },
-          }),
-        ).toThrow(/oauth2 'credential_bearer' is not supported/);
+      it.each([["constructor"], ["__proto__"], ["toString"], ["hasOwnProperty"]])("rejects the grant_type %s as unsupported, not with a crash", (grant) => {
+        const check = () => validateMetadata({ model: { authentication: { type: "oauth2", grant_type: grant } } });
+        expect(check).toThrow(AfmValidationError);
+        expect(check).toThrow(/grant_type' is not supported/);
+      });
+
+      it.each([
+        ["token_url", "not-a-url"],
+        ["token_url", "ftp://auth.example.com/token"],
+        ["authorize_url", "/relative/authorize"],
+      ])("rejects a %s that is not an http or https address: %s", (field, value) => {
+        const authentication = {
+          type: "oauth2",
+          grant_type: "authorization_code",
+          authorize_url: "https://auth.example.com/authorize",
+          token_url: "https://auth.example.com/token",
+          client_id: "c",
+          [field]: value,
+        };
+        expect(() => validateMetadata({ model: { authentication } })).toThrow(new RegExp(`authentication.${field} must be`));
+      });
+
+      it("accepts a sign-in address that is still a variable", () => {
+        const authentication = { type: "oauth2", grant_type: "client_credentials", token_url: "${env:TOKEN_URL}", client_id: "i", client_secret: "s" };
+        expect(() => validateMetadata({ model: { authentication } })).not.toThrow();
       });
 
       it("accepts the browser-runtime authorization_code grant without a client_secret", () => {
@@ -346,32 +274,88 @@ describe("validateMetadata", () => {
       });
     });
   });
+});
 
-  describe("URL fields", () => {
-    const withTransport = (url: string) => () =>
-      validateMetadata({ tools: { mcp: [{ name: "s", transport: { type: "http", url } }] } });
+describe("isOAuth2MachineGrant", () => {
+  it.each(["client_credentials", "password", "refresh_token", "jwt_bearer"])("accepts %s", (grant) => {
+    expect(isOAuth2MachineGrant(grant)).toBe(true);
+  });
 
-    it("accepts http and https", () => {
-      expect(withTransport("https://mcp.example.com/mcp")).not.toThrow();
-      expect(withTransport("http://localhost:8787/")).not.toThrow();
+  it.each(["authorization_code", "", "constructor", "CLIENT_CREDENTIALS", "implicit"])("refuses %s", (grant) => {
+    expect(isOAuth2MachineGrant(grant)).toBe(false);
+  });
+});
+
+describe("validateMetadata: interfaces", () => {
+  describe("interfaces (discriminated union)", () => {
+    it("rejects an unknown interface type", () => {
+      expect(() => validateMetadata({ interfaces: [{ type: "carrierpigeon" }] })).toThrow(
+        AfmValidationError,
+      );
     });
 
-    it("rejects a scheme that is never a server to call", () => {
-      expect(withTransport("javascript:alert(1)")).toThrow(/http:\/\/ or https:\/\//);
-      expect(withTransport("file:///etc/passwd")).toThrow(/transport.url/);
-      expect(withTransport("data:text/plain,x")).toThrow(/transport.url/);
+    it("accepts a webhook interface (valid file even if the browser can't run it)", () => {
+      const md = validateMetadata({
+        interfaces: [
+          { type: "webhook", subscription: { protocol: "websub" } },
+        ],
+      });
+      expect(md.interfaces?.[0]?.type).toBe("webhook");
     });
 
-    it("leaves an unresolved variable alone", () => {
-      expect(withTransport("${env:MCP_URL}")).not.toThrow();
-      expect(withTransport("https://${env:REGION}.example.com/mcp")).not.toThrow();
+    it("accepts webhook without subscription and with an empty HTTP exposure", () => {
+      const md = validateMetadata({ interfaces: [{ type: "webhook", exposure: { http: {} }, signature: { output: { type: "object" } } }] });
+      expect(md.interfaces?.[0]?.type).toBe("webhook");
     });
 
-    it("applies the same rule to model.url, provider.url and icon_url", () => {
-      expect(() => validateMetadata({ icon_url: "javascript:x" })).toThrow(/icon_url/);
-      expect(() => validateMetadata({ model: { url: "file:///x" } })).toThrow(/model.url/);
-      expect(() => validateMetadata({ provider: { url: "data:x" } })).toThrow(/provider.url/);
-      expect(() => validateMetadata({ icon_url: "https://example.com/i.png" })).not.toThrow();
+    it("accepts all three platformchat modes and their mode-specific fields", () => {
+      const md = validateMetadata({ interfaces: [
+        {
+          type: "platformchat",
+          platform: "slack",
+          mode: "notification",
+          prompt: "${http:payload.event}",
+          platform_config: { signing_secret: "${env:SLACK_SECRET}" },
+          signature: { input: { type: "object" } },
+          exposure: { http: {} },
+        },
+        {
+          type: "platformchat",
+          platform: "gchat",
+          mode: "request",
+          signature: { output: { type: "object", properties: { text: { type: "string" } } } },
+          exposure: { http: { path: "/gchat" } },
+        },
+        {
+          type: "platformchat",
+          platform: "telegram",
+          mode: "polling",
+          polling: { interval: 30, timeout: 25 },
+          authentication: { type: "api-key", api_key: "${env:BOT_TOKEN}" },
+        },
+      ] });
+      expect(md.interfaces?.map((iface) => iface.type)).toEqual(["platformchat", "platformchat", "platformchat"]);
+    });
+
+    it("accepts a variable-backed poll interval until it can be resolved", () => {
+      const polling = (interval: unknown) => () =>
+        validateMetadata({ interfaces: [{ type: "platformchat", platform: "telegram", mode: "polling", polling: { interval } }] });
+      expect(polling("${env:POLL_SECONDS}")).not.toThrow();
+      expect(polling(-1)).toThrow(AfmValidationError);
+    });
+
+    it("rejects fields forbidden by a platformchat mode", () => {
+      const cases = [
+        { mode: "notification", signature: { output: { type: "string" } } },
+        { mode: "polling", signature: { output: { type: "string" } } },
+        { mode: "polling", exposure: { http: {} } },
+        { mode: "request", polling: { interval: 5 } },
+      ];
+      for (const fields of cases) {
+        expect(() => validateMetadata({ interfaces: [{ type: "platformchat", platform: "slack", ...fields }] })).toThrow(AfmValidationError);
+      }
+      expect(() => validateMetadata({ interfaces: [{ type: "platformchat", platform: "slack", mode: "later" }] })).toThrow(AfmValidationError);
+      expect(() => validateMetadata({ interfaces: [{ type: "platformchat", mode: "request" }] })).toThrow(AfmValidationError);
     });
   });
 
@@ -393,9 +377,34 @@ describe("validateMetadata", () => {
       });
     });
 
-    it("accepts boolean and reference schemas and rejects invalid nested keywords", () => {
-      expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input: { $ref: "#/$defs/Message", $defs: { Message: { type: "string" } } }, output: true } }] })).not.toThrow();
-      expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input: { type: "object", properties: { x: { type: "bogus" } } } } }] })).toThrow(/Invalid JSON Schema/);
+    it("accepts boolean and reference schemas", () => {
+      const input = { $ref: "#/$defs/Message", $defs: { Message: { type: "string" } } };
+      expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input, output: true } }] })).not.toThrow();
+    });
+
+    it("does not check a declared schema beyond its shape, since the browser never validates data against it", () => {
+      for (const input of [{ type: "bogus" }, { $schema: "http://json-schema.org/draft-04/schema#", type: "string" }, { properties: [] }, {}]) {
+        expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input } }] })).not.toThrow();
+      }
+    });
+
+    it("still requires a schema to be an object or a boolean", () => {
+      for (const input of ["string", 5, null, ["string"]]) {
+        expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input } }] })).toThrow();
+      }
+    });
+
+    it("reads a signature without compiling any code, as a page that blocks eval requires", () => {
+      const original = globalThis.Function;
+      globalThis.Function = function blocked() {
+        throw new EvalError("Code generation from strings is blocked.");
+      } as unknown as FunctionConstructor;
+      try {
+        expect(jsonSchema.safeParse({ type: "object", properties: { a: { type: "string" } } }).success).toBe(true);
+        expect(jsonSchema.safeParse(true).success).toBe(true);
+      } finally {
+        globalThis.Function = original;
+      }
     });
 
     it("validates declared JSON Schema dialects", () => {
@@ -408,6 +417,62 @@ describe("validateMetadata", () => {
           input: { $schema: dialect, type: "object", properties: { value: { type: "string" } } },
         } }] })).not.toThrow();
       }
+    });
+  });
+});
+
+describe("validateMetadata: tools", () => {
+  describe("transport (discriminated union)", () => {
+    it("requires url for http transport", () => {
+      expect(() =>
+        validateMetadata({ tools: { mcp: [{ name: "s", transport: { type: "http" } }] } }),
+      ).toThrow(AfmValidationError);
+    });
+
+    it("accepts stdio transport with a command", () => {
+      const md = validateMetadata({
+        tools: { mcp: [{ name: "s", transport: { type: "stdio", command: "python" } }] },
+      });
+      expect(md.tools?.mcp?.[0]?.transport.type).toBe("stdio");
+    });
+
+    it("rejects an unknown transport type", () => {
+      expect(() =>
+        validateMetadata({ tools: { mcp: [{ name: "s", transport: { type: "ftp" } }] } }),
+      ).toThrow(AfmValidationError);
+    });
+  });
+
+  describe("skills (discriminated union)", () => {
+    it("accepts a local skill source", () => {
+      const md = validateMetadata({ skills: [{ type: "local", path: "./skills" }] });
+      expect(md.skills?.[0]).toEqual({ type: "local", path: "./skills" });
+    });
+
+    it("rejects a url skill source: the spec defines only the local one", () => {
+      expect(() =>
+        validateMetadata({ skills: [{ type: "url", url: "https://example.com/skills/pdf/SKILL.md" }] }),
+      ).toThrow(/local/);
+    });
+
+    it("requires path for a local source", () => {
+      expect(() => validateMetadata({ skills: [{ type: "local" }] })).toThrow(AfmValidationError);
+    });
+
+    it("requires url for a url source", () => {
+      expect(() => validateMetadata({ skills: [{ type: "url" }] })).toThrow(AfmValidationError);
+    });
+
+    it("rejects an unknown skill source type", () => {
+      expect(() => validateMetadata({ skills: [{ type: "s3", path: "x" }] })).toThrow(
+        AfmValidationError,
+      );
+    });
+
+    it("rejects unknown fields on a skill source", () => {
+      expect(() =>
+        validateMetadata({ skills: [{ type: "local", path: "./skills", extra: true }] }),
+      ).toThrow(AfmValidationError);
     });
   });
 

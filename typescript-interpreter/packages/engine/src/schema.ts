@@ -15,56 +15,7 @@
 // under the License.
 
 import { z } from "zod";
-import Ajv from "ajv";
-import Ajv2019 from "ajv/dist/2019.js";
-import Ajv2020 from "ajv/dist/2020.js";
 import { AfmValidationError } from "./errors";
-
-export type JsonSchemaData = boolean | { type?: string | string[]; [key: string]: unknown };
-
-const schemaValidators = {
-  draft7: new Ajv({ strict: false, allErrors: true }),
-  draft2019: new Ajv2019({ strict: false, allErrors: true }),
-  draft2020: new Ajv2020({ strict: false, allErrors: true }),
-};
-
-function validatorFor(schema: JsonSchemaData) {
-  const dialect = typeof schema === "object" ? schema.$schema : undefined;
-  if (typeof dialect !== "string" || dialect.includes("2020-12")) return schemaValidators.draft2020;
-  if (dialect.includes("2019-09")) return schemaValidators.draft2019;
-  if (dialect.includes("draft-07")) return schemaValidators.draft7;
-  return null;
-}
-
-export const jsonSchema: z.ZodType<JsonSchemaData> = z
-  .union([z.boolean(), z.record(z.string(), z.unknown())])
-  .superRefine((value, ctx) => {
-    const validator = validatorFor(value);
-    if (validator === null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unsupported JSON Schema dialect" });
-      return;
-    }
-    try {
-      if (validator.validateSchema(value)) return;
-    } catch {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unsupported JSON Schema dialect" });
-      return;
-    }
-    for (const error of validator.errors ?? []) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid JSON Schema: ${error.message ?? "invalid keyword"}` });
-    }
-  });
-
-const stringSchema: JsonSchemaData = { type: "string" };
-
-const signatureSchema = z
-  .object({
-    input: jsonSchema.default(stringSchema),
-    output: jsonSchema.default(stringSchema),
-  })
-  .strict();
-
-const eventSignatureSchema = z.object({ input: jsonSchema.optional(), output: jsonSchema.optional() }).strict();
 
 const WHOLE_NUMBER = /^\s*[+-]?\d+\s*$/;
 
@@ -74,20 +25,9 @@ function numberFromText(value: unknown): unknown {
   return WHOLE_NUMBER.test(value) ? Number(value) : value;
 }
 
-const JWT_ALGORITHMS = new Set(["RS256", "RS384", "RS512", "HS256", "HS384", "HS512"]);
-const OAUTH2_CREDENTIAL_BEARERS = new Set(["auth_header", "post_body"]);
-
-const AUTH_FIELDS = {
-  bearer: { required: ["token"], allowed: ["token"] },
-  basic: { required: ["username", "password"], allowed: ["username", "password"] },
-  "api-key": { required: ["api_key"], allowed: ["api_key", "header_name"] },
-  jwt: {
-    required: ["issuer", "signing_key"],
-    allowed: ["issuer", "audience", "signing_key", "algorithm", "key_id", "subject", "custom_claims", "expiry_seconds"],
-  },
-} as const satisfies Record<string, { required: readonly string[]; allowed: readonly string[] }>;
-
-const RECOGNIZED_AUTH_TYPES: readonly string[] = [...Object.keys(AUTH_FIELDS), "oauth2"];
+function reportIssue(ctx: z.RefinementCtx, message: string, path?: (string | number)[]): void {
+  ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(path === undefined ? {} : { path }) });
+}
 
 function httpUrl(field: string): z.ZodType<string> {
   return z.string().superRefine((value, ctx) => {
@@ -96,14 +36,11 @@ function httpUrl(field: string): z.ZodType<string> {
     try {
       protocol = new URL(value).protocol;
     } catch {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${field} must be an absolute http:// or https:// URL` });
+      reportIssue(ctx, `${field} must be an absolute http:// or https:// URL`);
       return;
     }
     if (protocol !== "http:" && protocol !== "https:") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `${field} must be an http:// or https:// URL - got '${protocol}//'`,
-      });
+      reportIssue(ctx, `${field} must be an http:// or https:// URL - got '${protocol}//'`);
     }
   });
 }
@@ -112,22 +49,87 @@ function fieldList(fields: string[]): string {
   return `${fields.map((field) => `'${field}'`).join(", ")} ${fields.length === 1 ? "field" : "fields"}`;
 }
 
-interface OAuth2GrantSpec {
+const JWT_ALGORITHMS = new Set(["RS256", "RS384", "RS512", "HS256", "HS384", "HS512"]);
+const OAUTH2_CREDENTIAL_BEARERS = new Set(["auth_header", "post_body"]);
+
+interface FieldSpec {
   required: readonly string[];
   optional: readonly string[];
 }
 
-const OAUTH2_GRANTS: Record<string, OAuth2GrantSpec> = {
+const AUTH_FIELDS: Record<string, FieldSpec> = {
+  bearer: { required: ["token"], optional: [] },
+  basic: { required: ["username", "password"], optional: [] },
+  "api-key": { required: ["api_key"], optional: ["header_name"] },
+  jwt: {
+    required: ["issuer", "signing_key"],
+    optional: ["audience", "algorithm", "key_id", "subject", "custom_claims", "expiry_seconds"],
+  },
+};
+
+const RECOGNIZED_AUTH_TYPES: readonly string[] = [...Object.keys(AUTH_FIELDS), "oauth2"];
+
+const MACHINE_GRANTS = {
   client_credentials: { required: ["token_url", "client_id", "client_secret"], optional: ["scopes", "credential_bearer"] },
   password: { required: ["token_url", "username", "password", "client_id", "client_secret"], optional: ["scopes", "credential_bearer"] },
   refresh_token: { required: ["token_url", "refresh_token", "client_id", "client_secret"], optional: ["scopes", "credential_bearer"] },
   jwt_bearer: { required: ["token_url", "assertion"], optional: ["client_id", "client_secret", "scopes", "credential_bearer"] },
+} as const satisfies Record<string, FieldSpec>;
+
+export type OAuth2MachineGrant = keyof typeof MACHINE_GRANTS;
+
+const OAUTH2_GRANTS: Record<string, FieldSpec> = {
+  ...MACHINE_GRANTS,
   authorization_code: { required: ["authorize_url", "token_url", "client_id"], optional: ["scopes"] },
 };
+
+export function isOAuth2MachineGrant(grant: string): grant is OAuth2MachineGrant {
+  return Object.hasOwn(MACHINE_GRANTS, grant);
+}
 
 export function postsSecretsToTokenUrl(grantType: unknown): boolean {
   const grant = typeof grantType === "string" ? grantType.toLowerCase() : "";
   return grant !== "authorization_code" && Object.hasOwn(OAUTH2_GRANTS, grant);
+}
+
+function checkFields(label: string, spec: FieldSpec, provided: Set<string>, ctx: z.RefinementCtx): void {
+  const missing = spec.required.filter((field) => !provided.has(field));
+  if (missing.length > 0) reportIssue(ctx, `${label} requires ${fieldList(missing)}`);
+
+  const allowed = new Set<string>([...spec.required, ...spec.optional]);
+  const unknown = [...provided].filter((field) => !allowed.has(field));
+  if (unknown.length > 0) reportIssue(ctx, `${label} does not support ${fieldList(unknown)}`);
+}
+
+function validateJwtAlgorithm(algorithm: string, ctx: z.RefinementCtx): void {
+  if (algorithm.toLowerCase() === "none") {
+    reportIssue(ctx, "jwt 'algorithm' 'none' is not allowed; it produces an unsigned token");
+    return;
+  }
+  if (!JWT_ALGORITHMS.has(algorithm)) {
+    reportIssue(ctx, `jwt 'algorithm' is not supported. Supported algorithms: ${[...JWT_ALGORITHMS].sort().join(", ")}`);
+  }
+}
+
+function validateOAuth2Fields(auth: { grant_type?: string; credential_bearer?: string }, provided: Set<string>, ctx: z.RefinementCtx): void {
+  if (auth.grant_type === undefined) {
+    reportIssue(ctx, "type 'oauth2' requires 'grant_type' field");
+    return;
+  }
+
+  const grant = auth.grant_type.toLowerCase();
+  const spec = Object.hasOwn(OAUTH2_GRANTS, grant) ? OAUTH2_GRANTS[grant] : undefined;
+  if (spec === undefined) {
+    reportIssue(ctx, `oauth2 'grant_type' is not supported. Supported grant types: ${Object.keys(OAUTH2_GRANTS).join(", ")}`);
+    return;
+  }
+
+  const grantFields = new Set([...provided].filter((field) => field !== "grant_type"));
+  checkFields(`oauth2 grant_type '${grant}'`, spec, grantFields, ctx);
+
+  if (auth.credential_bearer !== undefined && !OAUTH2_CREDENTIAL_BEARERS.has(auth.credential_bearer)) {
+    reportIssue(ctx, `oauth2 'credential_bearer' is not supported. Supported values: ${[...OAUTH2_CREDENTIAL_BEARERS].sort().join(", ")}`);
+  }
 }
 
 const clientAuthentication = z
@@ -147,8 +149,8 @@ const clientAuthentication = z
     custom_claims: z.record(z.string(), z.unknown()).optional(),
     expiry_seconds: z.preprocess(numberFromText, z.number().int().optional()),
     grant_type: z.string().optional(),
-    authorize_url: z.string().optional(),
-    token_url: z.string().optional(),
+    authorize_url: httpUrl("authentication.authorize_url").optional(),
+    token_url: httpUrl("authentication.token_url").optional(),
     client_id: z.string().optional(),
     client_secret: z.string().optional(),
     refresh_token: z.string().optional(),
@@ -159,9 +161,7 @@ const clientAuthentication = z
   .passthrough()
   .superRefine((auth, ctx) => {
     const type = auth.type.toLowerCase();
-    if (!RECOGNIZED_AUTH_TYPES.includes(type)) {
-      return;
-    }
+    if (!RECOGNIZED_AUTH_TYPES.includes(type)) return;
 
     const provided = new Set(Object.keys(auth).filter((key) => key !== "type"));
 
@@ -170,86 +170,14 @@ const clientAuthentication = z
       return;
     }
 
-    const fields = AUTH_FIELDS[type as keyof typeof AUTH_FIELDS];
-    const missing = fields.required.filter((field) => !provided.has(field));
-    if (missing.length > 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `type '${type}' requires ${fieldList(missing)}` });
-    }
-
-    const allowed = new Set<string>(fields.allowed);
-    const unknown = [...provided].filter((field) => !allowed.has(field));
-    if (unknown.length > 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `type '${type}' does not support ${fieldList(unknown)}` });
-    }
+    checkFields(`type '${type}'`, AUTH_FIELDS[type]!, provided, ctx);
 
     if (type === "jwt" && auth.algorithm !== undefined) {
       validateJwtAlgorithm(auth.algorithm, ctx);
     }
   });
 
-function validateJwtAlgorithm(algorithm: string, ctx: z.RefinementCtx): void {
-  if (algorithm.toLowerCase() === "none") {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "jwt 'algorithm' 'none' is not allowed; it produces an unsigned token" });
-    return;
-  }
-  if (!JWT_ALGORITHMS.has(algorithm)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `jwt 'algorithm' is not supported. Supported algorithms: ${[...JWT_ALGORITHMS].sort().join(", ")}`,
-    });
-  }
-}
-
-function validateOAuth2Fields(auth: { grant_type?: string; credential_bearer?: string }, provided: Set<string>, ctx: z.RefinementCtx): void {
-  if (auth.grant_type === undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "type 'oauth2' requires 'grant_type' field" });
-    return;
-  }
-
-  const grant = auth.grant_type.toLowerCase();
-  const spec = OAUTH2_GRANTS[grant];
-  if (spec === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `oauth2 'grant_type' is not supported. Supported grant types: ${Object.keys(OAUTH2_GRANTS).join(", ")}`,
-    });
-    return;
-  }
-
-  const missing = spec.required.filter((field) => !provided.has(field));
-  if (missing.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `oauth2 grant_type '${grant}' requires ${fieldList(missing)}` });
-  }
-
-  const allowed = new Set(["grant_type", ...spec.required, ...spec.optional]);
-  const unknown = [...provided].filter((field) => !allowed.has(field));
-  if (unknown.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `oauth2 grant_type '${grant}' does not support ${fieldList(unknown)}` });
-  }
-
-  if (auth.credential_bearer !== undefined && !OAUTH2_CREDENTIAL_BEARERS.has(auth.credential_bearer)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `oauth2 'credential_bearer' is not supported. Supported values: ${[...OAUTH2_CREDENTIAL_BEARERS].sort().join(", ")}`,
-    });
-  }
-}
-
-const providerSchema = z
-  .object({
-    name: z.string().optional(),
-    url: httpUrl("provider.url").optional(),
-  })
-  .strict();
-
-const modelSchema = z
-  .object({
-    name: z.string().optional(),
-    provider: z.string().optional(),
-    url: httpUrl("model.url").optional(),
-    authentication: clientAuthentication.optional(),
-  })
-  .strict();
+export type ClientAuthentication = z.infer<typeof clientAuthentication>;
 
 const httpTransport = z
   .object({
@@ -291,6 +219,32 @@ const toolsSchema = z
   })
   .strict();
 
+function checkServerNames(tools: z.infer<typeof toolsSchema> | undefined, ctx: z.RefinementCtx): void {
+  const names = new Set<string>();
+  tools?.mcp?.forEach((server, index) => {
+    if (names.has(server.name)) {
+      reportIssue(ctx, `Duplicate MCP server name '${server.name}'`, ["tools", "mcp", index, "name"]);
+    }
+    names.add(server.name);
+  });
+}
+
+export type JsonSchemaData = boolean | { type?: string | string[]; [key: string]: unknown };
+
+export const jsonSchema: z.ZodType<JsonSchemaData> = z.union([z.boolean(), z.record(z.string(), z.unknown())]);
+
+const stringSchema: JsonSchemaData = { type: "string" };
+const defaultSignature = { input: stringSchema, output: stringSchema };
+
+const signatureSchema = z
+  .object({
+    input: jsonSchema.default(stringSchema),
+    output: jsonSchema.default(stringSchema),
+  })
+  .strict();
+
+const eventSignatureSchema = z.object({ input: jsonSchema.optional(), output: jsonSchema.optional() }).strict();
+
 const httpExposure = z.object({ path: z.string().optional() }).strict();
 const exposure = z.object({ http: httpExposure.optional() }).strict();
 
@@ -304,8 +258,6 @@ const subscription = z
     authentication: clientAuthentication.optional(),
   })
   .strict();
-
-const defaultSignature = { input: stringSchema, output: stringSchema };
 
 const consoleChatInterface = z
   .object({
@@ -356,14 +308,47 @@ const interfaceSchema = z.discriminatedUnion("type", [
   platformChatInterface,
 ]);
 
-const localSkillSource = z
+function checkInterfaces(interfaces: z.infer<typeof interfaceSchema>[] | undefined, ctx: z.RefinementCtx): void {
+  interfaces?.forEach((iface, index) => {
+    if (iface.type !== "platformchat") return;
+    const at = (field: string): (string | number)[] => ["interfaces", index, field];
+    if (iface.mode !== "request" && iface.signature?.output !== undefined) {
+      reportIssue(ctx, `platformchat mode '${iface.mode}' must not set signature.output`, ["interfaces", index, "signature", "output"]);
+    }
+    if (iface.mode === "polling" && iface.exposure !== undefined) {
+      reportIssue(ctx, "platformchat polling must not set exposure", at("exposure"));
+    }
+    if (iface.mode !== "polling" && iface.polling !== undefined) {
+      reportIssue(ctx, `platformchat mode '${iface.mode}' must not set polling`, at("polling"));
+    }
+    if (iface.mode !== "polling" && iface.authentication !== undefined) {
+      reportIssue(ctx, `platformchat mode '${iface.mode}' must not set authentication`, at("authentication"));
+    }
+  });
+}
+
+const providerSchema = z
+  .object({
+    name: z.string().optional(),
+    url: httpUrl("provider.url").optional(),
+  })
+  .strict();
+
+const modelSchema = z
+  .object({
+    name: z.string().optional(),
+    provider: z.string().optional(),
+    url: httpUrl("model.url").optional(),
+    authentication: clientAuthentication.optional(),
+  })
+  .strict();
+
+const skillSchema = z
   .object({
     type: z.literal("local"),
     path: z.string(),
   })
   .strict();
-
-const skillSource = localSkillSource;
 
 export const agentMetadataSchema = z
   .object({
@@ -379,37 +364,16 @@ export const agentMetadataSchema = z
     model: modelSchema.optional(),
     interfaces: z.array(interfaceSchema).optional(),
     tools: toolsSchema.optional(),
-    skills: z.array(skillSource).optional(),
+    skills: z.array(skillSchema).optional(),
     max_iterations: z.preprocess(numberFromText, z.number().int().positive().optional()),
   })
   .strict()
   .superRefine((metadata, ctx) => {
-    const names = new Set<string>();
-    metadata.tools?.mcp?.forEach((server, index) => {
-      if (names.has(server.name)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tools", "mcp", index, "name"], message: `Duplicate MCP server name '${server.name}'` });
-      }
-      names.add(server.name);
-    });
-    metadata.interfaces?.forEach((iface, index) => {
-      if (iface.type !== "platformchat") return;
-      if (iface.mode !== "request" && iface.signature?.output !== undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["interfaces", index, "signature", "output"], message: `platformchat mode '${iface.mode}' must not set signature.output` });
-      }
-      if (iface.mode === "polling" && iface.exposure !== undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["interfaces", index, "exposure"], message: "platformchat polling must not set exposure" });
-      }
-      if (iface.mode !== "polling" && iface.polling !== undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["interfaces", index, "polling"], message: `platformchat mode '${iface.mode}' must not set polling` });
-      }
-      if (iface.mode !== "polling" && iface.authentication !== undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["interfaces", index, "authentication"], message: `platformchat mode '${iface.mode}' must not set authentication` });
-      }
-    });
+    checkServerNames(metadata.tools, ctx);
+    checkInterfaces(metadata.interfaces, ctx);
   });
 
 export type AgentMetadata = z.infer<typeof agentMetadataSchema>;
-export type ClientAuthentication = z.infer<typeof clientAuthentication>;
 
 export function validateMetadata(raw: Record<string, unknown>): AgentMetadata {
   const result = agentMetadataSchema.safeParse(raw);

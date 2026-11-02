@@ -14,18 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, it, expect } from "vitest";
-import type { ModelEvent } from "./index";
-
-describe("engine scaffold", () => {
-  it("runs the test toolchain", () => {
-    expect(1 + 1).toBe(2);
-  });
-
-  it("treats ModelEvent as a typed, discriminated union", () => {
-    const event: ModelEvent = { type: "text-delta", text: "hi" };
-    if (event.type === "text-delta") {
-      expect(event.text).toBe("hi");
-    }
-  });
-});
+declare module "*.afm.md?raw" {
+  const text: string;
+  export default text;
+}

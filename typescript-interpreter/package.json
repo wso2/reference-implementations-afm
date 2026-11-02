@@ -7,7 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "node scripts/typecheck.mjs",
+    "typecheck": "pnpm -r exec tsc --noEmit -p tsconfig.json",
     "check": "pnpm run typecheck && pnpm test"
   },
   "devDependencies": {

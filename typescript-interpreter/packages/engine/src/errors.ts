@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { asRecord, stringField, type UnknownRecord } from "./types";
+
 export class AfmParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -43,16 +45,43 @@ export class VariableResolutionError extends Error {
 
 const MAX_UNWRAP_DEPTH = 4;
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+function describeRaw(error: unknown): string {
+  try {
+    const json = JSON.stringify(error);
+    if (json !== undefined && json !== "{}") return json;
+  } catch {
+    return String(error);
+  }
+  return String(error);
 }
 
-function stringField(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  return typeof value === "string" ? value : "";
+function* errorChain(error: unknown): Generator<UnknownRecord> {
+  let current = error;
+  for (let depth = 0; depth <= MAX_UNWRAP_DEPTH; depth++) {
+    const record = asRecord(current);
+    if (record === null) return;
+    yield record;
+    const nested = record["error"];
+    if (nested === undefined || nested === current) return;
+    current = nested;
+  }
 }
 
-export function describeError(error: unknown, depth = 0): string {
+function describeNested(record: UnknownRecord, error: unknown, depth: number): string | undefined {
+  const nested = record["error"];
+  if (depth >= MAX_UNWRAP_DEPTH || nested === undefined || nested === error) return undefined;
+  const described = describe(nested, depth + 1);
+  return described !== "" && described !== "[object Object]" ? described : undefined;
+}
+
+function describeCode(record: UnknownRecord): string | undefined {
+  const code = stringField(record, "code");
+  const kind = stringField(record, "type");
+  if (code === "") return undefined;
+  return kind !== "" && kind !== "error" ? `${code} (${kind})` : code;
+}
+
+function describe(error: unknown, depth: number): string {
   if (typeof error === "string") return error;
   if (error instanceof Error && error.message !== "") return error.message;
 
@@ -62,58 +91,68 @@ export function describeError(error: unknown, depth = 0): string {
   const message = stringField(record, "message");
   if (message !== "") return message;
 
-  const nested = record["error"];
-  if (depth < MAX_UNWRAP_DEPTH && nested !== undefined && nested !== error) {
-    const described = describeError(nested, depth + 1);
-    if (described !== "" && described !== "[object Object]") return described;
-  }
-
-  const code = stringField(record, "code");
-  const kind = stringField(record, "type");
-  if (code !== "") return kind !== "" && kind !== "error" ? `${code} (${kind})` : code;
-
-  try {
-    const json = JSON.stringify(error);
-    if (json !== undefined && json !== "{}") return json;
-  } catch {
-  }
-  return String(error);
+  return describeNested(record, error, depth) ?? describeCode(record) ?? describeRaw(error);
 }
 
-export function isRateLimited(error: unknown, depth = 0): boolean {
-  if (depth > MAX_UNWRAP_DEPTH) return false;
-
-  const record = asRecord(error);
-  if (record === null) return false;
-
-  if (record["statusCode"] === 429 || record["status"] === 429) return true;
-
-  const code = stringField(record, "code");
-  if (code === "rate_limit_exceeded" || code === "rate_limited") return true;
-  if (stringField(record, "type") === "rate_limit_error") return true;
-
-  const nested = record["error"];
-  if (nested !== undefined && nested !== error && isRateLimited(nested, depth + 1)) return true;
-
-  return /\brate.?limit/i.test(stringField(record, "message"));
+export function describeError(error: unknown): string {
+  return describe(error, 0);
 }
 
-export function retryAfterMs(error: unknown, depth = 0): number | undefined {
-  if (depth > MAX_UNWRAP_DEPTH) return undefined;
+export const RATE_LIMIT_BACKOFF_MS = [5_000, 15_000, 30_000];
 
-  const record = asRecord(error);
-  if (record === null) return undefined;
+export const MAX_SERVER_RETRY_DELAY_MS = 60_000;
 
+const RATE_LIMIT_CODES: readonly string[] = ["rate_limit_exceeded", "rate_limited"];
+
+export function isRateLimited(error: unknown): boolean {
+  for (const record of errorChain(error)) {
+    if (record["statusCode"] === 429 || record["status"] === 429) return true;
+    if (RATE_LIMIT_CODES.includes(stringField(record, "code")) || stringField(record, "type") === "rate_limit_error") return true;
+    if (/\brate.?limit/i.test(stringField(record, "message"))) return true;
+  }
+  return false;
+}
+
+function parseRetryAfter(header: string): number | undefined {
+  if (header === "") return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : undefined;
+  const date = Date.parse(header);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+function retryAfterHeaderMs(record: UnknownRecord): number | undefined {
   const headers = asRecord(record["responseHeaders"]) ?? asRecord(record["headers"]);
-  const header = headers === null ? "" : stringField(headers, "retry-after");
-  const headerSeconds = header === "" ? Number.NaN : Number(header);
-  if (Number.isFinite(headerSeconds) && headerSeconds >= 0) return headerSeconds * 1000;
+  return headers === null ? undefined : parseRetryAfter(stringField(headers, "retry-after"));
+}
 
+function retryAfterMessageMs(record: UnknownRecord): number | undefined {
   const match = /try again in ([\d.]+)\s*(ms|s)\b/i.exec(stringField(record, "message"));
   const amount = match === null ? Number.NaN : Number(match[1]);
-  if (Number.isFinite(amount)) return match?.[2]?.toLowerCase() === "ms" ? amount : amount * 1000;
+  if (!Number.isFinite(amount)) return undefined;
+  return match?.[2]?.toLowerCase() === "ms" ? amount : amount * 1000;
+}
 
-  const nested = record["error"];
-  if (nested !== undefined && nested !== error) return retryAfterMs(nested, depth + 1);
+export function retryAfterMs(error: unknown): number | undefined {
+  for (const record of errorChain(error)) {
+    const delay = retryAfterHeaderMs(record) ?? retryAfterMessageMs(record);
+    if (delay !== undefined) return delay;
+  }
   return undefined;
+}
+
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const finish = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }

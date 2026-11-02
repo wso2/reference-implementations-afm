@@ -245,4 +245,21 @@ describe("splitFrontmatter", () => {
     expect(splitFrontmatter(text)).toEqual({ frontmatter: null, body: text });
     expect(frontmatterEndOffset(text)).toBe(0);
   });
+
+  describe("YAML aliases", () => {
+    it.each([
+      ["a list that contains itself", "---\na: &x [*x]\n---\n# Role\nr\n# Instructions\ni\n"],
+      ["a mapping that contains itself", "---\nmodel: &m\n  provider: openai\n  again: *m\n---\n# Role\nr\n# Instructions\ni\n"],
+    ])("refuse %s, with a parse error and not a stack overflow", (_label, content) => {
+      expect(() => parseAfm(content)).toThrow(AfmParseError);
+      expect(() => parseAfm(content)).toThrow(/refer back to itself/);
+    });
+
+    it("still allow one value to be reused in several places", () => {
+      const content = "---\nshared: &s {k: v}\nfirst: *s\nsecond: *s\nlist: [*s, *s]\n---\n# Role\nr\n# Instructions\ni\n";
+      const { frontmatter } = parseAfm(content);
+      expect(frontmatter.first).toEqual({ k: "v" });
+      expect(frontmatter.list).toEqual([{ k: "v" }, { k: "v" }]);
+    });
+  });
 });

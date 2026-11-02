@@ -29,6 +29,8 @@ pnpm test
 
 `pnpm run check` runs typechecking and tests together. `pnpm run test:watch` starts the test watcher. Tests are colocated with the package source files.
 
+The tests also load six example agents from the AFM specification (`packages/engine/fixtures/agents/`) and check that the engine accepts them.
+
 ## Using the packages
 
 The packages are private workspace packages and are not published to npm. Their entry points export TypeScript source, so consumers need tooling that supports TypeScript and the browser/Web APIs used by the selected adapters.

@@ -63,11 +63,13 @@ export interface ModelRequest {
   tools: ToolDescriptor[];
 }
 
+export type FinishReason = "stop" | "tool-calls" | "length" | "content-filter" | "error" | "other";
+
 export type ModelEvent =
   | { type: "text-delta"; text: string }
   | { type: "tool-call"; id: string; name: string; args: unknown }
   | { type: "usage"; inputTokens: number; outputTokens: number }
-  | { type: "finish"; reason: "stop" | "tool-calls" | "length" | "content-filter" | "error" | "other" };
+  | { type: "finish"; reason: FinishReason };
 
 export interface ToolPort {
   list(): Promise<ToolDescriptor[]>;
@@ -88,3 +90,18 @@ export interface SecretRef {
 export type SecretResolution =
   | { status: "resolved"; value: string }
   | { status: "unresolved"; reason: string };
+
+export type UnknownRecord = Record<string, unknown>;
+
+export function asRecord(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null ? (value as UnknownRecord) : null;
+}
+
+export function asMapping(value: unknown): UnknownRecord | null {
+  return Array.isArray(value) ? null : asRecord(value);
+}
+
+export function stringField(record: UnknownRecord, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}

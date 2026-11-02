@@ -14,12 +14,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { SecretPort } from "./types";
 import { VariableResolutionError } from "./errors";
 import { splitFrontmatter } from "./parse";
 import { postsSecretsToTokenUrl } from "./schema";
+import { asRecord, type SecretPort, type UnknownRecord } from "./types";
 
 const VARIABLE = /\$\{([^}]+)\}/g;
+
+function splitReference(expression: string): { prefix: string; name: string } {
+  const colon = expression.indexOf(":");
+  return colon === -1
+    ? { prefix: "", name: expression }
+    : { prefix: expression.slice(0, colon), name: expression.slice(colon + 1) };
+}
 
 export function resolveVariables(
   frontmatter: Record<string, unknown>,
@@ -60,13 +67,6 @@ async function resolveText(text: string, secrets: SecretPort): Promise<string> {
   return resolved + text.slice(cursor);
 }
 
-function splitReference(expression: string): { prefix: string; name: string } {
-  const colon = expression.indexOf(":");
-  return colon === -1
-    ? { prefix: "", name: expression }
-    : { prefix: expression.slice(0, colon), name: expression.slice(colon + 1) };
-}
-
 async function resolveReference(
   reference: string,
   expression: string,
@@ -99,84 +99,11 @@ export interface SecretUsage {
   serverName?: string;
 }
 
-export function scanSecretUsage(content: string): SecretUsage[] {
-  let frontmatter: Record<string, unknown> | null;
-  try {
-    frontmatter = splitFrontmatter(content).frontmatter;
-  } catch {
-    return [];
-  }
-  if (frontmatter === null) {
-    return [];
-  }
+type UsageOrigin = Omit<SecretUsage, "name">;
 
-  const found: SecretUsage[] = [];
-  const seen = new Set<string>();
-
-  function record(usage: SecretUsage): void {
-    const key = `${usage.name}\u0000${usage.scope}\u0000${usage.address ?? ""}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    found.push(usage);
-  }
-
-  function namesIn(value: unknown): string[] {
-    if (typeof value !== "string") return [];
-    const names: string[] = [];
-    for (const match of value.matchAll(VARIABLE)) {
-      const { prefix, name } = splitReference(match[1] ?? "");
-      if (prefix !== "" && prefix !== "env") continue;
-      if (name !== "") names.push(name);
-    }
-    return names;
-  }
-
-  function walk(value: unknown, visit: (name: string) => void, skipped?: Set<unknown>): void {
-    if (typeof value === "string") {
-      for (const name of namesIn(value)) visit(name);
-      return;
-    }
-    if (skipped?.has(value)) return;
-    if (Array.isArray(value)) {
-      for (const item of value) walk(item, visit, skipped);
-      return;
-    }
-    if (typeof value === "object" && value !== null) {
-      for (const item of Object.values(value)) walk(item, visit, skipped);
-    }
-  }
-
-  const credentialBlocks = new Set<unknown>();
-
-  const model = frontmatter.model;
-  if (typeof model === "object" && model !== null) {
-    const authentication = (model as Record<string, unknown>).authentication;
-    credentialBlocks.add(authentication);
-    walk(authentication, (name) => record({ name, scope: "model" }));
-  }
-
-  const tools = frontmatter.tools;
-  const servers =
-    typeof tools === "object" && tools !== null && Array.isArray((tools as Record<string, unknown>).mcp)
-      ? ((tools as Record<string, unknown>).mcp as unknown[])
-      : [];
-
-  for (const server of servers) {
-    if (typeof server !== "object" || server === null) continue;
-    const entry = server as Record<string, unknown>;
-    const transport = typeof entry.transport === "object" && entry.transport !== null
-      ? (entry.transport as Record<string, unknown>)
-      : {};
-    const serverName = typeof entry.name === "string" ? entry.name : undefined;
-    const address = secretDestination(transport.url, transport.authentication);
-
-    credentialBlocks.add(transport.authentication);
-    walk(transport.authentication, (name) => record({ name, scope: "tool", address, serverName }));
-  }
-
-  walk(frontmatter, (name) => record({ name, scope: "other" }), credentialBlocks);
-
-  return found;
+interface CredentialBlock {
+  authentication: unknown;
+  origin: UsageOrigin;
 }
 
 export function serverAddress(url: unknown): string | undefined {
@@ -190,15 +117,108 @@ export function serverAddress(url: unknown): string | undefined {
 }
 
 export function secretDestination(serverUrl: unknown, authentication: unknown): string | undefined {
-  const auth = typeof authentication === "object" && authentication !== null ? (authentication as Record<string, unknown>) : {};
+  const auth = asRecord(authentication) ?? {};
   const sentToTokenUrl = typeof auth.type === "string" && auth.type.toLowerCase() === "oauth2" && postsSecretsToTokenUrl(auth.grant_type);
   return serverAddress(sentToTokenUrl ? auth.token_url : serverUrl);
+}
+
+function readFrontmatter(content: string): UnknownRecord | null {
+  try {
+    return splitFrontmatter(content).frontmatter;
+  } catch {
+    return null;
+  }
+}
+
+function secretNamesIn(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(VARIABLE)) {
+    const { prefix, name } = splitReference(match[1] ?? "");
+    if ((prefix === "" || prefix === "env") && name !== "") names.push(name);
+  }
+  return names;
+}
+
+function* walkSecretNames(value: unknown, skipped: ReadonlySet<unknown> = new Set()): Generator<string> {
+  if (typeof value === "string") {
+    yield* secretNamesIn(value);
+    return;
+  }
+  if (skipped.has(value)) return;
+  const children = Array.isArray(value) ? value : Object.values(asRecord(value) ?? {});
+  for (const child of children) yield* walkSecretNames(child, skipped);
+}
+
+function credentialBlocks(frontmatter: UnknownRecord): CredentialBlock[] {
+  const blocks: CredentialBlock[] = [];
+
+  const model = asRecord(frontmatter.model);
+  if (model !== null) blocks.push({ authentication: model.authentication, origin: { scope: "model" } });
+
+  const mcp = asRecord(frontmatter.tools)?.mcp;
+  for (const server of Array.isArray(mcp) ? mcp : []) {
+    const entry = asRecord(server);
+    if (entry === null) continue;
+    const transport = asRecord(entry.transport) ?? {};
+    blocks.push({
+      authentication: transport.authentication,
+      origin: {
+        scope: "tool",
+        address: secretDestination(transport.url, transport.authentication),
+        serverName: typeof entry.name === "string" ? entry.name : undefined,
+      },
+    });
+  }
+  return blocks;
+}
+
+function withoutRepeats(usages: SecretUsage[]): SecretUsage[] {
+  const seen = new Set<string>();
+  return usages.filter((usage) => {
+    const key = `${usage.name}\u0000${usage.scope}\u0000${usage.address ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function scanSecretUsage(content: string): SecretUsage[] {
+  const frontmatter = readFrontmatter(content);
+  if (frontmatter === null) return [];
+
+  const blocks = credentialBlocks(frontmatter);
+  const usages: SecretUsage[] = [];
+  for (const { authentication, origin } of blocks) {
+    for (const name of walkSecretNames(authentication)) usages.push({ name, ...origin });
+  }
+  const credentials = new Set<unknown>(blocks.map((block) => block.authentication));
+  for (const name of walkSecretNames(frontmatter, credentials)) usages.push({ name, scope: "other" });
+  return withoutRepeats(usages);
 }
 
 export function referencedSecretNames(content: string): string[] {
   return [...new Set(scanSecretUsage(content).map((usage) => usage.name))];
 }
 
-export function secretUseKey(name: string, address: string | undefined): string {
-  return `${name}@${address ?? "unknown"}`;
+const LOOPBACK_HOSTNAMES: readonly string[] = ["localhost", "[::1]"];
+
+function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTNAMES.includes(hostname) || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+}
+
+function parsedAddress(address: string): URL | null {
+  try {
+    return new URL(address);
+  } catch {
+    return null;
+  }
+}
+
+export function isPlainHttpAddress(address: string): boolean {
+  return parsedAddress(address)?.protocol === "http:";
+}
+
+export function isInsecureAddress(address: string): boolean {
+  const url = parsedAddress(address);
+  return url?.protocol === "http:" && !isLoopbackHost(url.hostname);
 }
