@@ -14,122 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import {
+  isInsecureAddress,
+  type JsonSchema,
+  type ToolCall,
+  type ToolDescriptor,
+  type ToolPort,
+  type ToolResult,
+  type ToolResultMedia,
+} from "@afm/engine";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
-import type { ClientAuthentication, ToolPort, ToolCall, ToolDescriptor, ToolResult, ToolResultMedia, JsonSchema } from "@afm/engine";
-import { createOAuth2MachineClient, isOAuth2MachineGrant, oauth2MachineConfig, oauthProviderFrom, base64 } from "@afm/adapter-auth";
-import type { OAuthProviderRef } from "@afm/adapter-auth";
-
-export class McpAuthError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "McpAuthError";
-  }
-}
-
-export function isDynamicAuthType(auth: ClientAuthentication): boolean {
-  return auth.type.toLowerCase() === "oauth2";
-}
-
-export function mcpAuthHeaders(auth: ClientAuthentication): Record<string, string> {
-  switch (auth.type.toLowerCase()) {
-    case "bearer":
-      if (!auth.token) {
-        throw new McpAuthError("bearer authentication requires a 'token' field");
-      }
-      return { Authorization: `Bearer ${auth.token}` };
-
-    case "basic":
-      if (!auth.username || !auth.password) {
-        throw new McpAuthError("basic authentication requires 'username' and 'password' fields");
-      }
-      return { Authorization: `Basic ${base64(`${auth.username}:${auth.password}`)}` };
-
-    case "api-key":
-      if (!auth.api_key) {
-        throw new McpAuthError("api-key authentication requires an 'api_key' field");
-      }
-      return { [auth.header_name ?? "Authorization"]: auth.api_key };
-
-    case "oauth2":
-      throw new McpAuthError("'oauth2' authentication needs createDynamicMcpAuthHeaderProvider, not mcpAuthHeaders");
-
-    default:
-      throw new McpAuthError(`Unsupported authentication type: '${auth.type}'`);
-  }
-}
-
-export type McpAuthHeaderProvider = () => Promise<Record<string, string>>;
-
-export interface McpDynamicAuthDeps {
-  getInteractiveToken?: (provider: OAuthProviderRef) => Promise<string>;
-  fetchFn?: typeof fetch;
-  onInteractiveAuthRejected?: (provider: OAuthProviderRef) => void;
-}
-
-export function createDynamicMcpAuthHeaderProvider(
-  auth: ClientAuthentication,
-  deps: McpDynamicAuthDeps = {},
-  resource?: string,
-): McpAuthHeaderProvider {
-  if (!isDynamicAuthType(auth)) {
-    throw new McpAuthError(`'${auth.type}' authentication is not a dynamic auth type`);
-  }
-
-  const grant = auth.grant_type?.toLowerCase();
-  if (grant === undefined) {
-    throw new McpAuthError("oauth2 authentication requires a 'grant_type' field");
-  }
-
-  if (grant === "authorization_code") {
-    if (deps.getInteractiveToken === undefined) {
-      throw new McpAuthError(
-        "oauth2 grant_type 'authorization_code' requires an interactive sign-in, which isn't available in this context",
-      );
-    }
-    const { getInteractiveToken } = deps;
-    const provider = oauthProviderFrom(auth, resource);
-    return async () => ({ Authorization: `Bearer ${await getInteractiveToken(provider)}` });
-  }
-
-  if (!isOAuth2MachineGrant(grant)) {
-    throw new McpAuthError(`Unsupported oauth2 grant_type: '${auth.grant_type}'`);
-  }
-  const client = createOAuth2MachineClient(oauth2MachineConfig(grant, auth));
-  return async () => ({ Authorization: `Bearer ${await client.getAccessToken(deps.fetchFn)}` });
-}
-
-export interface McpHttpOptions {
-  serverUrl: string;
-  proxyUrl?: string;
-  fetchFn?: typeof fetch;
-  headers?: Record<string, string>;
-  authHeaderProvider?: McpAuthHeaderProvider;
-  onAuthRejected?: () => void;
-  setupTimeoutMs?: number;
-}
-
-export function effectiveUrl(options: McpHttpOptions): URL {
-  if (options.proxyUrl !== undefined && options.proxyUrl !== "") {
-    const url = new URL(options.proxyUrl);
-    url.searchParams.set("target", options.serverUrl);
-    return url;
-  }
-  return new URL(options.serverUrl);
-}
-
-export function toToolDescriptor(
-  tool: { name: string; description?: string; inputSchema?: unknown },
-  serverId?: string,
-): ToolDescriptor {
-  return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: (tool.inputSchema ?? {}) as JsonSchema,
-    serverId,
-  };
-}
+import { McpAuthError, type McpAuthHeaderProvider } from "./mcp-auth";
+import { lazy } from "./tool-ports";
 
 interface McpResourceContents {
   uri: string;
@@ -148,135 +46,138 @@ interface McpContentBlock {
   resource?: McpResourceContents;
 }
 
-export function toToolResult(result: {
-  content?: unknown;
-  structuredContent?: unknown;
-  isError?: unknown;
-}): ToolResult {
-  const blocks: McpContentBlock[] = Array.isArray(result.content)
-    ? (result.content as McpContentBlock[])
-    : [];
+type ContentPiece = { text: string } | { media: ToolResultMedia };
 
-  const textParts: string[] = [];
-  const media: ToolResultMedia[] = [];
-
-  for (const block of blocks) {
-    if (block.type === "text" && typeof block.text === "string") {
-      textParts.push(block.text);
-    } else if (
-      (block.type === "image" || block.type === "audio") &&
-      typeof block.data === "string" &&
-      typeof block.mimeType === "string"
-    ) {
-      media.push({ kind: block.type, data: block.data, mediaType: block.mimeType });
-    } else if (block.type === "resource_link") {
-      textParts.push(`[resource: ${block.name ?? block.uri ?? "unnamed"}]`);
-    } else if (block.type === "resource" && block.resource !== undefined) {
-      const resource = block.resource;
-      if (typeof resource.text === "string") {
-        textParts.push(resource.text);
-      } else if (typeof resource.blob === "string" && resource.mimeType?.startsWith("image/") === true) {
-        media.push({ kind: "image", data: resource.blob, mediaType: resource.mimeType });
-      } else if (typeof resource.blob === "string") {
-        textParts.push(`[resource: ${resource.uri}${resource.mimeType !== undefined ? ` (${resource.mimeType})` : ""}]`);
-      }
-    }
-  }
-
-  if (result.structuredContent !== undefined) {
-    textParts.push(JSON.stringify(result.structuredContent));
-  }
-
-  const content =
-    textParts.length > 0
-      ? textParts.join("\n")
-      : media.length > 0
-        ? `(tool returned ${media.length} ${media.length === 1 ? "attachment" : "attachments"}, no text)`
-        : "(tool returned no text content)";
-
-  return { ok: result.isError !== true, content, media: media.length > 0 ? media : undefined };
+export function toToolDescriptor(
+  tool: { name: string; description?: string; inputSchema?: unknown },
+  serverId?: string,
+): ToolDescriptor {
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: (tool.inputSchema ?? {}) as JsonSchema,
+    serverId,
+  };
 }
+
+function pieceOfResource(resource: McpResourceContents): ContentPiece | null {
+  if (typeof resource.text === "string") return { text: resource.text };
+  if (typeof resource.blob !== "string") return null;
+  if (resource.mimeType?.startsWith("image/") === true) {
+    return { media: { kind: "image", data: resource.blob, mediaType: resource.mimeType } };
+  }
+  return { text: `[resource: ${resource.uri}${resource.mimeType !== undefined ? ` (${resource.mimeType})` : ""}]` };
+}
+
+function pieceOf(block: McpContentBlock): ContentPiece | null {
+  switch (block.type) {
+    case "text":
+      return typeof block.text === "string" ? { text: block.text } : null;
+    case "image":
+    case "audio":
+      return typeof block.data === "string" && typeof block.mimeType === "string"
+        ? { media: { kind: block.type, data: block.data, mediaType: block.mimeType } }
+        : null;
+    case "resource_link":
+      return { text: `[resource: ${block.name ?? block.uri ?? "unnamed"}]` };
+    case "resource":
+      return block.resource === undefined ? null : pieceOfResource(block.resource);
+    default:
+      return null;
+  }
+}
+
+function summarize(text: string[], media: ToolResultMedia[]): string {
+  if (text.length > 0) return text.join("\n");
+  if (media.length > 0) return `(tool returned ${media.length} ${media.length === 1 ? "attachment" : "attachments"}, no text)`;
+  return "(tool returned no text content)";
+}
+
+export function toToolResult(result: { content?: unknown; structuredContent?: unknown; isError?: unknown }): ToolResult {
+  const blocks = Array.isArray(result.content) ? (result.content as McpContentBlock[]) : [];
+  const pieces = blocks.flatMap((block) => pieceOf(block) ?? []);
+
+  const text = pieces.flatMap((piece) => ("text" in piece ? [piece.text] : []));
+  const media = pieces.flatMap((piece) => ("media" in piece ? [piece.media] : []));
+  if (result.structuredContent !== undefined) {
+    text.push(JSON.stringify(result.structuredContent));
+  }
+
+  return { ok: result.isError !== true, content: summarize(text, media), media: media.length > 0 ? media : undefined };
+}
+
+export interface McpHttpOptions {
+  serverUrl: string;
+  proxyUrl?: string;
+  fetchFn?: typeof fetch;
+  headers?: Record<string, string>;
+  authHeaderProvider?: McpAuthHeaderProvider;
+  onAuthRejected?: () => void;
+  setupTimeoutMs?: number;
+}
+
+type ClientWork<T> = (client: Client) => Promise<T>;
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30_000;
 
+const SESSION_ENDED_MESSAGE =
+  "The server's session had ended (HTTP 404). The call was not repeated; the next call starts a new session.";
+
+export function effectiveUrl(options: McpHttpOptions): URL {
+  if (options.proxyUrl !== undefined && options.proxyUrl !== "") {
+    const url = new URL(options.proxyUrl);
+    url.searchParams.set("target", options.serverUrl);
+    return url;
+  }
+  return new URL(options.serverUrl);
+}
+
+function isSessionEnded(error: unknown): boolean {
+  return error instanceof StreamableHTTPError && error.code === 404;
+}
+
+async function refuseToRepeat(): Promise<never> {
+  throw new Error(SESSION_ENDED_MESSAGE);
+}
+
 export function mcpToolPort(options: McpHttpOptions): ToolPort {
   const setupTimeout = options.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
-  let clientPromise: Promise<Client> | null = null;
-
-  function getClient(): Promise<Client> {
-    if (clientPromise === null) {
-      const pending = connect(options, setupTimeout);
-      pending.catch(() => {
-        if (clientPromise === pending) clientPromise = null;
-      });
-      clientPromise = pending;
-    }
-    return clientPromise;
-  }
+  const session = lazy(() => connect(options, setupTimeout));
 
   async function dispose(): Promise<void> {
-    if (clientPromise === null) return;
-    const pending = clientPromise;
-    clientPromise = null;
-    try {
-      await (await pending).close();
-    } catch {
-    }
+    const pending = session.discard();
+    if (pending === null) return;
+    await pending.then((client) => client.close()).catch(() => undefined);
   }
 
-  async function withClient<T>(work: (client: Client) => Promise<T>, repeatable: boolean): Promise<T> {
+  const onSession = async <T>(work: ClientWork<T>): Promise<T> => work(await session.get());
+
+  async function withClient<T>(work: ClientWork<T>, whenSessionEnded: () => Promise<T>): Promise<T> {
     try {
-      return await work(await getClient());
+      return await onSession(work);
     } catch (error) {
-      if (!(error instanceof StreamableHTTPError && error.code === 404)) throw error;
+      if (!isSessionEnded(error)) throw error;
       await dispose();
-      if (!repeatable) {
-        throw new Error("The server's session had ended (HTTP 404). The call was not repeated; the next call starts a new session.");
-      }
-      return work(await getClient());
+      return whenSessionEnded();
     }
   }
 
   return {
     async list(): Promise<ToolDescriptor[]> {
-      const result = await withClient((client) => client.listTools(undefined, { timeout: setupTimeout }), true);
+      const listTools = (client: Client) => client.listTools(undefined, { timeout: setupTimeout });
+      const result = await withClient(listTools, () => onSession(listTools));
       return result.tools.map((tool) => toToolDescriptor(tool, options.serverUrl));
     },
 
     async execute(call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
-      const result = await withClient(
-        (client) => client.callTool({ name: call.name, arguments: (call.args ?? {}) as Record<string, unknown> }, undefined, { signal }),
-        false,
-      );
-      return toToolResult({
-        content: result.content,
-        structuredContent: result.structuredContent,
-        isError: result.isError,
-      });
+      const callTool = (client: Client) =>
+        client.callTool({ name: call.name, arguments: (call.args ?? {}) as Record<string, unknown> }, undefined, { signal });
+      const result = await withClient(callTool, refuseToRepeat);
+      return toToolResult({ content: result.content, structuredContent: result.structuredContent, isError: result.isError });
     },
 
     dispose,
   };
-}
-
-async function connect(options: McpHttpOptions, setupTimeout: number): Promise<Client> {
-  const staticHeaders: Record<string, string> = { ...options.headers };
-
-  const url = effectiveUrl(options);
-  const fetchFn = options.fetchFn ?? fetch;
-  const transport =
-    options.authHeaderProvider === undefined
-      ? new StreamableHTTPClientTransport(url, { requestInit: { headers: staticHeaders }, fetch: fetchFn })
-      : new StreamableHTTPClientTransport(url, {
-          fetch: dynamicAuthFetch(fetchFn, staticHeaders, options.authHeaderProvider, options.onAuthRejected),
-        });
-
-  const client = new Client(
-    { name: "afm-runtime", version: "0.0.0" },
-    { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
-  );
-  await client.connect(transport, { timeout: setupTimeout });
-  return client;
 }
 
 function dynamicAuthFetch(
@@ -292,8 +193,41 @@ function dynamicAuthFetch(
     for (const [name, value] of Object.entries(dynamicHeaders)) headers.set(name, value);
     const response = await fetchFn(url, { ...init, headers });
     if (response.status === 401) {
+      authHeaderProvider.invalidate?.();
       onAuthRejected?.();
     }
     return response;
   };
+}
+
+function carriesCredentials(options: McpHttpOptions): boolean {
+  return options.authHeaderProvider !== undefined || Object.keys(options.headers ?? {}).length > 0;
+}
+
+function refuseInsecureCredentials(options: McpHttpOptions): void {
+  if (!carriesCredentials(options)) return;
+  const addresses = options.proxyUrl === undefined || options.proxyUrl === "" ? [options.serverUrl] : [options.proxyUrl, options.serverUrl];
+  const insecure = addresses.find((address) => isInsecureAddress(address));
+  if (insecure === undefined) return;
+  throw new McpAuthError(
+    `Credentials were not sent to ${new URL(insecure).host} because it uses plain http://, where anyone on the network could read them. ` +
+      "Use an https:// address (http://localhost is allowed).",
+  );
+}
+
+async function connect(options: McpHttpOptions, setupTimeout: number): Promise<Client> {
+  refuseInsecureCredentials(options);
+  const staticHeaders: Record<string, string> = { ...options.headers };
+  const url = effectiveUrl(options);
+  const fetchFn = options.fetchFn ?? fetch;
+  const transport =
+    options.authHeaderProvider === undefined
+      ? new StreamableHTTPClientTransport(url, { requestInit: { headers: staticHeaders }, fetch: fetchFn })
+      : new StreamableHTTPClientTransport(url, {
+          fetch: dynamicAuthFetch(fetchFn, staticHeaders, options.authHeaderProvider, options.onAuthRejected),
+        });
+
+  const client = new Client({ name: "afm-runtime", version: "0.0.0" }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
+  await client.connect(transport, { timeout: setupTimeout });
+  return client;
 }

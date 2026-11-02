@@ -14,14 +14,204 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, it, expect, vi } from "vitest";
-import { compositeToolPort, inPageToolPort, filteredToolPort } from "./tool-ports";
-import { ToolNameError } from "./tool-names";
-import type { ToolPort, ToolCall, ToolDescriptor, ToolResult } from "@afm/engine";
-import type { InPageTool } from "./tool-ports";
+import type { ToolCall, ToolDescriptor, ToolPort, ToolResult } from "@afm/engine";
+import { describe, expect, it, vi } from "vitest";
+import {
+  compositeToolPort,
+  displayToolName,
+  filteredToolPort,
+  type InPageTool,
+  inPageToolPort,
+  lazy,
+  MAX_TOOL_NAME_LENGTH,
+  namespacedToolName,
+  namespacedToolPort,
+  serverToolId,
+  ToolNameError,
+} from "./tool-ports";
+
+describe("lazy", () => {
+  it("loads nothing until the first get", () => {
+    const load = vi.fn(async () => "value");
+    lazy(load);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("loads once and hands every caller the same result", async () => {
+    const load = vi.fn(async () => ({}));
+    const held = lazy(load);
+    const [first, second] = await Promise.all([held.get(), held.get()]);
+    expect(first).toBe(second);
+    expect(await held.get()).toBe(first);
+    expect(load).toHaveBeenCalledOnce();
+  });
+
+  it("forgets a failed load, so the next get tries again", async () => {
+    const load = vi.fn<() => Promise<string>>().mockRejectedValueOnce(new Error("down")).mockResolvedValue("up");
+    const held = lazy(load);
+    await expect(held.get()).rejects.toThrow("down");
+    expect(await held.get()).toBe("up");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives back what it held when discarded, and loads afresh afterwards", async () => {
+    let count = 0;
+    const held = lazy(async () => ++count);
+    expect(await held.get()).toBe(1);
+    expect(await held.discard()).toBe(1);
+    expect(await held.get()).toBe(2);
+  });
+
+  it("has nothing to give back when nothing was loaded", () => {
+    expect(lazy(async () => 1).discard()).toBeNull();
+  });
+
+  it("does not let a discarded load that fails forget the newer one", async () => {
+    let rejectFirst = (_error: Error): void => {};
+    const loads = [new Promise<string>((_resolve, reject) => (rejectFirst = reject)), Promise.resolve("second")];
+    const held = lazy(() => loads.shift()!);
+    const first = held.get();
+    first.catch(() => undefined);
+    held.discard();
+    expect(await held.get()).toBe("second");
+    rejectFirst(new Error("late"));
+    await expect(first).rejects.toThrow("late");
+    expect(await held.get()).toBe("second");
+  });
+});
+
+const signal = () => new AbortController().signal;
+
+function server(names: string[], extra: Partial<ToolDescriptor> = {}) {
+  const executed: ToolCall[] = [];
+  const dispose = vi.fn(async () => {});
+  const port: ToolPort = {
+    list: async () =>
+      names.map((name) => ({
+        name,
+        description: `the ${name} tool`,
+        inputSchema: { type: "object" },
+        serverId: "https://docs.example/mcp",
+        ...extra,
+      })),
+    execute: async (call) => {
+      executed.push(call);
+      return { ok: true, content: `ran ${call.name}` };
+    },
+    dispose,
+  };
+  return { port, executed, dispose };
+}
+
+describe("serverToolId", () => {
+  it.each([
+    ["docs", "docs"],
+    ["my-docs", "my-docs"],
+    ["My Docs", "My-Docs"],
+    ["my_docs", "my-docs"],
+    ["a.b/c", "a-b-c"],
+    ["--docs--", "docs"],
+    ["docs!!2", "docs-2"],
+    ["", "server"],
+    ["***", "server"],
+  ])("turns %j into %j, with no underscore, so the first double underscore always ends it", (name, id) => {
+    expect(serverToolId(name)).toBe(id);
+  });
+});
+
+describe("namespacedToolName and displayToolName", () => {
+  it("joins the server's id and the tool's own name with a double underscore", () => {
+    expect(namespacedToolName("docs", "search_docs")).toBe("docs__search_docs");
+    expect(namespacedToolName("My Docs", "get")).toBe("My-Docs__get");
+  });
+
+  it("gives back the tool's own name", () => {
+    expect(displayToolName("docs__search_docs")).toBe("search_docs");
+    expect(displayToolName("docs__a__b")).toBe("a__b");
+  });
+
+  it("leaves a built-in tool's name alone", () => {
+    for (const name of ["list_files", "read_file", "search_files", "plain"]) expect(displayToolName(name)).toBe(name);
+  });
+
+  it("gives two different servers' tools different names even when the tools share a name", () => {
+    expect(namespacedToolName("first", "search")).not.toBe(namespacedToolName("second", "search"));
+  });
+
+  it("never gives a different pair the same name", () => {
+    const pairs = [["a", "b__c"], ["a-b", "c"], ["a", "_b"], ["a_", "b"], ["a", "b"]] as const;
+    const names = pairs.map(([serverName, tool]) => namespacedToolName(serverName, tool));
+    expect(new Set(names).size).toBe(pairs.length - 1);
+  });
+});
+
+describe("namespacedToolPort", () => {
+  it("offers each of the server's tools under its prefixed name, keeping everything else about it", async () => {
+    const { port } = server(["search_docs"]);
+    expect(await namespacedToolPort(port, "docs").list()).toEqual([
+      {
+        name: "docs__search_docs",
+        description: "the search_docs tool",
+        inputSchema: { type: "object" },
+        serverId: "https://docs.example/mcp",
+        serverName: "docs",
+      },
+    ]);
+  });
+
+  it("runs a call under the server's own name for the tool", async () => {
+    const { port, executed } = server(["search_docs"]);
+    const call = { id: "1", name: "docs__search_docs", args: { q: "x" }, serverId: "https://docs.example/mcp" };
+    const result = await namespacedToolPort(port, "docs").execute(call, signal());
+    expect(result).toEqual({ ok: true, content: "ran search_docs" });
+    expect(executed).toEqual([{ id: "1", name: "search_docs", args: { q: "x" }, serverId: "https://docs.example/mcp" }]);
+  });
+
+  it("does not run a call for another server's name, or for no prefix at all", async () => {
+    const { port, executed } = server(["search_docs"]);
+    const wrapped = namespacedToolPort(port, "docs");
+    for (const name of ["other__search_docs", "search_docs"]) {
+      const result = await wrapped.execute({ id: "1", name, args: {} }, signal());
+      expect(result).toEqual({ ok: false, content: `Unknown tool: ${name}` });
+    }
+    expect(executed).toEqual([]);
+  });
+
+  it("passes dispose on", async () => {
+    const { port, dispose } = server([]);
+    await namespacedToolPort(port, "docs").dispose?.();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves out a tool whose name the providers would reject, and keeps the server's other tools", async () => {
+    const { port } = server(["search_docs", "files.read", "a/b", "with space", "naïve", "keep-this_one", "UPPER9"]);
+    const listed = await namespacedToolPort(port, "docs").list();
+    expect(listed.map((tool) => tool.name)).toEqual(["docs__search_docs", "docs__keep-this_one", "docs__UPPER9"]);
+  });
+
+  it("still refuses a name that is too long, even when it also has an unusable character", async () => {
+    const { port } = server(["x.".repeat(MAX_TOOL_NAME_LENGTH)]);
+    await expect(namespacedToolPort(port, "docs").list()).rejects.toThrow(ToolNameError);
+  });
+
+  it("accepts a name of exactly the longest the providers allow", async () => {
+    const tool = "t".repeat(MAX_TOOL_NAME_LENGTH - "docs__".length);
+    const { port } = server([tool]);
+    const [listed] = await namespacedToolPort(port, "docs").list();
+    expect(listed?.name).toHaveLength(MAX_TOOL_NAME_LENGTH);
+  });
+
+  it("refuses a name one character too long, saying which server and tool, and does not shorten it", async () => {
+    expect(MAX_TOOL_NAME_LENGTH).toBe(64);
+    const tool = "t".repeat(MAX_TOOL_NAME_LENGTH - "docs__".length + 1);
+    const { port } = server([tool]);
+    const refusal = namespacedToolPort(port, "docs").list();
+    await expect(refusal).rejects.toBeInstanceOf(ToolNameError);
+    await expect(refusal).rejects.toThrow(new RegExp(`'${tool}'.*'docs'.*longer than the 64 characters`));
+  });
+});
 
 const call = (name: string, args: unknown = {}): ToolCall => ({ id: "c1", name, args });
-const signal = () => new AbortController().signal;
 
 function fakePort(label: string, names: string[]): ToolPort {
   const descriptors: ToolDescriptor[] = names.map((name) => ({ name, inputSchema: {} }));
@@ -121,6 +311,41 @@ describe("compositeToolPort", () => {
     await expect(port.list()).rejects.toThrow("server down");
     await expect(port.list()).resolves.toEqual([]);
     expect(attempt).toBe(2);
+  });
+});
+
+describe("a composite port that is disposed while its tools are being listed", () => {
+  function gatedPort(label: string, names: string[]) {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const inner = fakePort(label, names);
+    const listed = vi.fn(async () => {
+      await gate;
+      return inner.list();
+    });
+    return { port: { ...inner, list: listed } as ToolPort, release, listed };
+  }
+
+  it("does not ask the sources after the one it was waiting for", async () => {
+    const first = gatedPort("first", ["a"]);
+    const second = fakePort("second", ["b"]);
+    const secondList = vi.spyOn(second, "list");
+    const composite = compositeToolPort([first.port, second]);
+    const listing = composite.list();
+    await vi.waitFor(() => expect(first.listed).toHaveBeenCalled());
+    await composite.dispose?.();
+    first.release();
+    await listing;
+    expect(secondList).not.toHaveBeenCalled();
+  });
+
+  it("lists every source again when it is used after being disposed", async () => {
+    const first = fakePort("first", ["a"]);
+    const second = fakePort("second", ["b"]);
+    const composite = compositeToolPort([first, second]);
+    await composite.list();
+    await composite.dispose?.();
+    expect(await names(composite)).toEqual(["a", "b"]);
   });
 });
 

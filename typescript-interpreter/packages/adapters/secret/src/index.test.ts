@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, it, expect } from "vitest";
-import { configSecretPort, promptSecretPort, chainSecretPort } from "./index";
+import { configSecretPort } from "./index";
 import type { SecretRef } from "@afm/engine";
 
 const ref = (name: string): SecretRef => ({ prefix: "env", name, raw: `\${env:${name}}` });
@@ -35,43 +35,6 @@ describe("configSecretPort", () => {
     const port = configSecretPort({ EMPTY: "" });
     expect((await port.resolve(ref("EMPTY"))).status).toBe("unresolved");
     expect((await port.resolve(ref("NOPE"))).status).toBe("unresolved");
-  });
-});
-
-describe("promptSecretPort", () => {
-  it("resolves whatever the ask callback returns", async () => {
-    const port = promptSecretPort(async () => "typed-value");
-    expect(await port.resolve(ref("X"))).toEqual({ status: "resolved", value: "typed-value" });
-  });
-
-  it("is unresolved if the user cancels (null) or enters nothing", async () => {
-    expect((await promptSecretPort(async () => null).resolve(ref("X"))).status).toBe("unresolved");
-    expect((await promptSecretPort(async () => "").resolve(ref("X"))).status).toBe("unresolved");
-  });
-});
-
-describe("chainSecretPort", () => {
-  it("returns the first source that resolves", async () => {
-    const chain = chainSecretPort(configSecretPort({}), configSecretPort({ K: "from-second" }));
-    expect(await chain.resolve(ref("K"))).toEqual({ status: "resolved", value: "from-second" });
-  });
-
-  it("is unresolved when no source has it", async () => {
-    const chain = chainSecretPort(configSecretPort({}), promptSecretPort(async () => null));
-    expect((await chain.resolve(ref("K"))).status).toBe("unresolved");
-  });
-
-  it("stops at the first resolver (later sources are not consulted)", async () => {
-    let askCalled = false;
-    const chain = chainSecretPort(
-      configSecretPort({ K: "v" }),
-      promptSecretPort(async () => {
-        askCalled = true;
-        return "x";
-      }),
-    );
-    await chain.resolve(ref("K"));
-    expect(askCalled).toBe(false);
   });
 });
 
@@ -99,23 +62,5 @@ describe("configSecretPort as a live session store", () => {
     expect(await port.resolve({ prefix: "env", name: "HF_TOKEN", raw: "" })).toMatchObject({
       status: "unresolved",
     });
-  });
-
-  it("resolves a session value ahead of the prompt in the chain", async () => {
-    const session: Record<string, string> = { KEY: "from-session" };
-    let asked = 0;
-    const chain = chainSecretPort(
-      configSecretPort(session),
-      promptSecretPort(async () => {
-        asked += 1;
-        return "from-prompt";
-      }),
-    );
-
-    expect(await chain.resolve({ prefix: "env", name: "KEY", raw: "" })).toEqual({
-      status: "resolved",
-      value: "from-session",
-    });
-    expect(asked).toBe(0);
   });
 });

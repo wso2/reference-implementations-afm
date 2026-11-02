@@ -14,17 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export { inPageToolPort, compositeToolPort, filteredToolPort } from "./tool-ports";
 export {
+  inPageToolPort,
+  compositeToolPort,
+  filteredToolPort,
   MAX_TOOL_NAME_LENGTH,
   ToolNameError,
   displayToolName,
   namespacedToolName,
   namespacedToolPort,
   serverToolId,
-} from "./tool-names";
+} from "./tool-ports";
 export type { InPageTool, ToolFilter } from "./tool-ports";
-export { mcpToolPort, effectiveUrl, mcpAuthHeaders, isDynamicAuthType, createDynamicMcpAuthHeaderProvider } from "./mcp";
-export type { McpDynamicAuthDeps } from "./mcp";
+export { mcpToolPort, effectiveUrl } from "./mcp";
+export { mcpAuthHeaders, isDynamicAuthType, createDynamicMcpAuthHeaderProvider } from "./mcp-auth";
+export type { McpDynamicAuthDeps } from "./mcp-auth";
 export { FILE_TOOL_NAMES, listFilesText, filesToolPort } from "./files";
 export type { FileInfo } from "./files";

@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import type { OAuthProviderRef } from "./authorization-code";
+import { isHttpsUrl, sameUrl } from "./utils";
 
 export interface ProtectedResourceMetadata {
   resource: string;
@@ -37,6 +39,8 @@ async function tryFetchJson<T>(url: string, fetchFn: typeof fetch): Promise<T | 
   try {
     const response = await fetchFn(url, { headers: { accept: "application/json" } });
     if (!response.ok) return null;
+    const finalUrl = response.url;
+    if (isHttpsUrl(url) && finalUrl && !isHttpsUrl(finalUrl)) return null;
     return (await response.json()) as T;
   } catch {
     return null;
@@ -44,20 +48,30 @@ async function tryFetchJson<T>(url: string, fetchFn: typeof fetch): Promise<T | 
 }
 
 export function parseResourceMetadataUrl(wwwAuthenticate: string): string | null {
-  const match = /resource_metadata="([^"]+)"/.exec(wwwAuthenticate);
+  const match = /(?:^|[,\s])resource_metadata="([^"]+)"/i.exec(wwwAuthenticate);
   return match?.[1] ?? null;
 }
 
+function isTrustedMetadataUrl(candidate: string, serverUrl: string): boolean {
+  if (isHttpsUrl(candidate)) return true;
+  try {
+    return new URL(candidate).origin === new URL(serverUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 export function parseChallengeScope(wwwAuthenticate: string): string[] | null {
-  const match = /(?:^|,)\s*scope="([^"]*)"/.exec(wwwAuthenticate);
+  const match = /(?:^|[,\s])scope="([^"]*)"/i.exec(wwwAuthenticate);
   if (match?.[1] === undefined || match[1].trim() === "") return null;
-  return match[1].split(/\s+/);
+  return match[1].trim().split(/\s+/);
 }
 
 function wellKnownProtectedResourceCandidates(serverUrl: string): string[] {
   const { origin, pathname } = new URL(serverUrl);
   const path = pathname === "/" ? "" : pathname;
-  return path === "" ? [`${origin}/.well-known/oauth-protected-resource`] : [`${origin}/.well-known/oauth-protected-resource${path}`, `${origin}/.well-known/oauth-protected-resource`];
+  const root = `${origin}/.well-known/oauth-protected-resource`;
+  return path === "" ? [root] : [`${root}${path}`, root];
 }
 
 function namesServer(resource: string, serverUrl: string): boolean {
@@ -88,10 +102,9 @@ export interface ProtectedResourceDiscovery {
   challengeScope: string[] | null;
 }
 
-export async function discoverProtectedResource(serverUrl: string, fetchFn: typeof fetch): Promise<ProtectedResourceDiscovery | null> {
-  let probe: Response;
+async function probeServer(serverUrl: string, fetchFn: typeof fetch): Promise<Response | null> {
   try {
-    probe = await fetchFn(serverUrl, {
+    return await fetchFn(serverUrl, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }),
@@ -99,11 +112,16 @@ export async function discoverProtectedResource(serverUrl: string, fetchFn: type
   } catch {
     return null;
   }
-  if (probe.status !== 401) return null;
+}
+
+export async function discoverProtectedResource(serverUrl: string, fetchFn: typeof fetch): Promise<ProtectedResourceDiscovery | null> {
+  const probe = await probeServer(serverUrl, fetchFn);
+  if (probe === null || probe.status !== 401) return null;
 
   const challenge = probe.headers.get("www-authenticate");
   const challengeScope = challenge !== null ? parseChallengeScope(challenge) : null;
-  const fromHeader = challenge !== null ? parseResourceMetadataUrl(challenge) : null;
+  const advertised = challenge !== null ? parseResourceMetadataUrl(challenge) : null;
+  const fromHeader = advertised !== null && isTrustedMetadataUrl(advertised, serverUrl) ? advertised : null;
   const candidates = fromHeader !== null ? [fromHeader] : wellKnownProtectedResourceCandidates(serverUrl);
 
   let foundForOther = false;
@@ -134,6 +152,7 @@ function authorizationServerCandidates(issuerUrl: string): string[] {
 }
 
 export async function discoverAuthorizationServer(issuerUrl: string, fetchFn: typeof fetch): Promise<AuthorizationServerMetadata | null> {
+  if (!isHttpsUrl(issuerUrl)) return null;
   let candidates: string[];
   try {
     candidates = authorizationServerCandidates(issuerUrl);
@@ -146,7 +165,9 @@ export async function discoverAuthorizationServer(issuerUrl: string, fetchFn: ty
       metadata !== null &&
       metadata.issuer === issuerUrl &&
       Array.isArray(metadata.code_challenge_methods_supported) &&
-      metadata.code_challenge_methods_supported.includes("S256")
+      metadata.code_challenge_methods_supported.includes("S256") &&
+      isHttpsUrl(metadata.authorization_endpoint) &&
+      isHttpsUrl(metadata.token_endpoint)
     ) {
       return metadata;
     }
@@ -157,20 +178,47 @@ export async function discoverAuthorizationServer(issuerUrl: string, fetchFn: ty
 export interface SignInDiscovery {
   metadata: AuthorizationServerMetadata;
   scopes: string[] | undefined;
+  challengeScope: string[] | null;
   resource: string;
+}
+
+const MAX_AUTHORIZATION_SERVERS = 5;
+
+async function firstUsableAuthorizationServer(issuers: string[], fetchFn: typeof fetch): Promise<AuthorizationServerMetadata | null> {
+  for (const issuer of issuers.slice(0, MAX_AUTHORIZATION_SERVERS)) {
+    const metadata = await discoverAuthorizationServer(issuer, fetchFn);
+    if (metadata !== null) return metadata;
+  }
+  return null;
 }
 
 export async function discoverSignIn(serverUrl: string, fetchFn: typeof fetch): Promise<SignInDiscovery | null> {
   const resource = await discoverProtectedResource(serverUrl, fetchFn);
   if (resource === null) return null;
-  const issuer = resource.metadata.authorization_servers[0];
-  const metadata = issuer === undefined ? null : await discoverAuthorizationServer(issuer, fetchFn);
+  const metadata = await firstUsableAuthorizationServer(resource.metadata.authorization_servers, fetchFn);
   if (metadata === null) {
     throw new SignInRefusedError(
-      "This server's authorization server publishes no metadata that passes the checks (a matching issuer and PKCE S256), so it was not used.",
+      "This server's authorization server publishes no metadata that passes the checks " +
+        "(an https address, a matching issuer, PKCE S256 and https endpoints), so it was not used.",
     );
   }
-  return { metadata, scopes: resource.challengeScope ?? resource.metadata.scopes_supported, resource: resource.metadata.resource };
+  return {
+    metadata,
+    scopes: resource.challengeScope ?? resource.metadata.scopes_supported,
+    challengeScope: resource.challengeScope,
+    resource: resource.metadata.resource,
+  };
+}
+
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+
+function isLoopbackRedirect(uri: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(uri);
+    return (protocol === "http:" || protocol === "https:") && LOOPBACK_HOSTS.includes(hostname);
+  } catch {
+    return false;
+  }
 }
 
 export async function registerClient(
@@ -178,7 +226,10 @@ export async function registerClient(
   redirectUris: string[],
   fetchFn: typeof fetch,
 ): Promise<{ clientId: string }> {
-  const isLocal = redirectUris.some((uri) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(uri));
+  if (!isHttpsUrl(registrationEndpoint)) {
+    throw new Error("Dynamic Client Registration needs an https endpoint");
+  }
+  const isLocal = redirectUris.some(isLoopbackRedirect);
   const response = await fetchFn(registrationEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
@@ -207,11 +258,49 @@ export async function resolveClientId(
   redirectUri: string,
   fetchFn: typeof fetch,
 ): Promise<string> {
-  if (cimdClientId !== undefined && metadata.client_id_metadata_document_supported === true) return cimdClientId;
+  if (cimdClientId !== undefined && cimdClientId !== "" && metadata.client_id_metadata_document_supported === true) return cimdClientId;
   if (metadata.registration_endpoint === undefined || metadata.registration_endpoint === "") return "";
   try {
     return (await registerClient(metadata.registration_endpoint, [redirectUri], fetchFn)).clientId;
   } catch {
     return "";
   }
+}
+
+export interface SignInServer {
+  authorizeUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  issuer: string;
+  issuerSent: boolean;
+  resource: string;
+  scopes?: string[];
+}
+
+export async function discoverSignInServer(
+  provider: OAuthProviderRef,
+  deps: { fetchFn: typeof fetch; redirectUri: string; cimdClientId?: string },
+): Promise<SignInServer> {
+  const found = provider.resource === undefined ? null : await discoverSignIn(provider.resource, deps.fetchFn);
+  if (found === null) {
+    throw new Error("This server did not ask for a sign-in, or did not answer, so the sign-in was not started.");
+  }
+  const { metadata } = found;
+  const sameServer = sameUrl(metadata.authorization_endpoint, provider.authorizeUrl) && sameUrl(metadata.token_endpoint, provider.tokenUrl);
+  const clientId =
+    sameServer && provider.clientId !== ""
+      ? provider.clientId
+      : await resolveClientId(metadata, deps.cimdClientId, deps.redirectUri, deps.fetchFn);
+  if (clientId === "") {
+    throw new Error("This server's sign-in needs a client ID, and none could be registered. Enter one in the server window.");
+  }
+  return {
+    authorizeUrl: metadata.authorization_endpoint,
+    tokenUrl: metadata.token_endpoint,
+    clientId,
+    issuer: metadata.issuer,
+    issuerSent: metadata.authorization_response_iss_parameter_supported === true,
+    resource: found.resource,
+    ...(found.challengeScope === null ? {} : { scopes: found.challengeScope }),
+  };
 }

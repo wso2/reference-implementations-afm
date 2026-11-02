@@ -57,16 +57,16 @@ describe("readFileText", () => {
   });
 
   it("paginates when the content exceeds the limit, with a resumable offset hint", () => {
-    const result = readFileText("notes.md", files, 0, 4);
+    const result = readFileText("notes.md", files, { offset: 0, limit: 4 });
     expect(result).toBe("0123\n\n[4 of 10 characters read - call read_file again with offset=4 for more]");
   });
 
   it("resumes from the given offset", () => {
-    expect(readFileText("notes.md", files, 4, 4)).toBe("4567\n\n[8 of 10 characters read - call read_file again with offset=8 for more]");
+    expect(readFileText("notes.md", files, { offset: 4, limit: 4 })).toBe("4567\n\n[8 of 10 characters read - call read_file again with offset=8 for more]");
   });
 
   it("returns the final chunk with no pagination hint once it reaches the end", () => {
-    expect(readFileText("notes.md", files, 8, 4)).toBe("89");
+    expect(readFileText("notes.md", files, { offset: 8, limit: 4 })).toBe("89");
   });
 
   it("throws a clear error for an unknown path, listing what's available", () => {
@@ -74,7 +74,7 @@ describe("readFileText", () => {
   });
 
   it("throws for an out-of-range offset", () => {
-    expect(() => readFileText("notes.md", files, 999)).toThrow(/out of range/);
+    expect(() => readFileText("notes.md", files, { offset: 999 })).toThrow(/out of range/);
   });
 
   it("handles an empty file", () => {
@@ -84,6 +84,10 @@ describe("readFileText", () => {
 
   it("throws FileToolError instances specifically", () => {
     expect(() => readFileText("missing.md", files)).toThrow(FileToolError);
+  });
+
+  it("names its errors, so a log line says where they came from", () => {
+    expect(() => readFileText("missing.md", files)).toThrow(expect.objectContaining({ name: "FileToolError" }));
   });
 });
 
@@ -175,6 +179,36 @@ describe("filesToolPort", () => {
     expect(result).toMatch(/^First 20 matches/);
     expect(result).toContain("there are more");
     expect(result).not.toContain("20 match(es)");
+  });
+
+  it("does not claim there are more when there are exactly 20", () => {
+    const exact = filesMap([{ name: "e.md", path: "e.md", text: "hit ".repeat(20) }]);
+    const result = searchFilesText("hit", exact);
+    expect(result).toMatch(/^20 match\(es\)/);
+    expect(result).not.toContain("there are more");
+    expect(result.match(/@ offset/g)?.length).toBe(20);
+  });
+
+  it("caps at 20 and says so as soon as a 21st match exists", () => {
+    const over = filesMap([{ name: "o.md", path: "o.md", text: "hit ".repeat(21) }]);
+    const result = searchFilesText("hit", over);
+    expect(result).toMatch(/^First 20 matches/);
+    expect(result.match(/@ offset/g)?.length).toBe(20);
+  });
+
+  it("reports offsets in the original text when lowercasing makes a letter longer", () => {
+    const files = filesMap([{ name: "t.md", path: "t.md", text: "İx and İİx" }]);
+    const result = searchFilesText("x", files);
+    expect(result).toContain("@ offset 1:");
+    expect(result).toContain("@ offset 9:");
+    expect(result).not.toContain("@ offset 2:");
+    for (const offset of [1, 9]) expect(readFileText("t.md", files, { offset, limit: 1 }).startsWith("x")).toBe(true);
+  });
+
+  it("still finds a match that starts or ends inside such a letter, at that letter", () => {
+    const files = filesMap([{ name: "t.md", path: "t.md", text: "aİb" }]);
+    expect(searchFilesText("i", files)).toContain("@ offset 1:");
+    expect(searchFilesText("b", files)).toContain("@ offset 2:");
   });
 
   it("still reports an exact count when nothing was cut off", () => {

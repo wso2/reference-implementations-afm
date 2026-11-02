@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { SecretPort, SecretRef } from "@afm/engine";
+import type { SecretPort } from "@afm/engine";
 
 export function configSecretPort(values: Record<string, string>): SecretPort {
   return {
@@ -24,34 +24,6 @@ export function configSecretPort(values: Record<string, string>): SecretPort {
         return { status: "unresolved", reason: `'${ref.name}' is not in the host config` };
       }
       return { status: "resolved", value };
-    },
-  };
-}
-
-export function promptSecretPort(
-  ask: (ref: SecretRef) => Promise<string | null>,
-): SecretPort {
-  return {
-    async resolve(ref) {
-      const value = await ask(ref);
-      if (value === null || value === "") {
-        return { status: "unresolved", reason: `'${ref.name}' was not provided` };
-      }
-      return { status: "resolved", value };
-    },
-  };
-}
-
-export function chainSecretPort(...ports: SecretPort[]): SecretPort {
-  return {
-    async resolve(ref) {
-      for (const port of ports) {
-        const result = await port.resolve(ref);
-        if (result.status === "resolved") {
-          return result;
-        }
-      }
-      return { status: "unresolved", reason: `'${ref.name}' could not be resolved by any source` };
     },
   };
 }

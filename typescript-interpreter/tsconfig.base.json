@@ -7,6 +7,8 @@
     "types": [],
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true

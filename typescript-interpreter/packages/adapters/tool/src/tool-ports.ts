@@ -14,31 +14,107 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { ToolPort, ToolCall, ToolDescriptor, ToolResult, JsonSchema } from "@afm/engine";
-import { ToolNameError, displayToolName } from "./tool-names";
+import type { JsonSchema, ToolCall, ToolDescriptor, ToolPort, ToolResult } from "@afm/engine";
+
+export interface Lazy<T> {
+  get(): Promise<T>;
+  discard(): Promise<T> | null;
+}
+
+export function lazy<T>(load: () => Promise<T>): Lazy<T> {
+  let current: Promise<T> | null = null;
+
+  return {
+    get(): Promise<T> {
+      if (current === null) {
+        const pending = load();
+        pending.catch(() => {
+          if (current === pending) current = null;
+        });
+        current = pending;
+      }
+      return current;
+    },
+
+    discard(): Promise<T> | null {
+      const pending = current;
+      current = null;
+      return pending;
+    },
+  };
+}
+
+export const MAX_TOOL_NAME_LENGTH = 64;
+
+const SEPARATOR = "__";
+
+const PROVIDER_TOOL_NAME = /^[A-Za-z0-9_-]+$/;
+
+export class ToolNameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ToolNameError";
+  }
+}
+
+export function serverToolId(serverName: string): string {
+  return serverName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "server";
+}
+
+export function namespacedToolName(serverName: string, toolName: string): string {
+  return `${serverToolId(serverName)}${SEPARATOR}${toolName}`;
+}
+
+export function displayToolName(name: string): string {
+  const separator = name.indexOf(SEPARATOR);
+  return separator > 0 && /^[A-Za-z0-9-]+$/.test(name.slice(0, separator)) ? name.slice(separator + SEPARATOR.length) : name;
+}
+
+export function namespacedToolPort(inner: ToolPort, serverName: string): ToolPort {
+  const prefix = `${serverToolId(serverName)}${SEPARATOR}`;
+  return {
+    async list() {
+      return (await inner.list()).flatMap((tool) => {
+        const name = `${prefix}${tool.name}`;
+        if (name.length > MAX_TOOL_NAME_LENGTH) {
+          throw new ToolNameError(
+            `The tool '${tool.name}' of the server '${serverName}' would be offered as '${name}', which is longer than the ` +
+              `${MAX_TOOL_NAME_LENGTH} characters model providers allow. Give the server a shorter name in the agent file.`,
+          );
+        }
+        if (!PROVIDER_TOOL_NAME.test(name)) return [];
+        return [{ ...tool, name, serverName }];
+      });
+    },
+
+    async execute(call, signal) {
+      if (!call.name.startsWith(prefix)) return { ok: false, content: `Unknown tool: ${call.name}` };
+      return inner.execute({ ...call, name: call.name.slice(prefix.length) }, signal);
+    },
+
+    async dispose() {
+      await inner.dispose?.();
+    },
+  };
+}
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 export function compositeToolPort(ports: ToolPort[]): ToolPort {
-  let routing: Promise<Routing> | null = null;
-
-  function resolve(): Promise<Routing> {
-    if (routing === null) {
-      const pending = buildRouting(ports);
-      pending.catch(() => {
-        if (routing === pending) routing = null;
-      });
-      routing = pending;
-    }
-    return routing;
-  }
+  let generation = 0;
+  const routing = lazy(() => {
+    const started = generation;
+    return buildRouting(ports, () => generation !== started);
+  });
 
   return {
     async list(): Promise<ToolDescriptor[]> {
-      const { descriptors } = await resolve();
+      const { descriptors } = await routing.get();
       return descriptors;
     },
 
     async execute(call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
-      const { owner } = await resolve();
+      const { owner } = await routing.get();
       const port = owner.get(call.name);
       if (port === undefined) {
         return { ok: false, content: `Unknown tool: ${call.name}` };
@@ -47,7 +123,8 @@ export function compositeToolPort(ports: ToolPort[]): ToolPort {
     },
 
     async dispose(): Promise<void> {
-      routing = null;
+      generation += 1;
+      routing.discard();
       await Promise.all(ports.map((port) => port.dispose?.()));
     },
   };
@@ -67,18 +144,19 @@ function clashBetween(earlier: ToolDescriptor, later: ToolDescriptor): string {
         "so the agent could not tell them apart. Give one of the servers a different name in the agent file.";
 }
 
-async function buildRouting(ports: ToolPort[]): Promise<Routing> {
+async function buildRouting(ports: ToolPort[], disposed: () => boolean): Promise<Routing> {
   const descriptors: ToolDescriptor[] = [];
   const owner = new Map<string, ToolPort>();
   const offered = new Map<string, ToolDescriptor>();
   const failures: string[] = [];
   for (const port of ports) {
+    if (disposed()) break;
     let tools: ToolDescriptor[];
     try {
       tools = await port.list();
     } catch (error) {
       if (error instanceof ToolNameError) throw error;
-      failures.push(error instanceof Error ? error.message : String(error));
+      failures.push(messageOf(error));
       continue;
     }
     for (const tool of tools) {
@@ -158,8 +236,7 @@ export function inPageToolPort(tools: InPageTool[]): ToolPort {
         const output = await tool.run(call.args, signal);
         return { ok: true, content: output };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, content: `Tool '${call.name}' failed: ${message}` };
+        return { ok: false, content: `Tool '${call.name}' failed: ${messageOf(error)}` };
       }
     },
   };

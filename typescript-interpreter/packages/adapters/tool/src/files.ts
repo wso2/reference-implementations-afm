@@ -14,9 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { ToolPort } from "@afm/engine";
+import type { JsonSchema, ToolPort } from "@afm/engine";
 import { inPageToolPort } from "./tool-ports";
-import type { InPageTool } from "./tool-ports";
 
 export interface FileInfo {
   name: string;
@@ -26,9 +25,25 @@ export interface FileInfo {
   note?: string;
 }
 
-export class FileToolError extends Error {}
+type AttachedFiles = Map<string, FileInfo>;
 
-export const FILE_TOOL_NAMES = ["list_files", "read_file", "search_files"];
+interface ReadRange {
+  offset?: number;
+  limit?: number;
+}
+
+interface FileToolSpec {
+  description: string;
+  inputSchema: JsonSchema;
+  run(args: unknown, files: AttachedFiles): string;
+}
+
+export class FileToolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FileToolError";
+  }
+}
 
 const DEFAULT_PAGE_SIZE = 8000;
 const SNIPPET_RADIUS = 80;
@@ -40,7 +55,7 @@ function formatSize(info: FileInfo): string {
   return info.note !== undefined ? `${sized}, ${info.note}` : sized;
 }
 
-export function listFilesText(files: Map<string, FileInfo>): string {
+export function listFilesText(files: AttachedFiles): string {
   if (files.size === 0) {
     return "No files are currently attached. The user can attach files by dragging them onto the message box or using the attach button.";
   }
@@ -48,7 +63,7 @@ export function listFilesText(files: Map<string, FileInfo>): string {
   return `${files.size} file(s) attached:\n${lines.join("\n")}`;
 }
 
-export function readFileText(path: string, files: Map<string, FileInfo>, offset = 0, limit = DEFAULT_PAGE_SIZE): string {
+export function readFileText(path: string, files: AttachedFiles, { offset = 0, limit = DEFAULT_PAGE_SIZE }: ReadRange = {}): string {
   const info = files.get(path);
   if (info === undefined) {
     const available = [...files.keys()].join(", ");
@@ -72,32 +87,63 @@ export function readFileText(path: string, files: Map<string, FileInfo>, offset 
   return chunk;
 }
 
-export function searchFilesText(query: string, files: Map<string, FileInfo>): string {
+function snippetAround(text: string, index: number, length: number): string {
+  const start = Math.max(0, index - SNIPPET_RADIUS);
+  const end = Math.min(text.length, index + length + SNIPPET_RADIUS);
+  return `${start > 0 ? "..." : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "..." : ""}`;
+}
+
+interface LowerCased {
+  text: string;
+  startOf(index: number): number;
+  endOf(index: number): number;
+}
+
+function lowerCased(original: string): LowerCased {
+  const text = original.toLowerCase();
+  const sameLength: LowerCased = { text, startOf: (index) => index, endOf: (index) => index + 1 };
+  if (text.length === original.length) return sameLength;
+
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (let at = 0; at < original.length; ) {
+    const character = String.fromCodePoint(original.codePointAt(at)!);
+    for (let unit = character.toLowerCase().length; unit > 0; unit--) {
+      starts.push(at);
+      ends.push(at + character.length);
+    }
+    at += character.length;
+  }
+  if (starts.length !== text.length) return sameLength;
+  return { text, startOf: (index) => starts[index]!, endOf: (index) => ends[index]! };
+}
+
+function* matchLines(info: FileInfo, needle: string): Generator<string> {
+  const lowered = lowerCased(info.text);
+  const haystack = lowered.text;
+  for (let index = haystack.indexOf(needle); index !== -1; index = haystack.indexOf(needle, index + needle.length)) {
+    const start = lowered.startOf(index);
+    const length = lowered.endOf(index + needle.length - 1) - start;
+    yield `- ${info.path} @ offset ${start}: "${snippetAround(info.text, start, length)}"`;
+  }
+}
+
+function* allMatchLines(files: AttachedFiles, needle: string): Generator<string> {
+  for (const info of files.values()) yield* matchLines(info, needle);
+}
+
+export function searchFilesText(query: string, files: AttachedFiles): string {
   const trimmed = query.trim();
   if (trimmed === "") {
     throw new FileToolError("Search query must not be empty.");
   }
-  const needle = trimmed.toLowerCase();
   const lines: string[] = [];
-  let truncated = false;
-
-  outer: for (const info of files.values()) {
-    const haystack = info.text.toLowerCase();
-    let from = 0;
-    for (;;) {
-      const index = haystack.indexOf(needle, from);
-      if (index === -1) break;
-      const start = Math.max(0, index - SNIPPET_RADIUS);
-      const end = Math.min(info.text.length, index + needle.length + SNIPPET_RADIUS);
-      const snippet = `${start > 0 ? "..." : ""}${info.text.slice(start, end).replace(/\s+/g, " ")}${end < info.text.length ? "..." : ""}`;
-      lines.push(`- ${info.path} @ offset ${index}: "${snippet}"`);
-      if (lines.length >= MAX_MATCHES) {
-        truncated = true;
-        break outer;
-      }
-      from = index + needle.length;
-    }
+  for (const line of allMatchLines(files, trimmed.toLowerCase())) {
+    lines.push(line);
+    if (lines.length > MAX_MATCHES) break;
   }
+  const truncated = lines.length > MAX_MATCHES;
+  if (truncated) lines.pop();
 
   if (lines.length === 0) {
     return `No matches found for "${trimmed}".`;
@@ -108,8 +154,12 @@ export function searchFilesText(query: string, files: Map<string, FileInfo>): st
   return `${header}\n${lines.join("\n")}`;
 }
 
+function argument(args: unknown, key: string): unknown {
+  return (args as Record<string, unknown> | null)?.[key];
+}
+
 function stringArg(args: unknown, key: string): string {
-  const value = (args as Record<string, unknown> | null)?.[key];
+  const value = argument(args, key);
   if (typeof value !== "string") {
     throw new FileToolError(`'${key}' is required and must be a string`);
   }
@@ -117,7 +167,7 @@ function stringArg(args: unknown, key: string): string {
 }
 
 function optionalNumberArg(args: unknown, key: string): number | undefined {
-  const value = (args as Record<string, unknown> | null)?.[key];
+  const value = argument(args, key);
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new FileToolError(`'${key}' must be a number`);
@@ -125,41 +175,49 @@ function optionalNumberArg(args: unknown, key: string): number | undefined {
   return value;
 }
 
-export function filesToolPort(files: Map<string, FileInfo>): ToolPort {
-  const tools: InPageTool[] = [
-    {
-      name: "list_files",
-      description: "List the files currently attached to this conversation, with their size (and page count for PDFs).",
-      inputSchema: { type: "object", properties: {} },
-      run: () => listFilesText(files),
-    },
-    {
-      name: "read_file",
-      description:
-        "Read an attached file's text content. Paginated for long documents - if the result says more remains, call again with the given offset.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "the file's path, from list_files" },
-          offset: { type: "number", description: "character offset to start reading from (default 0)" },
-          limit: { type: "number", description: "maximum characters to read (default 8000)" },
-        },
-        required: ["path"],
+const FILE_TOOLS: Record<string, FileToolSpec> = {
+  list_files: {
+    description: "List the files currently attached to this conversation, with their size (and page count for PDFs).",
+    inputSchema: { type: "object", properties: {} },
+    run: (_args, files) => listFilesText(files),
+  },
+  read_file: {
+    description:
+      "Read an attached file's text content. Paginated for long documents - if the result says more remains, call again with the given offset.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "the file's path, from list_files" },
+        offset: { type: "number", description: "character offset to start reading from (default 0)" },
+        limit: { type: "number", description: "maximum characters to read (default 8000)" },
       },
-      run: (args) =>
-        readFileText(stringArg(args, "path"), files, optionalNumberArg(args, "offset"), optionalNumberArg(args, "limit")),
+      required: ["path"],
     },
-    {
-      name: "search_files",
-      description:
-        "Search across every attached file's text for a keyword or phrase. Returns matching snippets with their file and offset - use read_file with that offset for more context.",
-      inputSchema: {
-        type: "object",
-        properties: { query: { type: "string", description: "the text to search for" } },
-        required: ["query"],
-      },
-      run: (args) => searchFilesText(stringArg(args, "query"), files),
+    run: (args, files) =>
+      readFileText(stringArg(args, "path"), files, { offset: optionalNumberArg(args, "offset"), limit: optionalNumberArg(args, "limit") }),
+  },
+  search_files: {
+    description:
+      "Search across every attached file's text for a keyword or phrase. " +
+      "Returns matching snippets with their file and offset - use read_file with that offset for more context.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", description: "the text to search for" } },
+      required: ["query"],
     },
-  ];
-  return inPageToolPort(tools);
+    run: (args, files) => searchFilesText(stringArg(args, "query"), files),
+  },
+};
+
+export const FILE_TOOL_NAMES = Object.keys(FILE_TOOLS);
+
+export function filesToolPort(files: AttachedFiles): ToolPort {
+  return inPageToolPort(
+    Object.entries(FILE_TOOLS).map(([name, { description, inputSchema, run }]) => ({
+      name,
+      description,
+      inputSchema,
+      run: (args) => run(args, files),
+    })),
+  );
 }

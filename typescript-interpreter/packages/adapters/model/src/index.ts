@@ -14,5 +14,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export { createOpenAIModel, createAnthropicModel, checkModelKey } from "./model";
-export type { ModelOptions, KeyCheck } from "./model";
+export { checkModelKey, createAnthropicModel, createOpenAIModel } from "./providers";
+export type { KeyCheck, ModelOptions } from "./providers";

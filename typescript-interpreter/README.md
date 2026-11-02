@@ -11,8 +11,20 @@ The engine handles parsing, validation, variable resolution, browser-oriented se
 | `@afm/engine` | `packages/engine` | Agent parsing, validation, setup planning, and execution |
 | `@afm/adapter-auth` | `packages/adapters/auth` | MCP OAuth discovery, grants, and token handling |
 | `@afm/adapter-model` | `packages/adapters/model` | OpenAI and Anthropic model adapters |
-| `@afm/adapter-secret` | `packages/adapters/secret` | Config, prompt, and chained secret providers |
+| `@afm/adapter-secret` | `packages/adapters/secret` | A config secret provider |
 | `@afm/adapter-tool` | `packages/adapters/tool` | MCP HTTP tools, file tools, filtering, and namespacing |
+
+## Architecture
+
+Dependencies point one way: the adapters depend on the engine, and `@afm/adapter-tool` also depends on `@afm/adapter-auth`. The engine depends on no adapter. Each module has one job, and each test file sits beside the module it covers.
+
+| Package | Modules |
+|---|---|
+| `@afm/engine` | `parse` (frontmatter, role, instructions), `schema` (agent metadata, authentication), `variables` (variable resolution, secret usage, address checks), `load` (`loadAfm` and the browser plan), `loop` (the agent turn), `errors` (error classes, rate limits), `types` (ports, messages, record guards) |
+| `@afm/adapter-auth` | `discovery` (RFC 9728 and 8414 discovery, sign-in server), `authorization-code` (provider, authorize URL, token exchange), `session`, `machine-grants`, `utils` (encoding, address checks, token requests) |
+| `@afm/adapter-model` | `providers` (OpenAI, Anthropic, key check), `convert` (messages, tools, events), `stream` (streaming, continuation cache) |
+| `@afm/adapter-tool` | `mcp` (HTTP port, result mapping), `mcp-auth`, `files`, `tool-ports` (composite, filtered, in-page and namespaced ports) |
+| `@afm/adapter-secret` | the config secret provider |
 
 ## Development
 
@@ -40,17 +52,21 @@ Within this workspace, packages use `workspace:*` dependencies. Separate consume
 A consuming application normally:
 
 1. Provides a `SecretPort` and loads agent content with `loadAfm`.
-2. Creates model and tool adapters from the loaded configuration.
-3. Supplies conversation messages, a permission broker, and optional execution budgets to `runAgentTurn`.
+2. Creates model and tool adapters from the loaded configuration. A model port remembers the provider's own state between the turns of one conversation, so each conversation gets its own model port.
+3. Supplies conversation messages, a permission broker, and optional execution budgets to `runAgentTurn`. The loop does not read `max_iterations` from the agent file by itself: pass `loaded.metadata.max_iterations` as `budget.maxIterations` to apply it, otherwise the loop stops after `DEFAULT_MAX_ITERATIONS` (10) iterations.
 4. Handles the streamed loop events, cancellation, and application state.
+
+OAuth2 machine grants such as `client_credentials` send the client id and secret in an HTTP Basic header, form-encoded as RFC 6749 section 2.3.1 requires. A token server that does not decode them can receive them in the request body instead: set `credential_bearer: post_body`.
 
 The public exports in each package's `src/index.ts` and the colocated tests describe the available interfaces. The existing browser-oriented planning behavior remains in the engine; separating the application does not add CLI or server interfaces.
 
 ## Security responsibilities
 
 - Keep credentials out of source control, logs, and generated error messages.
+- The MCP adapter does not send credentials (headers, API keys, tokens) to an `http://` address, whether the server or the proxy, unless the address is `localhost`, `127.x.x.x` or `[::1]`; the browser plan reports such a server as blocked. A server with no credentials is not affected. The agent file schema still accepts `http://` addresses, as the specification does.
 - Supply an appropriate `PermissionBroker`; `allowAllPermissions` explicitly approves every tool call and is not a substitute for a permission policy.
 - Enforce application-level policies for secret destinations, network access, storage, and user consent in the consuming runtime.
+- Decide where the sign-in refresh token is kept. A session holds its access token in memory and writes the refresh token to the store you pass in; it does not read the token back by itself, so after a reload the person signs in again.
 - Preserve cancellation and execution budgets when integrating the agent loop.
 - Dependency build scripts are restricted, with esbuild explicitly allowed. The workspace also retains overrides for patched transitive dependencies.
 
