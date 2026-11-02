@@ -43,6 +43,28 @@ pnpm test
 
 The tests also load six example agents from the AFM specification (`packages/engine/fixtures/agents/`) and check that the engine accepts them.
 
+### Docker
+
+The `Dockerfile` runs the same checks as CI, with the same Node.js (24) and pnpm (11.9.0), so they behave the same on any machine. It checks the code; it does not run agents.
+
+```sh
+cd typescript-interpreter
+docker build -t afm-typescript-interpreter .
+```
+
+The build installs the dependencies, then runs the typecheck and the tests with the network switched off. It fails if a check fails or if a test needs the internet. To run the checks again in the built image:
+
+```sh
+docker run --rm --network none afm-typescript-interpreter
+```
+
+`docker compose run --rm check` runs the checks in the image, building it first if it does not exist yet; after changing files, run `docker compose build check` first. To get the workspace without the checks, for example to open a shell, build the `dev` stage:
+
+```sh
+docker build --target dev -t afm-typescript-interpreter:dev .
+docker run --rm -it afm-typescript-interpreter:dev bash
+```
+
 ## Using the packages
 
 The packages are private workspace packages and are not published to npm. Their entry points export TypeScript source, so consumers need tooling that supports TypeScript and the browser/Web APIs used by the selected adapters.
