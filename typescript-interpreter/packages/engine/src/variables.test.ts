@@ -219,6 +219,79 @@ i
     expect(scopes).toEqual(["model", "other"]);
   });
 
+  it("reports a credential block that a YAML alias reuses outside authentication", () => {
+    const file = `---
+model:
+  authentication: &credential
+    type: api-key
+    api_key: \${env:KEY}
+interfaces:
+  - type: webchat
+    signature:
+      input: *credential
+---
+
+# Role
+r
+
+# Instructions
+i
+`;
+    const scopes = scanSecretUsage(file)
+      .filter((u) => u.name === "KEY")
+      .map((u) => u.scope)
+      .sort();
+    expect(scopes).toEqual(["model", "other"]);
+  });
+
+  it("reports a credential block shared by the model and a tool once for each, and nothing else", () => {
+    const file = `---
+model:
+  authentication: &credential
+    type: bearer
+    token: \${env:KEY}
+tools:
+  mcp:
+    - name: notes
+      transport:
+        type: http
+        url: https://notes.example/mcp
+        authentication: *credential
+---
+
+# Role
+r
+
+# Instructions
+i
+`;
+    expect(scanSecretUsage(file)).toEqual([
+      { name: "KEY", scope: "model" },
+      { name: "KEY", scope: "tool", address: "https://notes.example/mcp", serverName: "notes" },
+    ]);
+  });
+
+  it("does not treat an authentication block in another place as a credential", () => {
+    const file = `---
+tools:
+  mcp:
+    - name: notes
+      authentication:
+        token: \${env:KEY}
+      transport:
+        type: http
+        url: https://notes.example/mcp
+---
+
+# Role
+r
+
+# Instructions
+i
+`;
+    expect(scanSecretUsage(file)).toEqual([{ name: "KEY", scope: "other" }]);
+  });
+
   it("ignores http: bindings, which are not stored secrets", () => {
     const file = `---
 model:

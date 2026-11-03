@@ -101,9 +101,12 @@ export interface SecretUsage {
 
 type UsageOrigin = Omit<SecretUsage, "name">;
 
+type Path = readonly (string | number)[];
+
 interface CredentialBlock {
   authentication: unknown;
   origin: UsageOrigin;
+  path: Path;
 }
 
 export function serverAddress(url: unknown): string | undefined {
@@ -139,24 +142,34 @@ function secretNamesIn(text: string): string[] {
   return names;
 }
 
-function* walkSecretNames(value: unknown, skipped: ReadonlySet<unknown> = new Set()): Generator<string> {
+function childrenOf(value: unknown): [string | number, unknown][] {
+  return Array.isArray(value) ? [...value.entries()] : Object.entries(asRecord(value) ?? {});
+}
+
+function* walkSecretNames(
+  value: unknown,
+  path: Path = [],
+  skipped: ReadonlySet<string> = new Set(),
+): Generator<string> {
   if (typeof value === "string") {
     yield* secretNamesIn(value);
     return;
   }
-  if (skipped.has(value)) return;
-  const children = Array.isArray(value) ? value : Object.values(asRecord(value) ?? {});
-  for (const child of children) yield* walkSecretNames(child, skipped);
+  if (skipped.has(JSON.stringify(path))) return;
+  for (const [key, child] of childrenOf(value)) yield* walkSecretNames(child, [...path, key], skipped);
 }
 
 function credentialBlocks(frontmatter: UnknownRecord): CredentialBlock[] {
   const blocks: CredentialBlock[] = [];
 
   const model = asRecord(frontmatter.model);
-  if (model !== null) blocks.push({ authentication: model.authentication, origin: { scope: "model" } });
+  if (model !== null) {
+    const origin: UsageOrigin = { scope: "model" };
+    blocks.push({ authentication: model.authentication, origin, path: ["model", "authentication"] });
+  }
 
   const mcp = asRecord(frontmatter.tools)?.mcp;
-  for (const server of Array.isArray(mcp) ? mcp : []) {
+  for (const [index, server] of Array.isArray(mcp) ? mcp.entries() : []) {
     const entry = asRecord(server);
     if (entry === null) continue;
     const transport = asRecord(entry.transport) ?? {};
@@ -167,6 +180,7 @@ function credentialBlocks(frontmatter: UnknownRecord): CredentialBlock[] {
         address: secretDestination(transport.url, transport.authentication),
         serverName: typeof entry.name === "string" ? entry.name : undefined,
       },
+      path: ["tools", "mcp", index, "transport", "authentication"],
     });
   }
   return blocks;
@@ -191,8 +205,8 @@ export function scanSecretUsage(content: string): SecretUsage[] {
   for (const { authentication, origin } of blocks) {
     for (const name of walkSecretNames(authentication)) usages.push({ name, ...origin });
   }
-  const credentials = new Set<unknown>(blocks.map((block) => block.authentication));
-  for (const name of walkSecretNames(frontmatter, credentials)) usages.push({ name, scope: "other" });
+  const credentials = new Set(blocks.map((block) => JSON.stringify(block.path)));
+  for (const name of walkSecretNames(frontmatter, [], credentials)) usages.push({ name, scope: "other" });
   return withoutRepeats(usages);
 }
 
