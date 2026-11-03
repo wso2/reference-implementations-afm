@@ -15,7 +15,7 @@
 // under the License.
 
 import type { ToolCall, ToolDescriptor, ToolPort, ToolResult } from "@afm/engine";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compositeToolPort,
   displayToolName,
@@ -183,10 +183,33 @@ describe("namespacedToolPort", () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves out a tool whose name the providers would reject, and keeps the server's other tools", async () => {
-    const { port } = server(["search_docs", "files.read", "a/b", "with space", "naïve", "keep-this_one", "UPPER9"]);
+  it("offers a tool whose name the providers would reject under a usable name, and runs it under its own", async () => {
+    const { port, executed } = server(["search_docs", "files.read", "a/b", "with space", "naïve", "keep-this_one", "UPPER9"]);
+    const wrapped = namespacedToolPort(port, "docs");
+    const listed = await wrapped.list();
+    expect(listed.map((tool) => tool.name)).toEqual([
+      "docs__search_docs",
+      "docs__files_read",
+      "docs__a_b",
+      "docs__with_space",
+      "docs__na_ve",
+      "docs__keep-this_one",
+      "docs__UPPER9",
+    ]);
+    await wrapped.execute({ id: "1", name: "docs__files_read", args: {} }, signal());
+    await wrapped.execute({ id: "2", name: "docs__with_space", args: {} }, signal());
+    expect(executed.map((call) => call.name)).toEqual(["files.read", "with space"]);
+  });
+
+  it("leaves out a renamed tool that would take the name of another tool of the same server", async () => {
+    const { port } = server(["files_read", "files.read", "files:read", "x.y", "x:y"]);
     const listed = await namespacedToolPort(port, "docs").list();
-    expect(listed.map((tool) => tool.name)).toEqual(["docs__search_docs", "docs__keep-this_one", "docs__UPPER9"]);
+    expect(listed.map((tool) => tool.name)).toEqual(["docs__files_read", "docs__x_y"]);
+  });
+
+  it("names a tool the same way when the agent file lists it as allowed", () => {
+    expect(namespacedToolName("docs", "files.read")).toBe("docs__files_read");
+    expect(namespacedToolName("docs", "files_read")).toBe("docs__files_read");
   });
 
   it("still refuses a name that is too long, even when it also has an unusable character", async () => {
@@ -375,6 +398,74 @@ describe("a tool source that fails", () => {
   it("still reports the reason when nothing at all could be loaded", async () => {
     const port = compositeToolPort([failing]);
     await expect(port.list()).rejects.toThrow(/server unreachable/);
+  });
+});
+
+describe("a tool source that is down when the agent starts", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function sources() {
+    let down = true;
+    const asked = vi.fn();
+    const flaky: ToolPort = {
+      async list() {
+        asked();
+        if (down) throw new Error("server down");
+        return [{ name: "late", inputSchema: {} }];
+      },
+      execute: async (c) => ({ ok: true, content: `late:${c.name}` }),
+    };
+    return { flaky, asked, recover: () => void (down = false) };
+  }
+
+  it("offers its tools once it answers, after a wait, without losing the tools already found", async () => {
+    vi.useFakeTimers();
+    const { flaky, recover } = sources();
+    const port = compositeToolPort([fakePort("a", ["early"]), flaky]);
+    expect(await names(port)).toEqual(["early"]);
+    recover();
+    expect(await names(port)).toEqual(["early"]);
+    vi.advanceTimersByTime(30_000);
+    expect(await names(port)).toEqual(["early", "late"]);
+    expect(await port.execute(call("late"), signal())).toEqual({ ok: true, content: "late:late" });
+  });
+
+  it("does not ask the source again on every call while it waits", async () => {
+    vi.useFakeTimers();
+    const { flaky, asked } = sources();
+    const port = compositeToolPort([fakePort("a", ["early"]), flaky]);
+    await port.list();
+    await port.list();
+    await port.execute(call("early"), signal());
+    vi.advanceTimersByTime(29_000);
+    await port.list();
+    expect(asked).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps what it had, and waits again, when the retry fails as well", async () => {
+    vi.useFakeTimers();
+    const { flaky, asked } = sources();
+    const port = compositeToolPort([fakePort("a", ["early"]), flaky]);
+    await port.list();
+    vi.advanceTimersByTime(30_000);
+    expect(await names(port)).toEqual(["early"]);
+    expect(asked).toHaveBeenCalledTimes(2);
+    await port.list();
+    expect(asked).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(30_000);
+    await port.list();
+    expect(asked).toHaveBeenCalledTimes(3);
+  });
+
+  it("is not asked again when every source answered", async () => {
+    vi.useFakeTimers();
+    const child = fakePort("a", ["early"]);
+    const asked = vi.spyOn(child, "list");
+    const port = compositeToolPort([child]);
+    await port.list();
+    vi.advanceTimersByTime(120_000);
+    await port.list();
+    expect(asked).toHaveBeenCalledTimes(1);
   });
 });
 

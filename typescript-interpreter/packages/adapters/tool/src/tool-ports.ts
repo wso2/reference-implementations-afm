@@ -61,8 +61,14 @@ export function serverToolId(serverName: string): string {
   return serverName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "server";
 }
 
+const UNUSABLE_NAME_CHARACTERS = /[^A-Za-z0-9_-]/g;
+
+function usableToolName(toolName: string): string {
+  return toolName.replace(UNUSABLE_NAME_CHARACTERS, "_");
+}
+
 export function namespacedToolName(serverName: string, toolName: string): string {
-  return `${serverToolId(serverName)}${SEPARATOR}${toolName}`;
+  return `${serverToolId(serverName)}${SEPARATOR}${usableToolName(toolName)}`;
 }
 
 export function displayToolName(name: string): string {
@@ -72,24 +78,33 @@ export function displayToolName(name: string): string {
 
 export function namespacedToolPort(inner: ToolPort, serverName: string): ToolPort {
   const prefix = `${serverToolId(serverName)}${SEPARATOR}`;
+  const ownNames = new Map<string, string>();
   return {
     async list() {
-      return (await inner.list()).flatMap((tool) => {
-        const name = `${prefix}${tool.name}`;
+      const tools = await inner.list();
+      const taken = new Set(tools.map((tool) => tool.name).filter((name) => PROVIDER_TOOL_NAME.test(name)));
+      ownNames.clear();
+      return tools.flatMap((tool) => {
+        const usable = usableToolName(tool.name);
+        if (usable !== tool.name) {
+          if (taken.has(usable)) return [];
+          taken.add(usable);
+        }
+        const name = `${prefix}${usable}`;
         if (name.length > MAX_TOOL_NAME_LENGTH) {
           throw new ToolNameError(
             `The tool '${tool.name}' of the server '${serverName}' would be offered as '${name}', which is longer than the ` +
               `${MAX_TOOL_NAME_LENGTH} characters model providers allow. Give the server a shorter name in the agent file.`,
           );
         }
-        if (!PROVIDER_TOOL_NAME.test(name)) return [];
+        ownNames.set(name, tool.name);
         return [{ ...tool, name, serverName }];
       });
     },
 
     async execute(call, signal) {
       if (!call.name.startsWith(prefix)) return { ok: false, content: `Unknown tool: ${call.name}` };
-      return inner.execute({ ...call, name: call.name.slice(prefix.length) }, signal);
+      return inner.execute({ ...call, name: ownNames.get(call.name) ?? call.name.slice(prefix.length) }, signal);
     },
 
     async dispose() {
@@ -100,21 +115,51 @@ export function namespacedToolPort(inner: ToolPort, serverName: string): ToolPor
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+const RETRY_INCOMPLETE_MS = 30_000;
+
 export function compositeToolPort(ports: ToolPort[]): ToolPort {
   let generation = 0;
-  const routing = lazy(() => {
-    const started = generation;
-    return buildRouting(ports, () => generation !== started);
-  });
+  let known: { routing: Routing; at: number } | null = null;
+  let loading: Promise<Routing> | null = null;
+
+  function load(): Promise<Routing> {
+    if (loading === null) {
+      const started = generation;
+      const attempt = buildRouting(ports, () => generation !== started).then((routing) => {
+        if (generation === started) known = { routing, at: Date.now() };
+        return routing;
+      });
+      const settle = () => {
+        if (loading === attempt) loading = null;
+      };
+      attempt.then(settle, settle);
+      loading = attempt;
+    }
+    return loading;
+  }
+
+  async function routing(retryIncomplete: boolean): Promise<Routing> {
+    if (known === null) return load();
+    const earlier = known;
+    if (!retryIncomplete || !earlier.routing.incomplete || Date.now() - earlier.at < RETRY_INCOMPLETE_MS) {
+      return earlier.routing;
+    }
+    try {
+      return await load();
+    } catch {
+      earlier.at = Date.now();
+      return earlier.routing;
+    }
+  }
 
   return {
     async list(): Promise<ToolDescriptor[]> {
-      const { descriptors } = await routing.get();
+      const { descriptors } = await routing(true);
       return descriptors;
     },
 
     async execute(call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
-      const { owner } = await routing.get();
+      const { owner } = await routing(false);
       const port = owner.get(call.name);
       if (port === undefined) {
         return { ok: false, content: `Unknown tool: ${call.name}` };
@@ -124,7 +169,8 @@ export function compositeToolPort(ports: ToolPort[]): ToolPort {
 
     async dispose(): Promise<void> {
       generation += 1;
-      routing.discard();
+      known = null;
+      loading = null;
       await Promise.all(ports.map((port) => port.dispose?.()));
     },
   };
@@ -133,6 +179,7 @@ export function compositeToolPort(ports: ToolPort[]): ToolPort {
 interface Routing {
   descriptors: ToolDescriptor[];
   owner: Map<string, ToolPort>;
+  incomplete: boolean;
 }
 
 function clashBetween(earlier: ToolDescriptor, later: ToolDescriptor): string {
@@ -170,7 +217,7 @@ async function buildRouting(ports: ToolPort[], disposed: () => boolean): Promise
   if (descriptors.length === 0 && failures.length > 0) {
     throw new Error(`No tools could be loaded: ${failures.join("; ")}`);
   }
-  return { descriptors, owner };
+  return { descriptors, owner, incomplete: failures.length > 0 };
 }
 
 export interface ToolFilter {
