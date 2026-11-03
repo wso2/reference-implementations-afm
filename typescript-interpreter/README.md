@@ -52,7 +52,7 @@ cd typescript-interpreter
 docker build -t afm-typescript-interpreter .
 ```
 
-The build installs the dependencies, then runs the typecheck and the tests with the network switched off. It fails if a check fails or if a test needs the internet. To run the checks again in the built image:
+The build installs the dependencies, then runs the typecheck and the tests with the network switched off. It fails if a check fails or if a test needs the internet. It needs BuildKit, which is the default builder from Docker 23; with an older Docker, set `DOCKER_BUILDKIT=1`. To run the checks again in the built image:
 
 ```sh
 docker run --rm --network none afm-typescript-interpreter
