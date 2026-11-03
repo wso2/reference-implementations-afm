@@ -24,7 +24,7 @@ import {
   refreshAuthorizationCodeTokens,
 } from "./authorization-code";
 import type { SignInServer } from "./discovery";
-import { generatePkce, randomString } from "./utils";
+import { generatePkce, isGrantRejected, randomString } from "./utils";
 
 const SIGNED_OUT = "You signed out before the sign-in finished - please sign in again.";
 
@@ -166,14 +166,32 @@ class CodeSession implements AuthorizationCodeSession {
     const refreshToken = this.#current?.tokens.refreshToken;
     if (refreshToken === undefined) return;
     const signOutsAtStart = this.#signOuts;
-    await this.#store.set(this.#refreshKey, refreshToken);
+    await this.#save(refreshToken);
     if (this.#signOuts !== signOutsAtStart && this.#store.get(this.#refreshKey) === refreshToken) {
       this.#store.remove(this.#refreshKey);
     }
   }
 
+  async #save(refreshToken: string): Promise<void> {
+    try {
+      await this.#store.set(this.#refreshKey, refreshToken);
+    } catch {
+      return;
+    }
+  }
+
   async #refresh(from: SignedIn, refreshToken: string, fetchFn: typeof fetch): Promise<void> {
-    const tokens = await refreshAuthorizationCodeTokens(from.provider, refreshToken, fetchFn);
+    let tokens: AuthorizationCodeTokens;
+    try {
+      tokens = await refreshAuthorizationCodeTokens(from.provider, refreshToken, fetchFn);
+    } catch (error) {
+      if (!isGrantRejected(error)) throw error;
+      if (this.#current === from) {
+        this.#current = null;
+        this.#store.remove(this.#refreshKey);
+      }
+      return;
+    }
     if (this.#current !== from) return;
     this.#current = { provider: from.provider, tokens };
     await this.#persist();

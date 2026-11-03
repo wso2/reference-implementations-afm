@@ -148,6 +148,37 @@ describe("createAuthorizationCodeSession", () => {
     expect(await session.getAccessToken()).toBe("at");
   });
 
+  it("keeps a sign-in whose refresh token could not be saved, instead of reporting it as failed", async () => {
+    const store: KeyValueStore = {
+      ...fakeStore(),
+      set: async () => {
+        throw new Error("storage refused");
+      },
+    };
+    const session = createAuthorizationCodeSession(config, store);
+    await session.startSignIn(server, redirectTo.capture);
+    await session.completeSignIn("abc", redirectTo.state(), { fetchFn: fakeFetch(tokensFor("at")).fn });
+    expect(session.hasSession()).toBe(true);
+    expect(await session.getAccessToken()).toBe("at");
+  });
+
+  it("does not leave a refresh token behind when a sign-out comes while the save fails", async () => {
+    const inner = fakeStore();
+    const store: KeyValueStore = {
+      ...inner,
+      set: async (key, value) => {
+        session.signOut();
+        inner.set(key, value);
+        throw new Error("storage refused after writing");
+      },
+    };
+    const session = createAuthorizationCodeSession(config, store);
+    await session.startSignIn(server, redirectTo.capture);
+    await session.completeSignIn("abc", redirectTo.state(), { fetchFn: fakeFetch(tokensFor("at")).fn });
+    expect(session.hasSession()).toBe(false);
+    expect(inner.get(authorizationCodeRefreshKey(config))).toBeNull();
+  });
+
   it("removes any previously stored refresh token before persisting a freshly signed-in one", async () => {
     const calls: string[] = [];
     const tracked = {
@@ -298,6 +329,61 @@ describe("createAuthorizationCodeSession", () => {
       const { session } = await signedIn(1);
       await expect(session.getAccessToken(fakeFetch({}, false).fn)).rejects.toThrow(/refresh failed/);
       expect(await session.getAccessToken(fakeFetch(tokensFor("fresh")).fn)).toBe("fresh");
+    });
+
+    it("signs the person out when the provider turns the refresh token down, so a new sign-in is asked for", async () => {
+      const { session, store } = await signedIn(1);
+      expect(await session.getAccessToken(fakeFetch({ error: "invalid_grant" }, false).fn)).toBeNull();
+      expect(session.hasSession()).toBe(false);
+      expect(store.get(refreshKey)).toBeNull();
+      expect(await session.getAccessToken(fakeFetch(tokensFor("unused")).fn)).toBeNull();
+    });
+
+    it("keeps the sign-in when the refresh fails for another reason, such as a busy server", async () => {
+      const { session, store } = await signedIn(1);
+      const busy = (async () => ({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: "temporarily_unavailable" }),
+      })) as unknown as typeof fetch;
+      await expect(session.getAccessToken(busy)).rejects.toThrow(/refresh failed: 503/);
+      expect(session.hasSession()).toBe(true);
+      expect(store.get(refreshKey)).toBe("rt");
+      expect(await session.getAccessToken(fakeFetch(tokensFor("fresh")).fn)).toBe("fresh");
+    });
+
+    it("does not let a refresh the provider turned down sign out a newer sign-in", async () => {
+      const { session, store } = await signedIn(1);
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const slowRejection = (async () => {
+        await gate;
+        return { ok: false, status: 400, json: async () => ({ error: "invalid_grant" }) };
+      }) as unknown as typeof fetch;
+      const call = session.getAccessToken(slowRejection);
+      session.signOut();
+      await session.startSignIn(server, redirectTo.capture);
+      await session.completeSignIn("abc", redirectTo.state(), { fetchFn: fakeFetch(tokensFor("newer", "newer-rt")).fn });
+      release();
+      await call;
+      expect(await session.getAccessToken()).toBe("newer");
+      expect(store.get(refreshKey)).toBe("newer-rt");
+    });
+
+    it("keeps serving the new token when the rotated refresh token could not be saved", async () => {
+      const inner = fakeStore();
+      let refuse = false;
+      const store: KeyValueStore = {
+        ...inner,
+        set: async (key, value) => {
+          if (refuse) throw new Error("storage refused");
+          inner.set(key, value);
+        },
+      };
+      const { session } = await signedIn(1, store);
+      refuse = true;
+      expect(await session.getAccessToken(fakeFetch(tokensFor("fresh", "rt2")).fn)).toBe("fresh");
+      expect(await session.getAccessToken()).toBe("fresh");
     });
 
     it("drops a refresh that finishes after sign-out, so the user stays signed out", async () => {

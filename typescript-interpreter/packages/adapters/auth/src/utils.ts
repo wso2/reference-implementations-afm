@@ -85,6 +85,31 @@ export interface TokenPayload {
   expires_in?: unknown;
 }
 
+export class TokenRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "TokenRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function isGrantRejected(error: unknown): boolean {
+  return error instanceof TokenRequestError && error.code === "invalid_grant";
+}
+
+async function errorCodeOf(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function postTokenRequest(
   tokenUrl: string,
   request: { headers: Record<string, string>; body: URLSearchParams },
@@ -93,7 +118,7 @@ export async function postTokenRequest(
 ): Promise<TokenPayload> {
   const response = await fetchFn(requireHttpsUrl(tokenUrl, "token_url"), { method: "POST", redirect: "error", ...request });
   if (!response.ok) {
-    throw new Error(`${failure}: ${response.status}`);
+    throw new TokenRequestError(`${failure}: ${response.status}`, response.status, await errorCodeOf(response));
   }
   return (await response.json()) as TokenPayload;
 }
