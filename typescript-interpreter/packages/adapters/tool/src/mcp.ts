@@ -140,6 +140,10 @@ async function refuseToRepeat(): Promise<never> {
   throw new Error(SESSION_ENDED_MESSAGE);
 }
 
+const MAX_TOOL_PAGES = 50;
+
+const TOOL_LIST_NEVER_ENDED = "The server kept offering more pages of tools without ever finishing its list.";
+
 export function mcpToolPort(options: McpHttpOptions): ToolPort {
   const setupTimeout = options.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
   const session = lazy(() => connect(options, setupTimeout));
@@ -164,9 +168,23 @@ export function mcpToolPort(options: McpHttpOptions): ToolPort {
 
   return {
     async list(): Promise<ToolDescriptor[]> {
-      const listTools = (client: Client) => client.listTools(undefined, { timeout: setupTimeout });
-      const result = await withClient(listTools, () => onSession(listTools));
-      return result.tools.map((tool) => toToolDescriptor(tool, options.serverUrl));
+      const tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
+        const after = cursor;
+        const listPage = (client: Client) =>
+          client.listTools(after === undefined ? undefined : { cursor: after }, { timeout: setupTimeout });
+        const result = await withClient(listPage, () => onSession(listPage));
+        tools.push(...result.tools);
+        cursor = result.nextCursor;
+        if (cursor === undefined || cursor === "") {
+          return tools.map((tool) => toToolDescriptor(tool, options.serverUrl));
+        }
+        if (seen.has(cursor)) break;
+        seen.add(cursor);
+      }
+      throw new Error(TOOL_LIST_NEVER_ENDED);
     },
 
     async execute(call: ToolCall, signal: AbortSignal): Promise<ToolResult> {

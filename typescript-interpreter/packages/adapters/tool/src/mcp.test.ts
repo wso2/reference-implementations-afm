@@ -14,9 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { Server as McpProtocolServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { isInitializeRequest, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,7 +123,7 @@ interface TestServer {
   close: () => Promise<void>;
 }
 
-function startTestMcpServer(requiredHeader?: { name: string; value: string }): Promise<TestServer> {
+function startTestMcpServer(requiredHeader?: { name: string; value: string }, makeServer?: () => McpProtocolServer): Promise<TestServer> {
   const state: { lastSeenHeader: string | undefined } = { lastSeenHeader: undefined };
   const received: string[] = [];
   const transports = new Map<string, StreamableHTTPServerTransport>();
@@ -164,7 +165,7 @@ function startTestMcpServer(requiredHeader?: { name: string; value: string }): P
             transports.set(id, transport as StreamableHTTPServerTransport);
           },
         });
-        await buildMcpServer().connect(transport);
+        await (makeServer?.() ?? buildMcpServer()).connect(transport);
       }
 
       if (transport === undefined) {
@@ -195,6 +196,68 @@ function startTestMcpServer(requiredHeader?: { name: string; value: string }): P
     });
   });
 }
+
+function pagedServer(page: (cursor: string | undefined) => { names: string[]; next?: string }): () => McpProtocolServer {
+  return () => {
+    const server = new McpProtocolServer({ name: "paged-server", version: "0.0.0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+      const { names, next } = page(request.params?.cursor);
+      return {
+        tools: names.map((name) => ({ name, inputSchema: { type: "object" as const } })),
+        ...(next === undefined ? {} : { nextCursor: next }),
+      };
+    });
+    return server;
+  };
+}
+
+describe("mcpToolPort - a tool list that comes in pages", () => {
+  let server: TestServer | null = null;
+
+  afterEach(async () => {
+    await server?.close();
+    server = null;
+  });
+
+  it("reads every page, so no tool of a long list is lost", async () => {
+    const pages = [["a", "b"], ["c"], ["d", "e"]];
+    server = await startTestMcpServer(
+      undefined,
+      pagedServer((cursor) => {
+        const index = cursor === undefined ? 0 : Number(cursor);
+        return { names: pages[index]!, next: index + 1 < pages.length ? String(index + 1) : undefined };
+      }),
+    );
+    const port = mcpToolPort({ serverUrl: server.url });
+    expect((await port.list()).map((tool) => tool.name)).toEqual(["a", "b", "c", "d", "e"]);
+    await port.dispose?.();
+  });
+
+  it("asks only once when the server sends everything at once", async () => {
+    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["a", "b"] })));
+    const port = mcpToolPort({ serverUrl: server.url });
+    expect((await port.list()).map((tool) => tool.name)).toEqual(["a", "b"]);
+    expect(server.received.filter((method) => method === "tools/list")).toHaveLength(1);
+    await port.dispose?.();
+  });
+
+  it("refuses a server that hands out the same cursor again and again", async () => {
+    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["a"], next: "same" })));
+    const port = mcpToolPort({ serverUrl: server.url });
+    await expect(port.list()).rejects.toThrow(/without ever finishing/);
+    expect(server.received.filter((method) => method === "tools/list").length).toBeLessThanOrEqual(3);
+    await port.dispose?.();
+  });
+
+  it("refuses a server whose list never ends, after a bounded number of pages", async () => {
+    let counter = 0;
+    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: [`t${counter}`], next: String((counter += 1)) })));
+    const port = mcpToolPort({ serverUrl: server.url });
+    await expect(port.list()).rejects.toThrow(/without ever finishing/);
+    expect(server.received.filter((method) => method === "tools/list")).toHaveLength(50);
+    await port.dispose?.();
+  });
+});
 
 describe("mcpToolPort — real auth headers through a real MCP handshake", () => {
   let server: TestServer | null = null;
