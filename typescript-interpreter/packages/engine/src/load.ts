@@ -98,8 +98,13 @@ function modelAuthIssues(metadata: AgentMetadata): PlanIssue[] {
 
 const SIGN_IN_ADDRESS_FIELDS = ["authorize_url", "token_url"] as const;
 
+function hostIsKnown(address: string): boolean {
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(address);
+  return authority !== null && !authority[1]!.includes("${");
+}
+
 const isPlainSignInAddress = (address: string | undefined): boolean =>
-  address !== undefined && !address.includes("${") && isPlainHttpAddress(address);
+  address !== undefined && hostIsKnown(address) && isPlainHttpAddress(address);
 
 function toolServerIssues(metadata: AgentMetadata): PlanIssue[] {
   return (metadata.tools?.mcp ?? []).flatMap((server, i) => {
@@ -137,7 +142,7 @@ function toolServerIssues(metadata: AgentMetadata): PlanIssue[] {
       ];
     }
     const issues: PlanIssue[] = [];
-    if (!transport.url.includes("${") && isInsecureAddress(transport.url)) {
+    if (hostIsKnown(transport.url) && isInsecureAddress(transport.url)) {
       issues.push(
         blocked(
           "tool-credentials-insecure",

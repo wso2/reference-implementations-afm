@@ -175,8 +175,21 @@ describe("planForBrowser", () => {
       ["a localhost address", "http://localhost:8787/mcp"],
       ["a 127.0.0.1 address", "http://127.0.0.1:9000/mcp"],
       ["an address that is still a variable", "http://${env:MCP_HOST}/mcp"],
+      ["an address whose user part is still a variable", "http://user:${env:PASSWORD}@mcp.example.com/mcp"],
     ])("is let through for %s", (_label, url) => {
       expect(planForBrowser(server(url, bearer)).issues).toEqual([]);
+    });
+
+    it.each([
+      ["a variable in the query", "http://mcp.example.com/mcp?key=${env:KEY}"],
+      ["a variable in the path", "http://mcp.example.com/${env:TENANT}/mcp"],
+      ["a variable in the fragment", "http://mcp.example.com/mcp#${env:KEY}"],
+    ])("is still blocked with %s, because the host is known and plain http", (_label, url) => {
+      const plan = planForBrowser(server(url, bearer));
+      expect(plan.runnable).toBe(false);
+      expect(plan.issues).toEqual([
+        expect.objectContaining({ severity: "blocked", code: "tool-credentials-insecure", path: "tools.mcp[0].transport.url" }),
+      ]);
     });
 
     it("is let through when it carries no credentials, since there is nothing to read", () => {
@@ -193,6 +206,12 @@ describe("planForBrowser", () => {
       expect(plan.issues).toEqual([
         expect.objectContaining({ code: "oauth-address-insecure", path: `tools.mcp[0].transport.authentication.${field}` }),
       ]);
+    });
+
+    it("blocks an oauth2 sign-in address that is plain http with a variable only after the host", () => {
+      const oauth = { type: "oauth2", grant_type: "authorization_code", client_id: "c", authorize_url: "https://a/authorize" };
+      const plan = planForBrowser(server("https://mcp.example.com/mcp", { ...oauth, token_url: "http://auth.example.com/token?x=${env:X}" }));
+      expect(plan.issues).toEqual([expect.objectContaining({ code: "oauth-address-insecure", path: "tools.mcp[0].transport.authentication.token_url" })]);
     });
 
     it("lets an oauth2 sign-in through when its addresses are https or still variables", () => {
