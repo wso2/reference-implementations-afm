@@ -19,7 +19,7 @@ import { AfmParseError } from "./errors";
 
 const DELIMITER = "---";
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const HEADING = /^ {0,3}#\s+(\S.*?)\s*$/;
+const HEADING = /^ {0,3}#\s+(\S.*)$/;
 const SECTIONS = ["role", "instructions"] as const;
 
 type Section = (typeof SECTIONS)[number];
@@ -137,7 +137,7 @@ function extractRoleAndInstructions(body: string): RoleAndInstructions {
   for (const line of body.split(/\r?\n/)) {
     const isFenceLine = FENCE.test(line);
     fence = updateFence(fence, line);
-    const heading = isFenceLine || fence !== null ? undefined : HEADING.exec(line)?.[1];
+    const heading = isFenceLine || fence !== null ? undefined : HEADING.exec(line)?.[1]?.trimEnd();
     if (heading !== undefined) {
       current = sectionOf(heading);
       continue;

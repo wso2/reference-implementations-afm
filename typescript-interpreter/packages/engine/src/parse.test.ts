@@ -263,3 +263,18 @@ describe("splitFrontmatter", () => {
     });
   });
 });
+
+describe("a heading followed by a very long run of spaces", () => {
+  it("is read in a moment", () => {
+    const content = `---\nname: X\n---\n# Role\nhi\n# Instructions\nbe kind\n# a${" ".repeat(200_000)}y\n`;
+    const started = Date.now();
+    expect(parseAfm(content).role).toBe("hi");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("still ignores the spaces after a heading", () => {
+    const parsed = parseAfm("---\nname: X\n---\n# Role   \nhi\n# Instructions\t \nbe kind\n");
+    expect(parsed.role).toBe("hi");
+    expect(parsed.instructions).toBe("be kind");
+  });
+});
