@@ -14,15 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { OAuthProviderRef } from "./authorization-code";
-import { isHttpsUrl, sameUrl } from "./utils";
-
-interface ProtectedResourceMetadata {
-  resource: string;
-  authorization_servers: string[];
-  scopes_supported?: string[];
-  bearer_methods_supported?: string[];
-}
+import { isLoopbackAddress } from "@afm/engine";
+import { isHttpsUrl } from "./utils";
 
 export interface AuthorizationServerMetadata {
   issuer: string;
@@ -30,8 +23,8 @@ export interface AuthorizationServerMetadata {
   token_endpoint: string;
   registration_endpoint?: string;
   client_id_metadata_document_supported?: boolean;
+  response_types_supported?: string[];
   code_challenge_methods_supported?: string[];
-  authorization_response_iss_parameter_supported?: boolean;
   scopes_supported?: string[];
 }
 
@@ -47,31 +40,10 @@ async function tryFetchJson<T>(url: string, fetchFn: typeof fetch): Promise<T | 
   }
 }
 
-export function parseResourceMetadataUrl(wwwAuthenticate: string): string | null {
-  const match = /(?:^|[,\s])resource_metadata="([^"]+)"/i.exec(wwwAuthenticate);
-  return match?.[1] ?? null;
-}
-
-function isTrustedMetadataUrl(candidate: string, serverUrl: string): boolean {
-  if (isHttpsUrl(candidate)) return true;
-  try {
-    return new URL(candidate).origin === new URL(serverUrl).origin;
-  } catch {
-    return false;
-  }
-}
-
 export function parseChallengeScope(wwwAuthenticate: string): string[] | null {
   const match = /(?:^|[,\s])scope="([^"]*)"/i.exec(wwwAuthenticate);
   if (match?.[1] === undefined || match[1].trim() === "") return null;
   return match[1].trim().split(/\s+/);
-}
-
-function wellKnownProtectedResourceCandidates(serverUrl: string): string[] {
-  const { origin, pathname } = new URL(serverUrl);
-  const path = pathname === "/" ? "" : pathname;
-  const root = `${origin}/.well-known/oauth-protected-resource`;
-  return path === "" ? [root] : [`${root}${path}`, root];
 }
 
 function namesServer(resource: string, serverUrl: string): boolean {
@@ -90,6 +62,12 @@ function namesServer(resource: string, serverUrl: string): boolean {
   }
 }
 
+const NO_SIGN_IN_METADATA = "This server publishes no sign-in metadata. If this is an old address, use the server's current one.";
+const SIGN_IN_METADATA_NAMES_OTHER = "This server's sign-in metadata does not name this server, so it was not used.";
+const UNUSABLE_AUTHORIZATION_SERVER =
+  "This server's authorization server publishes no metadata that passes the checks " +
+  "(an https address, a matching issuer, the code response type, PKCE S256 and https endpoints), so it was not used.";
+
 export class SignInRefusedError extends Error {
   constructor(message: string) {
     super(message);
@@ -97,45 +75,32 @@ export class SignInRefusedError extends Error {
   }
 }
 
-interface ProtectedResourceDiscovery {
-  metadata: ProtectedResourceMetadata;
-  challengeScope: string[] | null;
+export function advertisedMetadataUrl(challenge: string, serverUrl: string): URL | undefined {
+  try {
+    const url = new URL(/(?:^|[,\s])resource_metadata="([^"]+)"/i.exec(challenge)?.[1] ?? "");
+    return url.origin === new URL(serverUrl).origin ? url : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-async function probeServer(serverUrl: string, fetchFn: typeof fetch): Promise<Response | null> {
+export function checkedResource(server: string | URL, resource: string | undefined): URL {
+  if (resource === undefined) throw new SignInRefusedError(NO_SIGN_IN_METADATA);
+  if (!namesServer(resource, String(server))) throw new SignInRefusedError(SIGN_IN_METADATA_NAMES_OTHER);
+  return new URL(resource);
+}
+
+export async function challengeOf(serverUrl: string, fetchFn: typeof fetch): Promise<string | null> {
   try {
-    return await fetchFn(serverUrl, {
+    const response = await fetchFn(serverUrl, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }),
     });
+    return response.status === 401 ? (response.headers.get("www-authenticate") ?? "") : null;
   } catch {
     return null;
   }
-}
-
-export async function discoverProtectedResource(serverUrl: string, fetchFn: typeof fetch): Promise<ProtectedResourceDiscovery | null> {
-  const probe = await probeServer(serverUrl, fetchFn);
-  if (probe === null || probe.status !== 401) return null;
-
-  const challenge = probe.headers.get("www-authenticate");
-  const challengeScope = challenge !== null ? parseChallengeScope(challenge) : null;
-  const advertised = challenge !== null ? parseResourceMetadataUrl(challenge) : null;
-  const fromHeader = advertised !== null && isTrustedMetadataUrl(advertised, serverUrl) ? advertised : null;
-  const candidates = fromHeader !== null ? [fromHeader] : wellKnownProtectedResourceCandidates(serverUrl);
-
-  let foundForOther = false;
-  for (const candidate of candidates) {
-    const metadata = await tryFetchJson<ProtectedResourceMetadata>(candidate, fetchFn);
-    if (metadata === null || !Array.isArray(metadata.authorization_servers) || metadata.authorization_servers.length === 0) continue;
-    if (namesServer(metadata.resource, serverUrl)) return { metadata, challengeScope };
-    foundForOther = true;
-  }
-  throw new SignInRefusedError(
-    foundForOther
-      ? "This server's sign-in metadata does not name this server, so it was not used."
-      : "This server publishes no sign-in metadata. If this is an old address, use the server's current one.",
-  );
 }
 
 function authorizationServerCandidates(issuerUrl: string): string[] {
@@ -153,17 +118,13 @@ function authorizationServerCandidates(issuerUrl: string): string[] {
 
 export async function discoverAuthorizationServer(issuerUrl: string, fetchFn: typeof fetch): Promise<AuthorizationServerMetadata | null> {
   if (!isHttpsUrl(issuerUrl)) return null;
-  let candidates: string[];
-  try {
-    candidates = authorizationServerCandidates(issuerUrl);
-  } catch {
-    return null;
-  }
-  for (const candidate of candidates) {
+  for (const candidate of authorizationServerCandidates(issuerUrl)) {
     const metadata = await tryFetchJson<AuthorizationServerMetadata>(candidate, fetchFn);
     if (
       metadata !== null &&
       metadata.issuer === issuerUrl &&
+      Array.isArray(metadata.response_types_supported) &&
+      metadata.response_types_supported.includes("code") &&
       Array.isArray(metadata.code_challenge_methods_supported) &&
       metadata.code_challenge_methods_supported.includes("S256") &&
       isHttpsUrl(metadata.authorization_endpoint) &&
@@ -175,50 +136,10 @@ export async function discoverAuthorizationServer(issuerUrl: string, fetchFn: ty
   return null;
 }
 
-interface SignInDiscovery {
-  metadata: AuthorizationServerMetadata;
-  scopes: string[] | undefined;
-  challengeScope: string[] | null;
-  resource: string;
-}
-
-const MAX_AUTHORIZATION_SERVERS = 5;
-
-async function firstUsableAuthorizationServer(issuers: string[], fetchFn: typeof fetch): Promise<AuthorizationServerMetadata | null> {
-  for (const issuer of issuers.slice(0, MAX_AUTHORIZATION_SERVERS)) {
-    const metadata = await discoverAuthorizationServer(issuer, fetchFn);
-    if (metadata !== null) return metadata;
-  }
-  return null;
-}
-
-export async function discoverSignIn(serverUrl: string, fetchFn: typeof fetch): Promise<SignInDiscovery | null> {
-  const resource = await discoverProtectedResource(serverUrl, fetchFn);
-  if (resource === null) return null;
-  const metadata = await firstUsableAuthorizationServer(resource.metadata.authorization_servers, fetchFn);
-  if (metadata === null) {
-    throw new SignInRefusedError(
-      "This server's authorization server publishes no metadata that passes the checks " +
-        "(an https address, a matching issuer, PKCE S256 and https endpoints), so it was not used.",
-    );
-  }
-  return {
-    metadata,
-    scopes: resource.challengeScope ?? resource.metadata.scopes_supported,
-    challengeScope: resource.challengeScope,
-    resource: resource.metadata.resource,
-  };
-}
-
-const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
-
-function isLoopbackRedirect(uri: string): boolean {
-  try {
-    const { protocol, hostname } = new URL(uri);
-    return (protocol === "http:" || protocol === "https:") && LOOPBACK_HOSTS.includes(hostname);
-  } catch {
-    return false;
-  }
+export async function checkedAuthorizationServer(issuerUrl: string, fetchFn: typeof fetch): Promise<AuthorizationServerMetadata> {
+  const metadata = await discoverAuthorizationServer(issuerUrl, fetchFn);
+  if (metadata === null) throw new SignInRefusedError(UNUSABLE_AUTHORIZATION_SERVER);
+  return metadata;
 }
 
 export async function registerClient(
@@ -229,7 +150,7 @@ export async function registerClient(
   if (!isHttpsUrl(registrationEndpoint)) {
     throw new Error("Dynamic Client Registration needs an https endpoint");
   }
-  const isLocal = redirectUris.some(isLoopbackRedirect);
+  const isLocal = redirectUris.some(isLoopbackAddress);
   const response = await fetchFn(registrationEndpoint, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
@@ -265,42 +186,4 @@ export async function resolveClientId(
   } catch {
     return "";
   }
-}
-
-export interface SignInServer {
-  authorizeUrl: string;
-  tokenUrl: string;
-  clientId: string;
-  issuer: string;
-  issuerSent: boolean;
-  resource: string;
-  scopes?: string[];
-}
-
-export async function discoverSignInServer(
-  provider: OAuthProviderRef,
-  deps: { fetchFn: typeof fetch; redirectUri: string; cimdClientId?: string },
-): Promise<SignInServer> {
-  const found = provider.resource === undefined ? null : await discoverSignIn(provider.resource, deps.fetchFn);
-  if (found === null) {
-    throw new Error("This server did not ask for a sign-in, or did not answer, so the sign-in was not started.");
-  }
-  const { metadata } = found;
-  const sameServer = sameUrl(metadata.authorization_endpoint, provider.authorizeUrl) && sameUrl(metadata.token_endpoint, provider.tokenUrl);
-  const clientId =
-    sameServer && provider.clientId !== ""
-      ? provider.clientId
-      : await resolveClientId(metadata, deps.cimdClientId, deps.redirectUri, deps.fetchFn);
-  if (clientId === "") {
-    throw new Error("This server's sign-in needs a client ID, and none could be registered. Enter one in the server window.");
-  }
-  return {
-    authorizeUrl: metadata.authorization_endpoint,
-    tokenUrl: metadata.token_endpoint,
-    clientId,
-    issuer: metadata.issuer,
-    issuerSent: metadata.authorization_response_iss_parameter_supported === true,
-    resource: found.resource,
-    ...(found.challengeScope === null ? {} : { scopes: found.challengeScope }),
-  };
 }

@@ -24,43 +24,46 @@ export interface ModelOptions {
   fetch?: typeof fetch;
 }
 
-export function createOpenAIModel({ apiKey, model = "gpt-4o", fetch }: ModelOptions): LanguageModel {
-  return wrapLanguageModel({
-    model: createOpenAI({ apiKey, fetch })(model),
-    middleware: defaultSettingsMiddleware({ settings: { providerOptions: { openai: { store: false } } } }),
-  });
-}
-
-export function createAnthropicModel({ apiKey, model = "claude-sonnet-4-5", fetch }: ModelOptions): LanguageModel {
-  return createAnthropic({ apiKey, fetch, headers: { "anthropic-dangerous-direct-browser-access": "true" } })(model);
-}
-
 export type KeyCheck = { ok: true } | { ok: false; status: number | null };
 
-const KEY_CHECKS = {
-  openai: (apiKey: string) => ({
-    url: "https://api.openai.com/v1/models",
-    headers: { authorization: `Bearer ${apiKey}` },
-  }),
-  anthropic: (apiKey: string) => ({
-    url: "https://api.anthropic.com/v1/models?limit=1",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-  }),
+const PROVIDERS = {
+  openai: {
+    create: ({ apiKey, model = "gpt-4o", fetch }: ModelOptions): LanguageModel =>
+      wrapLanguageModel({
+        model: createOpenAI({ apiKey, fetch })(model),
+        middleware: defaultSettingsMiddleware({ settings: { providerOptions: { openai: { store: false } } } }),
+      }),
+    keyCheck: (apiKey: string) => ({
+      url: "https://api.openai.com/v1/models",
+      headers: { authorization: `Bearer ${apiKey}` },
+    }),
+  },
+  anthropic: {
+    create: ({ apiKey, model = "claude-sonnet-4-5", fetch }: ModelOptions): LanguageModel =>
+      createAnthropic({ apiKey, fetch, headers: { "anthropic-dangerous-direct-browser-access": "true" } })(model),
+    keyCheck: (apiKey: string) => ({
+      url: "https://api.anthropic.com/v1/models?limit=1",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+    }),
+  },
 };
+
+function providerNamed(name: string): (typeof PROVIDERS)[keyof typeof PROVIDERS] {
+  if (!Object.hasOwn(PROVIDERS, name)) throw new Error(`Unsupported model provider ${name}. Use openai or anthropic.`);
+  return PROVIDERS[name as keyof typeof PROVIDERS];
+}
+
+export const createModel = (provider: string, options: ModelOptions): LanguageModel => providerNamed(provider).create(options);
 
 const KEY_CHECK_TIMEOUT_MS = 12_000;
 const REQUEST_TIMEOUT = 408;
 
-export async function checkModelKey(
-  provider: keyof typeof KEY_CHECKS,
-  apiKey: string,
-  fetchFn: typeof fetch = fetch,
-): Promise<KeyCheck> {
-  const { url, headers } = KEY_CHECKS[provider](apiKey);
+export async function checkModelKey(provider: string, apiKey: string, fetchFn: typeof fetch = fetch): Promise<KeyCheck> {
+  const { url, headers } = providerNamed(provider).keyCheck(apiKey);
   try {
     const response = await fetchFn(url, { headers, signal: AbortSignal.timeout(KEY_CHECK_TIMEOUT_MS) });
     return response.ok ? { ok: true } : { ok: false, status: response.status };

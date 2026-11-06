@@ -33,13 +33,6 @@ interface ReadRange {
   limit?: number;
 }
 
-export class FileToolError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FileToolError";
-  }
-}
-
 const DEFAULT_PAGE_SIZE = 8000;
 const SNIPPET_RADIUS = 80;
 const MAX_MATCHES = 20;
@@ -62,17 +55,17 @@ export function readFileText(path: string, files: AttachedFiles, { offset = 0, l
   const info = files.get(path);
   if (info === undefined) {
     const available = [...files.keys()].join(", ");
-    throw new FileToolError(`File '${path}' not found. Attached files: ${available || "(none)"}`);
+    throw new Error(`File '${path}' not found. Attached files: ${available || "(none)"}`);
   }
   if (info.text.length === 0) {
     return "(empty file)";
   }
   if (offset < 0 || offset >= info.text.length) {
-    throw new FileToolError(`offset ${offset} is out of range - '${path}' is ${info.text.length} characters long`);
+    throw new Error(`offset ${offset} is out of range - '${path}' is ${info.text.length} characters long`);
   }
   const size = Math.floor(limit);
   if (!Number.isFinite(size) || size < 1) {
-    throw new FileToolError(`limit must be a positive number of characters - got ${limit}`);
+    throw new Error(`limit must be a positive number of characters - got ${limit}`);
   }
   const chunk = info.text.slice(offset, offset + size);
   const nextOffset = offset + chunk.length;
@@ -101,7 +94,7 @@ function* allMatchLines(files: AttachedFiles, pattern: RegExp): Generator<string
 export function searchFilesText(query: string, files: AttachedFiles): string {
   const trimmed = query.trim();
   if (trimmed === "") {
-    throw new FileToolError("Search query must not be empty.");
+    throw new Error("Search query must not be empty.");
   }
   const lines: string[] = [];
   for (const line of allMatchLines(files, new RegExp(trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu"))) {

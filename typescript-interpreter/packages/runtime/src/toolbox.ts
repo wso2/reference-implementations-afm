@@ -46,11 +46,10 @@ export function createToolbox(sources: ToolSource[]) {
   async function load(): Promise<ToolBox> {
     const results = await Promise.allSettled(sources.map((source) => source.tools()));
     const tools: ToolSet = {};
-    const owner = new Map<string, string>();
-    const servers = new Map<string, string | undefined>();
+    const owner = new Map<string, ToolSource>();
     incomplete = false;
-    results.forEach((result, index) => {
-      const label = sources[index]?.label ?? "a built-in tool";
+    sources.forEach((source, index) => {
+      const result = results[index]!;
       if (result.status === "rejected") {
         if (result.reason instanceof ToolNameError) throw result.reason;
         incomplete = true;
@@ -60,19 +59,18 @@ export function createToolbox(sources: ToolSource[]) {
         const earlier = owner.get(name);
         if (earlier !== undefined) {
           throw new ToolNameError(
-            earlier === label
-              ? `The server '${label}' lists the tool '${displayToolName(name)}' more than once.`
-              : `The servers '${earlier}' and '${label}' both offer the tool '${displayToolName(name)}' under the same name '${name}', ` +
+            earlier.label === source.label
+              ? `The server '${source.label}' lists the tool '${displayToolName(name)}' more than once.`
+              : `The servers '${earlier.label}' and '${source.label}' both offer the tool '${displayToolName(name)}' under the same name '${name}', ` +
                 "so the agent could not tell them apart. Give one of the servers a different name in the agent file.",
           );
         }
-        owner.set(name, label);
-        servers.set(name, sources[index]?.serverId);
+        owner.set(name, source);
         tools[name] = item;
       }
     });
     loadedAt = Date.now();
-    const info = Object.entries(tools).map(([name, item]) => ({ name, description: item.description, serverId: servers.get(name) }));
+    const info = Object.entries(tools).map(([name, item]) => ({ name, description: item.description, serverId: owner.get(name)?.serverId }));
     return { tools, info };
   }
 

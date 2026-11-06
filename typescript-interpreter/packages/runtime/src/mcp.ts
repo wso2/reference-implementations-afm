@@ -93,7 +93,6 @@ export interface McpServerOptions {
   fetchFn?: typeof fetch;
   headers?: Record<string, string>;
   authHeaderProvider?: McpAuthHeaderProvider;
-  onAuthRejected?: () => void;
   filter?: { allow?: string[]; deny?: string[] };
   setupTimeoutMs?: number;
 }
@@ -130,17 +129,18 @@ function refuseInsecureCredentials(options: McpServerOptions): void {
   );
 }
 
-function withAuthHeaders({ fetchFn = fetch, authHeaderProvider, onAuthRejected }: McpServerOptions): typeof fetch {
+function withAuthHeaders({ fetchFn = fetch, authHeaderProvider }: McpServerOptions): typeof fetch {
   if (authHeaderProvider === undefined) return fetchFn;
-  return async (url, init) => {
+  const send = async (url: Parameters<typeof fetch>[0], init: RequestInit | undefined) => {
+    const added = await authHeaderProvider();
     const headers = new Headers(init?.headers);
-    for (const [name, value] of Object.entries(await authHeaderProvider())) headers.set(name, value);
-    const response = await fetchFn(url, { ...init, headers });
-    if (response.status === 401) {
-      authHeaderProvider.invalidate?.();
-      onAuthRejected?.();
-    }
-    return response;
+    for (const [name, value] of Object.entries(added)) headers.set(name, value);
+    return { added, response: await fetchFn(url, { ...init, headers }) };
+  };
+  return async (url, init) => {
+    const first = await send(url, init);
+    if (first.response.status !== 401 || !(await authHeaderProvider.renew?.(first.added))) return first.response;
+    return (await send(url, init)).response;
   };
 }
 

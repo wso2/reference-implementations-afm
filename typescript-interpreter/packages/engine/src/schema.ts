@@ -26,7 +26,7 @@ function numberFromText(value: unknown): unknown {
 }
 
 function reportIssue(ctx: z.RefinementCtx, message: string, path?: (string | number)[]): void {
-  ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(path === undefined ? {} : { path }) });
+  ctx.addIssue({ code: "custom", message, ...(path === undefined ? {} : { path }) });
 }
 
 function httpUrl(field: string): z.ZodType<string> {
@@ -50,7 +50,6 @@ function fieldList(fields: string[]): string {
 }
 
 const JWT_ALGORITHMS = new Set(["RS256", "RS384", "RS512", "HS256", "HS384", "HS512"]);
-const OAUTH2_CREDENTIAL_BEARERS = new Set(["auth_header", "post_body"]);
 
 interface FieldSpec {
   required: readonly string[];
@@ -59,7 +58,6 @@ interface FieldSpec {
 
 const AUTH_FIELDS: Record<string, FieldSpec> = {
   bearer: { required: ["token"], optional: [] },
-  basic: { required: ["username", "password"], optional: [] },
   "api-key": { required: ["api_key"], optional: ["header_name"] },
   jwt: {
     required: ["issuer", "signing_key"],
@@ -69,28 +67,7 @@ const AUTH_FIELDS: Record<string, FieldSpec> = {
 
 const RECOGNIZED_AUTH_TYPES: readonly string[] = [...Object.keys(AUTH_FIELDS), "oauth2"];
 
-const MACHINE_GRANTS = {
-  client_credentials: { required: ["token_url", "client_id", "client_secret"], optional: ["scopes", "credential_bearer"] },
-  password: { required: ["token_url", "username", "password", "client_id", "client_secret"], optional: ["scopes", "credential_bearer"] },
-  refresh_token: { required: ["token_url", "refresh_token", "client_id", "client_secret"], optional: ["scopes", "credential_bearer"] },
-  jwt_bearer: { required: ["token_url", "assertion"], optional: ["client_id", "client_secret", "scopes", "credential_bearer"] },
-} as const satisfies Record<string, FieldSpec>;
-
-export type OAuth2MachineGrant = keyof typeof MACHINE_GRANTS;
-
-const OAUTH2_GRANTS: Record<string, FieldSpec> = {
-  ...MACHINE_GRANTS,
-  authorization_code: { required: ["authorize_url", "token_url", "client_id"], optional: ["scopes"] },
-};
-
-export function isOAuth2MachineGrant(grant: string): grant is OAuth2MachineGrant {
-  return Object.hasOwn(MACHINE_GRANTS, grant);
-}
-
-export function postsSecretsToTokenUrl(grantType: unknown): boolean {
-  const grant = typeof grantType === "string" ? grantType.toLowerCase() : "";
-  return grant !== "authorization_code" && Object.hasOwn(OAUTH2_GRANTS, grant);
-}
+const AUTHORIZATION_CODE: FieldSpec = { required: ["authorize_url", "token_url", "client_id"], optional: ["scopes"] };
 
 function checkFields(label: string, spec: FieldSpec, provided: Set<string>, ctx: z.RefinementCtx): void {
   const missing = spec.required.filter((field) => !provided.has(field));
@@ -111,33 +88,20 @@ function validateJwtAlgorithm(algorithm: string, ctx: z.RefinementCtx): void {
   }
 }
 
-function validateOAuth2Fields(auth: { grant_type?: string; credential_bearer?: string }, provided: Set<string>, ctx: z.RefinementCtx): void {
+function validateOAuth2Fields(auth: { grant_type?: string }, provided: Set<string>, ctx: z.RefinementCtx): void {
   if (auth.grant_type === undefined) {
     reportIssue(ctx, "type 'oauth2' requires 'grant_type' field");
-    return;
-  }
-
-  const grant = auth.grant_type.toLowerCase();
-  const spec = Object.hasOwn(OAUTH2_GRANTS, grant) ? OAUTH2_GRANTS[grant] : undefined;
-  if (spec === undefined) {
-    reportIssue(ctx, `oauth2 'grant_type' is not supported. Supported grant types: ${Object.keys(OAUTH2_GRANTS).join(", ")}`);
-    return;
-  }
-
-  const grantFields = new Set([...provided].filter((field) => field !== "grant_type"));
-  checkFields(`oauth2 grant_type '${grant}'`, spec, grantFields, ctx);
-
-  if (auth.credential_bearer !== undefined && !OAUTH2_CREDENTIAL_BEARERS.has(auth.credential_bearer)) {
-    reportIssue(ctx, `oauth2 'credential_bearer' is not supported. Supported values: ${[...OAUTH2_CREDENTIAL_BEARERS].sort().join(", ")}`);
+  } else if (auth.grant_type.toLowerCase() !== "authorization_code") {
+    reportIssue(ctx, "oauth2 'grant_type' is not supported. Supported grant types: authorization_code");
+  } else {
+    checkFields("oauth2 grant_type 'authorization_code'", AUTHORIZATION_CODE, new Set([...provided].filter((field) => field !== "grant_type")), ctx);
   }
 }
 
 const clientAuthentication = z
-  .object({
+  .looseObject({
     type: z.string().min(1),
     token: z.string().optional(),
-    username: z.string().optional(),
-    password: z.string().optional(),
     api_key: z.string().optional(),
     header_name: z.string().optional(),
     issuer: z.string().optional(),
@@ -152,13 +116,8 @@ const clientAuthentication = z
     authorize_url: httpUrl("authentication.authorize_url").optional(),
     token_url: httpUrl("authentication.token_url").optional(),
     client_id: z.string().optional(),
-    client_secret: z.string().optional(),
-    refresh_token: z.string().optional(),
-    assertion: z.string().optional(),
     scopes: z.array(z.string()).optional(),
-    credential_bearer: z.string().optional(),
   })
-  .passthrough()
   .superRefine((auth, ctx) => {
     const type = auth.type.toLowerCase();
     if (!RECOGNIZED_AUTH_TYPES.includes(type)) return;
@@ -179,45 +138,35 @@ const clientAuthentication = z
 
 export type ClientAuthentication = z.infer<typeof clientAuthentication>;
 
-const httpTransport = z
-  .object({
-    type: z.literal("http"),
-    url: httpUrl("transport.url"),
-    authentication: clientAuthentication.optional(),
-  })
-  .strict();
+const httpTransport = z.strictObject({
+  type: z.literal("http"),
+  url: httpUrl("transport.url"),
+  authentication: clientAuthentication.optional(),
+});
 
-const stdioTransport = z
-  .object({
-    type: z.literal("stdio"),
-    command: z.string(),
-    args: z.array(z.string()).optional(),
-    env: z.record(z.string(), z.string()).optional(),
-  })
-  .strict();
+const stdioTransport = z.strictObject({
+  type: z.literal("stdio"),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
 
 const transport = z.discriminatedUnion("type", [httpTransport, stdioTransport]);
 
-const toolFilter = z
-  .object({
-    allow: z.array(z.string()).optional(),
-    deny: z.array(z.string()).optional(),
-  })
-  .strict();
+const toolFilter = z.strictObject({
+  allow: z.array(z.string()).optional(),
+  deny: z.array(z.string()).optional(),
+});
 
-const mcpServer = z
-  .object({
-    name: z.string(),
-    transport,
-    tool_filter: toolFilter.optional(),
-  })
-  .strict();
+const mcpServer = z.strictObject({
+  name: z.string(),
+  transport,
+  tool_filter: toolFilter.optional(),
+});
 
-const toolsSchema = z
-  .object({
-    mcp: z.array(mcpServer).optional(),
-  })
-  .strict();
+const toolsSchema = z.strictObject({
+  mcp: z.array(mcpServer).optional(),
+});
 
 function checkServerNames(tools: z.infer<typeof toolsSchema> | undefined, ctx: z.RefinementCtx): void {
   const names = new Set<string>();
@@ -236,70 +185,60 @@ export const jsonSchema: z.ZodType<JsonSchemaData> = z.union([z.boolean(), z.rec
 const stringSchema: JsonSchemaData = { type: "string" };
 const defaultSignature = { input: stringSchema, output: stringSchema };
 
-const signatureSchema = z
-  .object({
-    input: jsonSchema.default(stringSchema),
-    output: jsonSchema.default(stringSchema),
-  })
-  .strict();
+const signatureSchema = z.strictObject({
+  input: jsonSchema.default(stringSchema),
+  output: jsonSchema.default(stringSchema),
+});
 
-const eventSignatureSchema = z.object({ input: jsonSchema.optional(), output: jsonSchema.optional() }).strict();
+const eventSignatureSchema = z.strictObject({ input: jsonSchema.optional(), output: jsonSchema.optional() });
 
-const httpExposure = z.object({ path: z.string().optional() }).strict();
-const exposure = z.object({ http: httpExposure.optional() }).strict();
+const httpExposure = z.strictObject({ path: z.string().optional() });
+const exposure = z.strictObject({ http: httpExposure.optional() });
 
-const subscription = z
-  .object({
-    protocol: z.string(),
-    hub: z.string().optional(),
-    topic: z.string().optional(),
-    callback: z.string().optional(),
-    secret: z.string().optional(),
-    authentication: clientAuthentication.optional(),
-  })
-  .strict();
+const subscription = z.strictObject({
+  protocol: z.string(),
+  hub: z.string().optional(),
+  topic: z.string().optional(),
+  callback: z.string().optional(),
+  secret: z.string().optional(),
+  authentication: clientAuthentication.optional(),
+});
 
-const consoleChatInterface = z
-  .object({
-    type: z.literal("consolechat"),
-    signature: signatureSchema.default(defaultSignature),
-  })
-  .strict();
+const consoleChatInterface = z.strictObject({
+  type: z.literal("consolechat"),
+  signature: signatureSchema.default(defaultSignature),
+});
 
-const webChatInterface = z
-  .object({
-    type: z.literal("webchat"),
-    signature: signatureSchema.default(defaultSignature),
-    exposure: exposure.default({ http: { path: "/chat" } }),
-  })
-  .strict();
+const webChatInterface = z.strictObject({
+  type: z.literal("webchat"),
+  signature: signatureSchema.default(defaultSignature),
+  exposure: exposure.default({ http: { path: "/chat" } }),
+});
 
-const webhookInterface = z
-  .object({
-    type: z.literal("webhook"),
-    prompt: z.string().optional(),
-    signature: eventSignatureSchema.optional(),
-    exposure: exposure.default({ http: { path: "/webhook" } }),
-    subscription: subscription.optional(),
-  })
-  .strict();
+const webhookInterface = z.strictObject({
+  type: z.literal("webhook"),
+  prompt: z.string().optional(),
+  signature: eventSignatureSchema.optional(),
+  exposure: exposure.default({ http: { path: "/webhook" } }),
+  subscription: subscription.optional(),
+});
 
-const platformChatInterface = z
-  .object({
-    type: z.literal("platformchat"),
-    platform: z.string().min(1),
-    mode: z.enum(["notification", "request", "polling"]),
-    prompt: z.string().optional(),
-    signature: eventSignatureSchema.optional(),
-    platform_config: z.record(z.string(), z.unknown()).optional(),
-    exposure: exposure.optional(),
-    polling: z.object({
+const platformChatInterface = z.strictObject({
+  type: z.literal("platformchat"),
+  platform: z.string().min(1),
+  mode: z.enum(["notification", "request", "polling"]),
+  prompt: z.string().optional(),
+  signature: eventSignatureSchema.optional(),
+  platform_config: z.record(z.string(), z.unknown()).optional(),
+  exposure: exposure.optional(),
+  polling: z
+    .strictObject({
       interval: z.preprocess(numberFromText, z.number().int().positive().optional()),
       timeout: z.preprocess(numberFromText, z.number().int().positive().optional()),
-    }).strict().optional(),
-    authentication: clientAuthentication.optional(),
-  })
-  .strict();
+    })
+    .optional(),
+  authentication: clientAuthentication.optional(),
+});
 
 const interfaceSchema = z.discriminatedUnion("type", [
   consoleChatInterface,
@@ -327,31 +266,25 @@ function checkInterfaces(interfaces: z.infer<typeof interfaceSchema>[] | undefin
   });
 }
 
-const providerSchema = z
-  .object({
-    name: z.string().optional(),
-    url: httpUrl("provider.url").optional(),
-  })
-  .strict();
+const providerSchema = z.strictObject({
+  name: z.string().optional(),
+  url: httpUrl("provider.url").optional(),
+});
 
-const modelSchema = z
-  .object({
-    name: z.string().optional(),
-    provider: z.string().optional(),
-    url: httpUrl("model.url").optional(),
-    authentication: clientAuthentication.optional(),
-  })
-  .strict();
+const modelSchema = z.strictObject({
+  name: z.string().optional(),
+  provider: z.string().optional(),
+  url: httpUrl("model.url").optional(),
+  authentication: clientAuthentication.optional(),
+});
 
-const skillSchema = z
-  .object({
-    type: z.literal("local"),
-    path: z.string(),
-  })
-  .strict();
+const skillSchema = z.strictObject({
+  type: z.literal("local"),
+  path: z.string(),
+});
 
 export const agentMetadataSchema = z
-  .object({
+  .strictObject({
     spec_version: z.string().optional(),
     name: z.string().optional(),
     description: z.string().optional(),
@@ -367,7 +300,6 @@ export const agentMetadataSchema = z
     skills: z.array(skillSchema).optional(),
     max_iterations: z.preprocess(numberFromText, z.number().int().positive().optional()),
   })
-  .strict()
   .superRefine((metadata, ctx) => {
     checkServerNames(metadata.tools, ctx);
     checkInterfaces(metadata.interfaces, ctx);

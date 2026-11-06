@@ -14,19 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export { base64 } from "./utils";
-export { createOAuth2MachineClient, oauth2MachineConfig } from "./machine-grants";
-export { authorizationCodeProviderKey, authorizationCodeRefreshKey, isInteractiveOAuth, oauthProviderFrom } from "./authorization-code";
-export type { OAuthProviderRef } from "./authorization-code";
-export { createAuthorizationCodeSession } from "./session";
-export type { AuthorizationCodeSession, CompleteSignInOptions, KeyValueStore } from "./session";
 export {
-  discoverSignInServer,
-  SignInRefusedError,
-  discoverProtectedResource,
-  discoverAuthorizationServer,
+  authorizationCodeProviderKey,
+  authorizationCodeRefreshKey,
+  createAuthorizationCodeSession,
   discoverSignIn,
-  registerClient,
-  resolveClientId,
-} from "./discovery";
-export type { SignInServer, AuthorizationServerMetadata } from "./discovery";
+  isInteractiveOAuth,
+  oauthProviderFrom,
+} from "./session";
+export type { AuthorizationCodeSession, KeyValueStore, OAuthProviderRef } from "./session";
+export { registerClient, resolveClientId, SignInRefusedError } from "./discovery";
+export type { AuthorizationServerMetadata } from "./discovery";

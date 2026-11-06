@@ -15,7 +15,7 @@
 // under the License.
 
 import { describeError } from "@afm/engine";
-import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from "ai";
+import { type FinishReason, type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from "ai";
 
 export const DEFAULT_MAX_ITERATIONS = 10;
 
@@ -39,15 +39,7 @@ export interface AgentTurnInput {
   signal?: AbortSignal;
 }
 
-export type TurnFinishReason =
-  | "stop"
-  | "length"
-  | "content-filter"
-  | "error"
-  | "other"
-  | "max-iterations"
-  | "budget"
-  | "aborted";
+export type TurnFinishReason = Exclude<FinishReason, "tool-calls"> | "max-iterations" | "budget" | "aborted";
 
 export type LoopEvent =
   | { type: "text-delta"; text: string }

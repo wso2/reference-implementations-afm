@@ -29,11 +29,6 @@ export interface FrontmatterSplit {
   body: string;
 }
 
-interface RoleAndInstructions {
-  role: string;
-  instructions: string;
-}
-
 export interface ParsedAfm {
   frontmatter: Record<string, unknown>;
   role: string;
@@ -129,7 +124,7 @@ function sectionOf(heading: string): Section | null {
   return SECTIONS.find((section) => section === name) ?? null;
 }
 
-function extractRoleAndInstructions(body: string): RoleAndInstructions {
+function extractRoleAndInstructions(body: string): Pick<ParsedAfm, "role" | "instructions"> {
   const sections: Record<Section, string[]> = { role: [], instructions: [] };
   let current: Section | null = null;
   let fence: Fence | null = null;

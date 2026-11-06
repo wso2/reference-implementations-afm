@@ -18,7 +18,7 @@ The runtime depends on the engine. The engine depends on neither the runtime nor
 | Package | Modules |
 |---|---|
 | `@afm/engine` | `parse` (frontmatter, role, instructions), `schema` (agent metadata, authentication), `variables` (variable resolution, secret usage, address checks), `load` (`loadAfm` and the browser plan), `errors` (error classes), `types` (secret port, record guards) |
-| `@afm/runtime` | `run` (the agent turn: `streamText` with step, token and time limits), `model` (OpenAI, Anthropic, key check), `mcp` (one MCP server through the AI SDK MCP client, with its tool filter), `tool-guard` (permission question, one call at a time, result size), `tool-names` (`server__tool` names), `toolbox` (many servers as one tool set), `files` (file tools), `mcp-auth` (headers for a tool server), `secret` (config secret provider), `auth/` (OAuth discovery, sign-in session, machine grants) |
+| `@afm/runtime` | `run` (the agent turn: `streamText` with step, token and time limits), `model` (OpenAI, Anthropic, key check), `mcp` (one MCP server through the AI SDK MCP client, with its tool filter), `tool-guard` (permission question, one call at a time, result size), `tool-names` (`server__tool` names), `toolbox` (many servers as one tool set), `files` (file tools), `mcp-auth` (headers for a tool server), `secret` (config secret provider), `auth/` (OAuth discovery for setup, and the sign-in session built on the AI SDK's `auth()`) |
 
 ## Development
 
@@ -69,10 +69,8 @@ A consuming application normally:
 
 1. Provides a `SecretPort` and loads agent content with `loadAfm`.
 2. Creates a model with `createOpenAIModel` or `createAnthropicModel` (an AI SDK `LanguageModel`), and tool sources with `mcpServerTools` and `fileToolSource`. A tool source is built with a guard from `createToolGuard(permissionBroker)`, so every tool call asks the broker first, one call at a time. `createToolbox` joins the sources into one tool set and refuses two tools with the same name.
-3. Supplies the conversation (`ModelMessage[]`), the tool set and optional limits to `runAgentTurn`. The loop does not read `max_iterations` from the agent file by itself: pass `loaded.metadata.max_iterations` as `budget.maxIterations` to apply it, otherwise the loop stops after `DEFAULT_MAX_ITERATIONS` (10) steps. A rate limit from the model provider is retried by the AI SDK, up to three times, before any output.
+3. Supplies the conversation (`ModelMessage[]`), the tool set and optional limits to `runAgentTurn`. The loop does not read `max_iterations` from the agent file by itself: pass `loaded.metadata.max_iterations` as `budget.maxIterations` to apply it, otherwise the loop stops after `DEFAULT_MAX_ITERATIONS` (10) steps. A rate limit from the model provider is retried by the AI SDK, up to four times, before any output.
 4. Handles the streamed loop events, cancellation, and application state.
-
-OAuth2 machine grants such as `client_credentials` send the client id and secret in an HTTP Basic header, form-encoded as RFC 6749 section 2.3.1 requires. A token server that does not decode them can receive them in the request body instead: set `credential_bearer: post_body`.
 
 The public exports in each package's `src/index.ts` and the colocated tests describe the available interfaces. The existing browser-oriented planning behavior remains in the engine; separating the application does not add CLI or server interfaces.
 

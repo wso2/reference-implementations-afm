@@ -35,7 +35,7 @@ export interface Plan {
 
 const SUPPORTED_MODEL_PROVIDERS: readonly string[] = ["openai", "anthropic"];
 const SUPPORTED_MODEL_AUTH: readonly string[] = ["api-key", "bearer"];
-const SUPPORTED_TOOL_AUTH: readonly string[] = ["bearer", "basic", "api-key", "oauth2"];
+const SUPPORTED_TOOL_AUTH: readonly string[] = ["bearer", "api-key", "oauth2"];
 
 const warning = (code: string, message: string, path: string): PlanIssue => ({ severity: "warning", code, message, path });
 const blocked = (code: string, message: string, path: string): PlanIssue => ({ severity: "blocked", code, message, path });
@@ -135,8 +135,8 @@ function toolServerIssues(metadata: AgentMetadata): PlanIssue[] {
       return [
         blocked(
           "tool-auth-unsupported",
-          `MCP server '${server.name}' uses ${authentication.type} authentication, which this browser cannot use. ` +
-            "Configure a supported authentication method.",
+          `MCP server '${server.name}' uses ${authentication.type} authentication, which is not supported. ` +
+            "Use an access token, a key in a header, or provider sign-in.",
           path,
         ),
       ];
@@ -246,8 +246,7 @@ function withResolvedValues(declared: AgentMetadata, resolved: AgentMetadata): A
   };
 }
 
-export async function loadAfm(content: string, secrets: SecretPort, options: LoadOptions = {}): Promise<LoadedAfm> {
-  const { forBrowser = false } = options;
+export async function loadAfm(content: string, secrets: SecretPort, { forBrowser = false }: LoadOptions = {}): Promise<LoadedAfm> {
   const parsed = parseAfm(content);
   const declared = validateMetadata(parsed.frontmatter);
   const runnable = forBrowser ? browserRunMetadata(parsed.frontmatter) : parsed.frontmatter;

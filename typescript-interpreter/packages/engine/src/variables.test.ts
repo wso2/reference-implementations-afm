@@ -24,7 +24,6 @@ import {
   referencedSecretNames,
   resolveVariables,
   scanSecretUsage,
-  secretDestination,
   serverAddress,
 } from "./variables";
 
@@ -406,33 +405,7 @@ describe("serverAddress", () => {
   });
 });
 
-describe("secretDestination", () => {
-  const server = "https://docs.example.com/mcp";
-  const token = "https://auth.example.net/oauth/token";
-
-  it("is the server's address for a header credential", () => {
-    expect(secretDestination(server, { type: "bearer", token: "${env:T}" })).toBe(server);
-    expect(secretDestination(server, undefined)).toBe(server);
-  });
-
-  it("is the server's address for an interactive sign-in", () => {
-    expect(secretDestination(server, { type: "oauth2", grant_type: "authorization_code", token_url: token })).toBe(server);
-  });
-
-  it.each(["client_credentials", "password", "refresh_token", "jwt_bearer", "Client_Credentials"])(
-    "is the token url for the %s grant, because that is where its secrets are posted",
-    (grant) => {
-      expect(secretDestination(server, { type: "OAuth2", grant_type: grant, token_url: token })).toBe(token);
-    },
-  );
-
-  it("is undefined when a machine grant has no usable token url", () => {
-    expect(secretDestination(server, { type: "oauth2", grant_type: "client_credentials" })).toBeUndefined();
-    expect(secretDestination(server, { type: "oauth2", grant_type: "client_credentials", token_url: "${env:WHERE}" })).toBeUndefined();
-  });
-});
-
-describe("scanSecretUsage for a machine grant", () => {
+describe("scanSecretUsage for a sign-in block", () => {
   const file = `---
 tools:
   mcp:
@@ -442,10 +415,10 @@ tools:
         url: https://docs.example.com/mcp
         authentication:
           type: oauth2
-          grant_type: client_credentials
+          grant_type: authorization_code
+          authorize_url: https://auth.example.net/authorize
           token_url: https://auth.example.net/oauth/token
-          client_id: me
-          client_secret: \${env:DOCS_SECRET}
+          client_id: \${env:DOCS_CLIENT}
 ---
 
 # Role
@@ -455,8 +428,8 @@ r
 i
 `;
 
-  it("sends the secret to the token url, not to the server", () => {
-    expect(scanSecretUsage(file).find((u) => u.name === "DOCS_SECRET")!.address).toBe("https://auth.example.net/oauth/token");
+  it("ties the secret to the server, whatever token url the block names", () => {
+    expect(scanSecretUsage(file).find((u) => u.name === "DOCS_CLIENT")!.address).toBe("https://docs.example.com/mcp");
   });
 });
 

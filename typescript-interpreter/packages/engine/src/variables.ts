@@ -16,7 +16,6 @@
 
 import { VariableResolutionError } from "./errors";
 import { splitFrontmatter } from "./parse";
-import { postsSecretsToTokenUrl } from "./schema";
 import { asRecord, type SecretPort, type UnknownRecord } from "./types";
 
 const VARIABLE = /\$\{([^}]+)\}/g;
@@ -119,12 +118,6 @@ export function serverAddress(url: unknown): string | undefined {
   }
 }
 
-export function secretDestination(serverUrl: unknown, authentication: unknown): string | undefined {
-  const auth = asRecord(authentication) ?? {};
-  const sentToTokenUrl = typeof auth.type === "string" && auth.type.toLowerCase() === "oauth2" && postsSecretsToTokenUrl(auth.grant_type);
-  return serverAddress(sentToTokenUrl ? auth.token_url : serverUrl);
-}
-
 function readFrontmatter(content: string): UnknownRecord | null {
   try {
     return splitFrontmatter(content).frontmatter;
@@ -177,7 +170,7 @@ function credentialBlocks(frontmatter: UnknownRecord): CredentialBlock[] {
       authentication: transport.authentication,
       origin: {
         scope: "tool",
-        address: secretDestination(transport.url, transport.authentication),
+        address: serverAddress(transport.url),
         serverName: typeof entry.name === "string" ? entry.name : undefined,
       },
       path: ["tools", "mcp", index, "transport", "authentication"],
@@ -226,6 +219,11 @@ function parsedAddress(address: string): URL | null {
   } catch {
     return null;
   }
+}
+
+export function isLoopbackAddress(address: string): boolean {
+  const url = parsedAddress(address);
+  return url !== null && isLoopbackHost(url.hostname);
 }
 
 export function isPlainHttpAddress(address: string): boolean {

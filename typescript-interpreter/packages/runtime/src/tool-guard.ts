@@ -37,11 +37,8 @@ const NEVER_STOPPED = new AbortController().signal;
 
 function clip(content: string): string {
   if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
-  let cut = MAX_TOOL_RESULT_CHARS;
-  const high = content.charCodeAt(cut - 1);
-  const low = content.charCodeAt(cut);
-  if (high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) cut -= 1;
-  return `${content.slice(0, cut)}\n\nThe tool result was cut: only the first ${cut} of ${content.length} characters are shown.`;
+  const head = content.slice(0, MAX_TOOL_RESULT_CHARS).replace(/[\uD800-\uDBFF]$/, "");
+  return `${head}\n\nThe tool result was cut: only the first ${head.length} of ${content.length} characters are shown.`;
 }
 
 interface ToolSpec<INPUT> {

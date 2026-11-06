@@ -14,19 +14,29 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { isInsecureAddress } from "@afm/engine";
+import { auth as authorize, type OAuthClientInformation, type OAuthClientProvider, type OAuthTokens } from "@ai-sdk/mcp";
 import {
-  type AuthorizationCodeConfig,
-  authorizationCodeRefreshKey,
-  type AuthorizationCodeTokens,
-  buildAuthorizeUrl,
-  exchangeCodeForTokens,
-  isExpired,
-  refreshAuthorizationCodeTokens,
-} from "./authorization-code";
-import type { SignInServer } from "./discovery";
-import { generatePkce, isGrantRejected, randomString } from "./utils";
+  advertisedMetadataUrl,
+  type AuthorizationServerMetadata,
+  challengeOf,
+  checkedAuthorizationServer,
+  checkedResource,
+  parseChallengeScope,
+} from "./discovery";
+import { randomString } from "./utils";
 
-const SIGNED_OUT = "You signed out before the sign-in finished - please sign in again.";
+export interface OAuthProviderRef {
+  authorizeUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  scopes?: string[];
+  resource: string;
+}
+
+export interface AuthorizationCodeConfig extends OAuthProviderRef {
+  redirectUri: string;
+}
 
 export interface KeyValueStore {
   get(key: string): string | null;
@@ -34,170 +44,205 @@ export interface KeyValueStore {
   remove(key: string): void;
 }
 
-export interface CompleteSignInOptions {
-  fetchFn?: typeof fetch;
-  iss?: string;
-}
-
 export interface AuthorizationCodeSession {
   hasSession(): boolean;
-  getAccessToken(fetchFn?: typeof fetch): Promise<string | null>;
-  startSignIn(server: SignInServer, redirect: (url: string) => void): Promise<void>;
-  completeSignIn(code: string, state: string, options?: CompleteSignInOptions): Promise<void>;
+  accessToken(): string | null;
+  renew(rejectedToken: string): Promise<boolean>;
+  startSignIn(redirect: (url: string) => void, challenge?: string): Promise<AuthorizationServerMetadata>;
+  completeSignIn(code: string, state: string, iss?: string): Promise<void>;
   declineSignIn(state: string, iss?: string): void;
   signOut(): void;
 }
 
-interface SignedIn {
-  provider: AuthorizationCodeConfig;
-  tokens: AuthorizationCodeTokens;
+const lowerCase = (value: unknown): string => (typeof value === "string" ? value.toLowerCase() : "");
+
+export function isInteractiveOAuth(auth: { type?: unknown; grant_type?: unknown } | undefined): boolean {
+  return lowerCase(auth?.type) === "oauth2" && lowerCase(auth?.grant_type) === "authorization_code";
 }
 
-interface PendingSignIn {
-  verifier: string;
+export function oauthProviderFrom(
+  auth: { authorize_url?: string; token_url?: string; client_id?: string; scopes?: string[] },
+  resource: string,
+): OAuthProviderRef {
+  return { authorizeUrl: auth.authorize_url ?? "", tokenUrl: auth.token_url ?? "", clientId: auth.client_id ?? "", scopes: auth.scopes, resource };
+}
+
+type ProviderIdentity = Pick<OAuthProviderRef, "authorizeUrl" | "tokenUrl" | "clientId" | "resource">;
+
+export function authorizationCodeProviderKey(config: ProviderIdentity): string {
+  return JSON.stringify([config.authorizeUrl, config.tokenUrl, config.clientId, config.resource]);
+}
+
+export function authorizationCodeRefreshKey(config: ProviderIdentity): string {
+  return `afm.oauth.${authorizationCodeProviderKey(config)}.refresh`;
+}
+
+interface Attempt {
   state: string;
-  server: SignInServer;
+  verifier: string;
+  url: string;
+  metadata?: AuthorizationServerMetadata;
 }
 
-function providerFor(config: AuthorizationCodeConfig, server: SignInServer): AuthorizationCodeConfig {
+const SIGNED_OUT = "You signed out before the sign-in finished - please sign in again.";
+const withoutSlash = (url: string): string => url.replace(/\/$/, "");
+
+export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, store: KeyValueStore, fetchFn: typeof fetch): AuthorizationCodeSession {
+  const refreshKey = authorizationCodeRefreshKey(config);
+  const scope = config.scopes?.join(" ");
+  let tokens: OAuthTokens | undefined;
+  let client: OAuthClientInformation | undefined;
+  let current: Attempt | undefined;
+  let pending: Attempt | undefined;
+  let renewing: Promise<boolean> | undefined;
+  let metadataUrl: URL | undefined;
+  let signOuts = 0;
+
+  const secureFetch: typeof fetch = (input, init) =>
+    isInsecureAddress(String(input)) ? Promise.reject(new Error("Sign-in only talks to https:// addresses (http://localhost is allowed).")) : fetchFn(input, init);
+
+  const provider: OAuthClientProvider = {
+    redirectUrl: config.redirectUri,
+    clientMetadata: {
+      client_name: "AFM",
+      redirect_uris: [config.redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    },
+    clientInformation: () => client ?? (config.clientId === "" ? undefined : { client_id: config.clientId }),
+    saveClientInformation: (information) => {
+      client = information;
+    },
+    tokens: () => (current === undefined ? tokens : undefined),
+    saveTokens: async (saved) => {
+      tokens = saved;
+      try {
+        if (saved.refresh_token === undefined) store.remove(refreshKey);
+        else await store.set(refreshKey, saved.refresh_token);
+      } catch {
+        return;
+      }
+    },
+    state: () => current?.state ?? "",
+    saveCodeVerifier: (verifier) => {
+      if (current !== undefined) current.verifier = verifier;
+    },
+    codeVerifier: () => current?.verifier ?? "",
+    validateResourceURL: async (server, resource) => checkedResource(server, resource),
+    validateAuthorizationServerURL: async (_server, authorizationServer) => {
+      if (current !== undefined && current.metadata === undefined) {
+        current.metadata = await checkedAuthorizationServer(String(authorizationServer), secureFetch);
+      }
+    },
+    redirectToAuthorization: (url) => {
+      if (current !== undefined) current.url = url.href;
+    },
+    invalidateCredentials: () => {
+      tokens = undefined;
+    },
+  };
+
+  const run = (extra: { authorizationCode?: string; callbackState?: string } = {}) =>
+    authorize(provider, { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: secureFetch, ...extra });
+
+  function forget(): void {
+    tokens = undefined;
+    store.remove(refreshKey);
+  }
+
+  function takePending(state: string, iss: string | undefined): Attempt {
+    const flow = pending;
+    pending = undefined;
+    if (flow === undefined) throw new Error("No OAuth2 sign-in is waiting for this answer - please sign in again.");
+    if (state !== flow.state) throw new Error("OAuth2 sign-in state mismatch (possible CSRF) - please sign in again.");
+    if (iss !== undefined && withoutSlash(iss) !== withoutSlash(flow.metadata?.issuer ?? "")) {
+      throw new Error("The sign-in response did not come from the expected provider - please sign in again.");
+    }
+    return flow;
+  }
+
+  async function refresh(): Promise<boolean> {
+    const at = signOuts;
+    const renewed = await run().then((result) => result === "AUTHORIZED", () => false);
+    if (signOuts !== at || !renewed) forget();
+    return signOuts === at && renewed;
+  }
+
   return {
-    ...config,
-    authorizeUrl: server.authorizeUrl,
-    tokenUrl: server.tokenUrl,
-    clientId: server.clientId,
-    resource: server.resource,
-    scopes: config.scopes !== undefined && config.scopes.length > 0 ? config.scopes : server.scopes,
+    hasSession: () => tokens !== undefined,
+    accessToken: () => tokens?.access_token ?? null,
+
+    renew(rejectedToken) {
+      if (tokens?.access_token !== rejectedToken) return Promise.resolve(tokens !== undefined);
+      if (tokens.refresh_token === undefined) {
+        forget();
+        return Promise.resolve(false);
+      }
+      renewing ??= refresh().finally(() => {
+        renewing = undefined;
+      });
+      return renewing;
+    },
+
+    async startSignIn(redirect, challenge) {
+      const attempt: Attempt = { state: randomString(16), verifier: "", url: "" };
+      const at = signOuts;
+      client = undefined;
+      metadataUrl = advertisedMetadataUrl(challenge ?? (await challengeOf(config.resource, secureFetch)) ?? "", config.resource);
+      current = attempt;
+      try {
+        await run();
+      } finally {
+        current = undefined;
+      }
+      if (signOuts !== at) throw new Error(SIGNED_OUT);
+      if (attempt.metadata === undefined) throw new Error("The sign-in did not start.");
+      pending = attempt;
+      redirect(attempt.url);
+      return attempt.metadata;
+    },
+
+    async completeSignIn(code, state, iss) {
+      const flow = takePending(state, iss);
+      const at = signOuts;
+      current = flow;
+      try {
+        await run({ authorizationCode: code, callbackState: state });
+      } finally {
+        current = undefined;
+      }
+      if (signOuts !== at) {
+        forget();
+        throw new Error(SIGNED_OUT);
+      }
+    },
+
+    declineSignIn(state, iss) {
+      takePending(state, iss);
+    },
+
+    signOut() {
+      signOuts += 1;
+      pending = undefined;
+      forget();
+    },
   };
 }
 
-function verifyAnswer(flow: PendingSignIn | null, state: string, iss: string | undefined): PendingSignIn {
-  if (flow === null) {
-    throw new Error("No OAuth2 sign-in is waiting for this answer - please sign in again.");
-  }
-  if (state !== flow.state) {
-    throw new Error("OAuth2 sign-in state mismatch (possible CSRF) - please sign in again.");
-  }
-  if (iss === undefined ? flow.server.issuerSent : iss !== flow.server.issuer) {
-    throw new Error("The sign-in response did not come from the expected provider - please sign in again.");
-  }
-  return flow;
-}
+const NO_STORE: KeyValueStore = { get: () => null, set: () => undefined, remove: () => undefined };
 
-class CodeSession implements AuthorizationCodeSession {
-  readonly #config: AuthorizationCodeConfig;
-  readonly #store: KeyValueStore;
-  readonly #refreshKey: string;
-  #current: SignedIn | null = null;
-  #pending: PendingSignIn | null = null;
-  #refreshing: { session: SignedIn; promise: Promise<void> } | null = null;
-  #signOuts = 0;
-  #signIns = 0;
-
-  constructor(config: AuthorizationCodeConfig, store: KeyValueStore) {
-    this.#config = config;
-    this.#store = store;
-    this.#refreshKey = authorizationCodeRefreshKey(config);
-  }
-
-  hasSession(): boolean {
-    return this.#current !== null;
-  }
-
-  async getAccessToken(fetchFn: typeof fetch = fetch): Promise<string | null> {
-    const signedIn = this.#current;
-    if (signedIn === null) return null;
-    const refreshToken = signedIn.tokens.refreshToken;
-    if (isExpired(signedIn.tokens) && refreshToken !== undefined) {
-      await this.#refreshOf(signedIn, refreshToken, fetchFn);
-    }
-    return this.#current?.tokens.accessToken ?? null;
-  }
-
-  async startSignIn(server: SignInServer, redirect: (url: string) => void): Promise<void> {
-    const signOutsAtStart = this.#signOuts;
-    const { verifier, challenge } = await generatePkce();
-    if (this.#signOuts !== signOutsAtStart) throw new Error(SIGNED_OUT);
-    const state = randomString(16);
-    const url = buildAuthorizeUrl(providerFor(this.#config, server), { state, codeChallenge: challenge });
-    this.#pending = { verifier, state, server };
-    redirect(url);
-  }
-
-  async completeSignIn(code: string, state: string, { fetchFn = fetch, iss }: CompleteSignInOptions = {}): Promise<void> {
-    const flow = this.#takePending(state, iss);
-    const provider = providerFor(this.#config, flow.server);
-    const signOutsAtStart = this.#signOuts;
-    const signIn = ++this.#signIns;
-    const tokens = await exchangeCodeForTokens(provider, code, flow.verifier, fetchFn);
-    if (this.#signOuts !== signOutsAtStart) throw new Error(SIGNED_OUT);
-    if (this.#signIns !== signIn) throw new Error("A newer sign-in replaced this one - please sign in again.");
-    this.#current = { provider, tokens };
-    this.#store.remove(this.#refreshKey);
-    await this.#persist();
-  }
-
-  declineSignIn(state: string, iss?: string): void {
-    this.#takePending(state, iss);
-  }
-
-  signOut(): void {
-    this.#signOuts += 1;
-    this.#pending = null;
-    this.#current = null;
-    this.#store.remove(this.#refreshKey);
-  }
-
-  #takePending(state: string, iss: string | undefined): PendingSignIn {
-    const flow = this.#pending;
-    this.#pending = null;
-    return verifyAnswer(flow, state, iss);
-  }
-
-  #refreshOf(signedIn: SignedIn, refreshToken: string, fetchFn: typeof fetch): Promise<void> {
-    if (this.#refreshing?.session === signedIn) return this.#refreshing.promise;
-    const promise = this.#refresh(signedIn, refreshToken, fetchFn).finally(() => {
-      if (this.#refreshing?.promise === promise) this.#refreshing = null;
-    });
-    this.#refreshing = { session: signedIn, promise };
-    return promise;
-  }
-
-  async #persist(): Promise<void> {
-    const refreshToken = this.#current?.tokens.refreshToken;
-    if (refreshToken === undefined) return;
-    const signOutsAtStart = this.#signOuts;
-    await this.#save(refreshToken);
-    if (this.#signOuts !== signOutsAtStart && this.#store.get(this.#refreshKey) === refreshToken) {
-      this.#store.remove(this.#refreshKey);
-    }
-  }
-
-  async #save(refreshToken: string): Promise<void> {
-    try {
-      await this.#store.set(this.#refreshKey, refreshToken);
-    } catch {
-      return;
-    }
-  }
-
-  async #refresh(from: SignedIn, refreshToken: string, fetchFn: typeof fetch): Promise<void> {
-    let tokens: AuthorizationCodeTokens;
-    try {
-      tokens = await refreshAuthorizationCodeTokens(from.provider, refreshToken, fetchFn);
-    } catch (error) {
-      if (!isGrantRejected(error)) throw error;
-      if (this.#current === from) {
-        this.#current = null;
-        this.#store.remove(this.#refreshKey);
-      }
-      return;
-    }
-    if (this.#current !== from) return;
-    this.#current = { provider: from.provider, tokens };
-    await this.#persist();
-  }
-}
-
-export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, persistentStore: KeyValueStore): AuthorizationCodeSession {
-  return new CodeSession(config, persistentStore);
+export async function discoverSignIn(
+  serverUrl: string,
+  { fetchFn, redirectUri }: { fetchFn: typeof fetch; redirectUri: string },
+): Promise<{ metadata: AuthorizationServerMetadata; scopes: string[] | undefined } | null> {
+  const challenge = await challengeOf(serverUrl, fetchFn);
+  if (challenge === null) return null;
+  const scopes = parseChallengeScope(challenge) ?? undefined;
+  const session = createAuthorizationCodeSession({ authorizeUrl: "", tokenUrl: "", clientId: "discovery", redirectUri, resource: serverUrl, scopes }, NO_STORE, fetchFn);
+  let address = "";
+  const metadata = await session.startSignIn((url) => {
+    address = url;
+  }, challenge);
+  return { metadata, scopes: new URL(address).searchParams.get("scope")?.split(" ") };
 }

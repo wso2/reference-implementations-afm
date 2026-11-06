@@ -16,7 +16,7 @@
 
 import { asSchema, type Tool } from "ai";
 import { describe, it, expect } from "vitest";
-import { FILE_TOOL_NAMES, FileToolError, fileToolSource, listFilesText, readFileText, searchFilesText } from "./files";
+import { FILE_TOOL_NAMES, fileToolSource, listFilesText, readFileText, searchFilesText } from "./files";
 import type { ToolOutput } from "./run";
 import { createToolGuard } from "./tool-guard";
 import type { FileInfo } from "./files";
@@ -92,14 +92,6 @@ describe("readFileText", () => {
   it("handles an empty file", () => {
     const empty = filesMap([{ name: "e.txt", path: "e.txt", text: "" }]);
     expect(readFileText("e.txt", empty)).toBe("(empty file)");
-  });
-
-  it("throws FileToolError instances specifically", () => {
-    expect(() => readFileText("missing.md", files)).toThrow(FileToolError);
-  });
-
-  it("names its errors, so a log line says where they came from", () => {
-    expect(() => readFileText("missing.md", files)).toThrow(expect.objectContaining({ name: "FileToolError" }));
   });
 });
 

@@ -21,9 +21,9 @@ export type {
 } from "./types";
 export { parseAfm, splitFrontmatter, frontmatterEndOffset } from "./parse";
 export type { ParsedAfm, FrontmatterSplit } from "./parse";
-export { validateMetadata, agentMetadataSchema, isOAuth2MachineGrant } from "./schema";
-export type { AgentMetadata, ClientAuthentication, JsonSchemaData, OAuth2MachineGrant } from "./schema";
-export { resolveVariables, scanSecretUsage, referencedSecretNames, serverAddress, secretDestination, isInsecureAddress } from "./variables";
+export { validateMetadata, agentMetadataSchema } from "./schema";
+export type { AgentMetadata, ClientAuthentication, JsonSchemaData } from "./schema";
+export { resolveVariables, scanSecretUsage, referencedSecretNames, serverAddress, isInsecureAddress, isLoopbackAddress } from "./variables";
 export type { SecretUsage, SecretScope } from "./variables";
 export { planForBrowser, loadAfm, buildSystemPrompt } from "./load";
 export type { Plan, PlanIssue, PlanSeverity, LoadedAfm, LoadOptions } from "./load";

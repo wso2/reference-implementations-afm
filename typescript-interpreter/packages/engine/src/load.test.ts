@@ -105,7 +105,7 @@ describe("planForBrowser", () => {
 
     const oauth = planForBrowser(
       validateMetadata({
-        model: { authentication: { type: "OAuth2", grant_type: "client_credentials", token_url: "https://t", client_id: "i", client_secret: "s" } },
+        model: { authentication: { type: "OAuth2", grant_type: "authorization_code", authorize_url: "https://a", token_url: "https://t", client_id: "i" } },
       }),
     );
     expect(oauth.runnable).toBe(false);
@@ -158,7 +158,6 @@ describe("planForBrowser", () => {
 
     it.each([
       ["bearer", bearer],
-      ["basic", { type: "basic", username: "u", password: "p" }],
       ["api-key", { type: "api-key", api_key: "k", header_name: "X-Api-Key" }],
       ["oauth2", { type: "oauth2", grant_type: "authorization_code", authorize_url: "https://a/authorize", token_url: "https://a/token", client_id: "c" }],
     ])("is blocked when it carries %s credentials", (_label, authentication) => {
@@ -220,6 +219,13 @@ describe("planForBrowser", () => {
       const variables = { authorize_url: "${env:AUTH}", token_url: "http://${env:HOST}/token" };
       expect(planForBrowser(server("https://mcp.example.com/mcp", { ...oauth, ...https })).issues).toEqual([]);
       expect(planForBrowser(server("https://mcp.example.com/mcp", { ...oauth, ...variables })).issues).toEqual([]);
+    });
+
+    it("blocks username and password (basic) authentication, saying what to use instead", () => {
+      const plan = planForBrowser(server("https://mcp.example.com/mcp", { type: "basic", username: "u", password: "p" }));
+      expect(plan.runnable).toBe(false);
+      expect(plan.issues).toEqual([expect.objectContaining({ severity: "blocked", code: "tool-auth-unsupported" })]);
+      expect(plan.issues[0]?.message).toMatch(/basic authentication, which is not supported.*access token.*provider sign-in/);
     });
 
     it("keeps reporting an authentication type the browser cannot use, ahead of the transport", () => {
@@ -496,13 +502,12 @@ describe.each(["${env:KEY}", '"${env:KEY}"', "'${env:KEY}'"])("a secret written 
 describe("a key's value in an error message", () => {
   const SECRET = "SECRET-VALUE-123";
   const FIELDS = [
-    "type", "token", "username", "password", "api_key", "header_name", "issuer", "audience", "signing_key", "algorithm", "key_id",
-    "subject", "expiry_seconds", "grant_type", "authorize_url", "token_url", "client_id", "client_secret", "refresh_token", "assertion",
-    "scopes", "credential_bearer",
+    "type", "token", "api_key", "header_name", "issuer", "audience", "signing_key", "algorithm", "key_id",
+    "subject", "expiry_seconds", "grant_type", "authorize_url", "token_url", "client_id", "scopes",
   ];
   const BLOCKS = [
     ["type: bearer", "token: t"],
-    ["type: oauth2", "grant_type: client_credentials", "token_url: https://a.example/t", "client_id: i", "client_secret: s"],
+    ["type: oauth2", "grant_type: authorization_code", "authorize_url: https://a.example/a", "token_url: https://a.example/t", "client_id: i"],
     ["type: jwt", "issuer: i", "signing_key: k", "algorithm: HS256"],
   ];
 

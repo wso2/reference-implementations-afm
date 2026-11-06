@@ -14,9 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { isOAuth2MachineGrant } from "@afm/engine";
 import type { ClientAuthentication } from "@afm/engine";
-import { base64, createOAuth2MachineClient, oauth2MachineConfig, oauthProviderFrom } from "./auth";
+import { oauthProviderFrom } from "./auth";
 import type { OAuthProviderRef } from "./auth";
 
 export class McpAuthError extends Error {
@@ -26,12 +25,13 @@ export class McpAuthError extends Error {
   }
 }
 
-export type McpAuthHeaderProvider = (() => Promise<Record<string, string>>) & { invalidate?: () => void };
+export type McpAuthHeaderProvider = (() => Promise<Record<string, string>>) & {
+  renew?: (rejected: Record<string, string>) => Promise<boolean>;
+};
 
 export interface McpDynamicAuthDeps {
   getInteractiveToken?: (provider: OAuthProviderRef) => Promise<string>;
-  fetchFn?: typeof fetch;
-  onInteractiveAuthRejected?: (provider: OAuthProviderRef) => void;
+  renewInteractiveToken?: (provider: OAuthProviderRef, rejectedToken: string) => Promise<boolean>;
 }
 
 const bearerHeader = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
@@ -48,12 +48,6 @@ export function mcpAuthHeaders(auth: ClientAuthentication): Record<string, strin
       }
       return bearerHeader(auth.token);
 
-    case "basic":
-      if (!auth.username || !auth.password) {
-        throw new McpAuthError("basic authentication requires 'username' and 'password' fields");
-      }
-      return { Authorization: `Basic ${base64(`${auth.username}:${auth.password}`)}` };
-
     case "api-key":
       if (!auth.api_key) {
         throw new McpAuthError("api-key authentication requires an 'api_key' field");
@@ -68,36 +62,19 @@ export function mcpAuthHeaders(auth: ClientAuthentication): Record<string, strin
   }
 }
 
-function interactiveHeaderProvider(auth: ClientAuthentication, deps: McpDynamicAuthDeps, resource?: string): McpAuthHeaderProvider {
-  const { getInteractiveToken } = deps;
-  if (getInteractiveToken === undefined) {
+export function createDynamicMcpAuthHeaderProvider(
+  auth: ClientAuthentication,
+  { getInteractiveToken, renewInteractiveToken }: McpDynamicAuthDeps,
+  resource: string,
+): McpAuthHeaderProvider {
+  if (!isDynamicAuthType(auth) || auth.grant_type?.toLowerCase() !== "authorization_code") {
+    throw new McpAuthError("only oauth2 with grant_type 'authorization_code' is a dynamic authentication");
+  }
+  if (getInteractiveToken === undefined || renewInteractiveToken === undefined) {
     throw new McpAuthError("oauth2 grant_type 'authorization_code' requires an interactive sign-in, which isn't available in this context");
   }
   const provider = oauthProviderFrom(auth, resource);
   return Object.assign(async () => bearerHeader(await getInteractiveToken(provider)), {
-    invalidate: () => deps.onInteractiveAuthRejected?.(provider),
+    renew: (rejected: Record<string, string>) => renewInteractiveToken(provider, rejected.Authorization?.replace("Bearer ", "") ?? ""),
   });
-}
-
-function machineHeaderProvider(auth: ClientAuthentication, deps: McpDynamicAuthDeps, grant: string): McpAuthHeaderProvider {
-  if (!isOAuth2MachineGrant(grant)) {
-    throw new McpAuthError(`Unsupported oauth2 grant_type: '${auth.grant_type}'`);
-  }
-  const client = createOAuth2MachineClient(oauth2MachineConfig(grant, auth));
-  return Object.assign(async () => bearerHeader(await client.getAccessToken(deps.fetchFn)), { invalidate: () => client.invalidate() });
-}
-
-export function createDynamicMcpAuthHeaderProvider(
-  auth: ClientAuthentication,
-  deps: McpDynamicAuthDeps = {},
-  resource?: string,
-): McpAuthHeaderProvider {
-  if (!isDynamicAuthType(auth)) {
-    throw new McpAuthError(`'${auth.type}' authentication is not a dynamic auth type`);
-  }
-  const grant = auth.grant_type?.toLowerCase();
-  if (grant === undefined) {
-    throw new McpAuthError("oauth2 authentication requires a 'grant_type' field");
-  }
-  return grant === "authorization_code" ? interactiveHeaderProvider(auth, deps, resource) : machineHeaderProvider(auth, deps, grant);
 }

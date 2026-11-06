@@ -17,7 +17,7 @@
 import { MockLanguageModelV3 } from "ai/test";
 import { simulateReadableStream, streamText } from "ai";
 import { describe, expect, it } from "vitest";
-import { checkModelKey, completeText, createAnthropicModel, createOpenAIModel } from "./model";
+import { checkModelKey, completeText, createModel } from "./model";
 
 describe("checkModelKey", () => {
   const answering = (status: number) => (async () => new Response("{}", { status })) as typeof fetch;
@@ -66,7 +66,7 @@ describe("the models", () => {
       seen = { url, headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> };
       return new Response("{}", { status: 400 });
     }) as unknown as typeof fetch;
-    const model = createOpenAIModel({ apiKey: "sk-test", fetch: spy });
+    const model = createModel("openai", { apiKey: "sk-test", fetch: spy });
     await streamText({ model, prompt: "hi", maxRetries: 0, onError: () => {} }).consumeStream();
     expect(seen?.url).toMatch(/^https:\/\/api\.openai\.com\//);
     expect(seen?.body.store).toBe(false);
@@ -80,12 +80,19 @@ describe("the models", () => {
       seen = { url, headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> };
       return new Response("{}", { status: 400 });
     }) as unknown as typeof fetch;
-    const model = createAnthropicModel({ apiKey: "ak-test", model: "claude-test", fetch: spy });
+    const model = createModel("anthropic", { apiKey: "ak-test", model: "claude-test", fetch: spy });
     await streamText({ model, prompt: "hi", maxRetries: 0, onError: () => {} }).consumeStream();
     expect(seen?.url).toMatch(/^https:\/\/api\.anthropic\.com\//);
     expect(seen?.headers.get("anthropic-dangerous-direct-browser-access")).toBe("true");
     expect(seen?.headers.get("x-api-key")).toBe("ak-test");
     expect(seen?.body.model).toBe("claude-test");
+  });
+});
+
+describe("an unknown provider", () => {
+  it.each(["gemini", "constructor", "__proto__", ""])("is refused for %j, naming the ones that work", async (provider) => {
+    expect(() => createModel(provider, { apiKey: "k" })).toThrow(/Unsupported model provider .*Use openai or anthropic/);
+    await expect(checkModelKey(provider, "k", (async () => new Response("{}")) as typeof fetch)).rejects.toThrow(/Unsupported model provider/);
   });
 });
 

@@ -316,13 +316,6 @@ describe("an MCP server that is called", () => {
     ).rejects.toBeTruthy();
   });
 
-  it("sends basic auth as a correctly base64-encoded Authorization header", async () => {
-    const expected = `Basic ${Buffer.from("alice:hunter2").toString("base64")}`;
-    server = await startTestMcpServer({ name: "authorization", value: expected });
-    const tools = await source({ url: server.url, headers: mcpAuthHeaders({ type: "basic", username: "alice", password: "hunter2" }) }).tools();
-    expect(await execute(tools, "t__whoami")).toEqual({ ok: true, content: expected });
-  });
-
   it("sends api-key auth on a custom header name", async () => {
     server = await startTestMcpServer({ name: "x-api-key", value: "k-123" });
     const tools = await source({ url: server.url, headers: mcpAuthHeaders({ type: "api-key", api_key: "k-123", header_name: "X-Api-Key" }) }).tools();
@@ -334,57 +327,57 @@ describe("an MCP server that is called", () => {
     expect(await names({ url: server.url })).toContain("t__whoami");
   });
 
-  it("calls onAuthRejected, and tells the provider to drop its token, when the server answers 401", async () => {
-    server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-    const onAuthRejected = vi.fn();
-    const invalidate = vi.fn();
-    const authHeaderProvider = Object.assign(async () => ({ Authorization: "Bearer revoked-token" }), { invalidate });
-    await expect(source({ url: server.url, authHeaderProvider, onAuthRejected }).tools()).rejects.toBeTruthy();
-    expect(onAuthRejected).toHaveBeenCalled();
-    expect(invalidate).toHaveBeenCalled();
-  });
+  describe("when the server answers 401", () => {
+    const provider = (token: () => string, renew: (rejected: Record<string, string>) => Promise<boolean>) =>
+      Object.assign(async () => ({ Authorization: `Bearer ${token()}` }), { renew });
 
-  it("does not call onAuthRejected, or drop the token, while the server accepts it", async () => {
-    server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-    const onAuthRejected = vi.fn();
-    const invalidate = vi.fn();
-    const authHeaderProvider = Object.assign(async () => ({ Authorization: "Bearer good-token" }), { invalidate });
-    expect(await names({ url: server.url, authHeaderProvider, onAuthRejected })).toContain("t__whoami");
-    expect(onAuthRejected).not.toHaveBeenCalled();
-    expect(invalidate).not.toHaveBeenCalled();
-  });
+    it("asks the provider to renew the token it sent, and gives up with the 401 when it cannot", async () => {
+      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
+      const renew = vi.fn(async () => false);
+      await expect(source({ url: server.url, authHeaderProvider: provider(() => "revoked-token", renew) }).tools()).rejects.toBeTruthy();
+      expect(renew).toHaveBeenCalledWith({ Authorization: "Bearer revoked-token" });
+    });
 
-  it("replaces a machine token the server has revoked, so the next try works", async () => {
-    server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-    let issued = 0;
-    const tokenFetch = (async () => {
-      issued += 1;
-      return Response.json({ access_token: issued === 1 ? "revoked-token" : "good-token", expires_in: 3600 });
-    }) as unknown as typeof fetch;
-    const authHeaderProvider = createDynamicMcpAuthHeaderProvider(
-      { type: "oauth2", grant_type: "client_credentials", token_url: "https://auth.example.com/token", client_id: "id", client_secret: "secret" },
-      { fetchFn: tokenFetch },
-    );
-    const toolSource = source({ url: server.url, authHeaderProvider });
-    await expect(toolSource.tools()).rejects.toBeTruthy();
-    expect(Object.keys(await toolSource.tools())).toContain("t__whoami");
-    expect(issued).toBe(2);
-  });
+    it("repeats the request once with the renewed token, so the call succeeds", async () => {
+      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
+      let token = "revoked-token";
+      const renew = vi.fn(async () => {
+        token = "good-token";
+        return true;
+      });
+      expect(await names({ url: server.url, authHeaderProvider: provider(() => token, renew) })).toContain("t__whoami");
+      expect(renew).toHaveBeenCalledWith({ Authorization: "Bearer revoked-token" });
+    });
 
-  it("tells the app when the server rejects an interactive sign-in token, and stays quiet when it accepts it", async () => {
-    server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-    const onInteractiveAuthRejected = vi.fn();
-    const provider = (token: string) =>
-      createDynamicMcpAuthHeaderProvider(
+    it("gives up with the 401 instead of looping when the renewed token is turned down too", async () => {
+      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
+      const renew = vi.fn(async () => true);
+      await expect(source({ url: server.url, authHeaderProvider: provider(() => "revoked-token", renew) }).tools()).rejects.toBeTruthy();
+      expect(renew).toHaveBeenCalled();
+    });
+
+    it("does not ask for a renewal while the server accepts the token", async () => {
+      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
+      const renew = vi.fn(async () => true);
+      expect(await names({ url: server.url, authHeaderProvider: provider(() => "good-token", renew) })).toContain("t__whoami");
+      expect(renew).not.toHaveBeenCalled();
+    });
+
+    it("renews an interactive sign-in through the app, naming the provider", async () => {
+      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
+      let token = "revoked-token";
+      const renewInteractiveToken = vi.fn(async () => {
+        token = "good-token";
+        return true;
+      });
+      const authHeaderProvider = createDynamicMcpAuthHeaderProvider(
         { type: "oauth2", grant_type: "authorization_code", authorize_url: "https://a.example.com/authorize", token_url: "https://a.example.com/token", client_id: "c" },
-        { getInteractiveToken: async () => token, onInteractiveAuthRejected },
-        server!.url,
+        { getInteractiveToken: async () => token, renewInteractiveToken },
+        server.url,
       );
-    await expect(source({ url: server.url, authHeaderProvider: provider("revoked-token") }).tools()).rejects.toBeTruthy();
-    expect(onInteractiveAuthRejected).toHaveBeenCalledWith(expect.objectContaining({ clientId: "c", resource: server.url }));
-    onInteractiveAuthRejected.mockClear();
-    expect(await names({ url: server.url, authHeaderProvider: provider("good-token") })).toContain("t__whoami");
-    expect(onInteractiveAuthRejected).not.toHaveBeenCalled();
+      expect(await names({ url: server.url, authHeaderProvider })).toContain("t__whoami");
+      expect(renewInteractiveToken).toHaveBeenCalledWith(expect.objectContaining({ clientId: "c", resource: server.url }), "revoked-token");
+    });
   });
 
   it.each([

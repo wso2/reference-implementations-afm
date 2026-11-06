@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 import { AfmValidationError } from "./errors";
-import { isOAuth2MachineGrant, jsonSchema, validateMetadata } from "./schema";
+import { jsonSchema, validateMetadata } from "./schema";
 
 describe("validateMetadata", () => {
   it("reads a number written as text once its variable is resolved", () => {
@@ -169,51 +169,28 @@ describe("validateMetadata: authentication", () => {
         ).toThrow(/oauth2 'grant_type' is not supported/);
       });
 
-      it("requires client_credentials' fields", () => {
+      it("requires the authorization_code fields", () => {
         expect(() =>
-          validateMetadata({
-            model: { authentication: { type: "oauth2", grant_type: "client_credentials" } },
-          }),
-        ).toThrow(/requires 'token_url', 'client_id', 'client_secret'/);
+          validateMetadata({ model: { authentication: { type: "oauth2", grant_type: "authorization_code" } } }),
+        ).toThrow(/requires 'authorize_url', 'token_url', 'client_id'/);
       });
 
-      it("accepts a complete client_credentials block", () => {
-        const md = validateMetadata({
-          model: {
-            authentication: {
-              type: "oauth2",
-              grant_type: "client_credentials",
-              token_url: "https://auth.example.com/token",
-              client_id: "${env:CLIENT_ID}",
-              client_secret: "${env:CLIENT_SECRET}",
-              scopes: ["read", "write"],
-            },
-          },
-        });
-        expect(md.model?.authentication?.type).toBe("oauth2");
+      it.each(["client_credentials", "password", "refresh_token", "jwt_bearer"])("refuses the %s grant", (grant) => {
+        expect(() => validateMetadata({ model: { authentication: { type: "oauth2", grant_type: grant } } })).toThrow(
+          /oauth2 'grant_type' is not supported. Supported grant types: authorization_code/,
+        );
       });
 
-      it("jwt_bearer does not require client_id/client_secret", () => {
-        const md = validateMetadata({
-          model: {
-            authentication: {
-              type: "oauth2",
-              grant_type: "jwt_bearer",
-              token_url: "https://auth.example.com/token",
-              assertion: "${env:SIGNED_ASSERTION}",
-            },
-          },
-        });
-        expect(md.model?.authentication?.type).toBe("oauth2");
-      });
-
-      it.each([
-        ["a field the grant doesn't support (e.g. refresh_token on client_credentials)", { refresh_token: "r" }, /does not support 'refresh_token'/],
-        ["an invalid credential_bearer value", { credential_bearer: "query_param" }, /oauth2 'credential_bearer' is not supported/],
-      ])("rejects %s", (_label, extra, message) => {
-        const base = { type: "oauth2", grant_type: "client_credentials", token_url: "https://auth.example.com/token", client_id: "i", client_secret: "s" };
-        const authentication = { ...base, ...extra };
-        expect(() => validateMetadata({ model: { authentication } })).toThrow(message);
+      it("rejects a field the grant doesn't support", () => {
+        const authentication = {
+          type: "oauth2",
+          grant_type: "authorization_code",
+          authorize_url: "https://auth.example.com/authorize",
+          token_url: "https://auth.example.com/token",
+          client_id: "i",
+          client_secret: "s",
+        };
+        expect(() => validateMetadata({ model: { authentication } })).toThrow(/does not support 'client_secret'/);
       });
 
       it.each([["constructor"], ["__proto__"], ["toString"], ["hasOwnProperty"]])("rejects the grant_type %s as unsupported, not with a crash", (grant) => {
@@ -239,7 +216,7 @@ describe("validateMetadata: authentication", () => {
       });
 
       it("accepts a sign-in address that is still a variable", () => {
-        const authentication = { type: "oauth2", grant_type: "client_credentials", token_url: "${env:TOKEN_URL}", client_id: "i", client_secret: "s" };
+        const authentication = { type: "oauth2", grant_type: "authorization_code", authorize_url: "${env:AUTHORIZE_URL}", token_url: "${env:TOKEN_URL}", client_id: "i" };
         expect(() => validateMetadata({ model: { authentication } })).not.toThrow();
       });
 
@@ -273,16 +250,6 @@ describe("validateMetadata: authentication", () => {
         ).toThrow(/requires 'authorize_url'/);
       });
     });
-  });
-});
-
-describe("isOAuth2MachineGrant", () => {
-  it.each(["client_credentials", "password", "refresh_token", "jwt_bearer"])("accepts %s", (grant) => {
-    expect(isOAuth2MachineGrant(grant)).toBe(true);
-  });
-
-  it.each(["authorization_code", "", "constructor", "CLIENT_CREDENTIALS", "implicit"])("refuses %s", (grant) => {
-    expect(isOAuth2MachineGrant(grant)).toBe(false);
   });
 });
 

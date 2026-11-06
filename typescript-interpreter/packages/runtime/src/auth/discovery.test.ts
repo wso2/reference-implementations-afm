@@ -15,63 +15,30 @@
 // under the License.
 
 import { describe, expect, it } from "vitest";
-import type { OAuthProviderRef } from "./authorization-code";
 import {
+  advertisedMetadataUrl,
+  challengeOf,
+  checkedAuthorizationServer,
+  checkedResource,
   discoverAuthorizationServer,
-  discoverProtectedResource,
-  discoverSignIn,
-  discoverSignInServer,
   parseChallengeScope,
-  parseResourceMetadataUrl,
   registerClient,
   resolveClientId,
   SignInRefusedError,
 } from "./discovery";
-import { config } from "./test-support";
 
 const LINEAR_CHALLENGE =
   'Bearer realm="OAuth", resource_metadata="https://mcp.linear.app/.well-known/oauth-protected-resource/mcp", ' +
   'error="invalid_token", error_description="Missing or invalid access token"';
-const LINEAR_PRM = {
-  resource: "https://mcp.linear.app/mcp",
-  authorization_servers: ["https://mcp.linear.app"],
-  scopes_supported: ["read", "write"],
-  bearer_methods_supported: ["header"],
-};
-const EXAMPLE_PRM = { ...LINEAR_PRM, resource: "https://mcp.example.com/mcp" };
 const LINEAR_AS_METADATA = {
   issuer: "https://mcp.linear.app",
   authorization_endpoint: "https://mcp.linear.app/authorize",
   token_endpoint: "https://mcp.linear.app/token",
+  response_types_supported: ["code"],
   code_challenge_methods_supported: ["S256"],
   registration_endpoint: "https://mcp.linear.app/register",
   client_id_metadata_document_supported: true,
 };
-
-describe("parseResourceMetadataUrl", () => {
-  it("reads resource_metadata out of a real WWW-Authenticate challenge", () => {
-    expect(parseResourceMetadataUrl(LINEAR_CHALLENGE)).toBe(
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp",
-    );
-  });
-
-  it("is null when the header has no resource_metadata param", () => {
-    expect(parseResourceMetadataUrl('Bearer realm="OAuth"')).toBeNull();
-  });
-
-  it("reads the parameter name in any letter case", () => {
-    expect(parseResourceMetadataUrl('Bearer Resource_Metadata="https://x/prm"')).toBe("https://x/prm");
-  });
-
-  it("does not take the value of a longer parameter name that ends the same way", () => {
-    const challenge = 'Bearer my_resource_metadata="https://evil.example/p", resource_metadata="https://ok.example/p"';
-    expect(parseResourceMetadataUrl(challenge)).toBe("https://ok.example/p");
-  });
-
-  it("finds it when it comes first, right after the scheme", () => {
-    expect(parseResourceMetadataUrl('Bearer resource_metadata="https://x/prm", scope="a"')).toBe("https://x/prm");
-  });
-});
 
 describe("parseChallengeScope", () => {
   it("reads a scope hint when the server sends one", () => {
@@ -124,134 +91,60 @@ function routedFetch(routes: Record<string, { status: number; headers?: Record<s
   return { fn, requested };
 }
 
-describe("discoverProtectedResource", () => {
-  it("returns null when the server answers without a 401 - no auth needed", async () => {
-    const { fn } = routedFetch({ "https://mcp.example.com/mcp": { status: 200, json: {} } });
-    expect(await discoverProtectedResource("https://mcp.example.com/mcp", fn)).toBeNull();
+describe("challengeOf", () => {
+  it("is null when the server answers without a 401 - no sign-in is asked for", async () => {
+    const { fn } = routedFetch({ "https://mcp.linear.app/mcp": { status: 200 } });
+    expect(await challengeOf("https://mcp.linear.app/mcp", fn)).toBeNull();
   });
 
-  it("returns null when the probe fails outright (network/CORS) rather than throwing", async () => {
-    const fn = (async () => {
-      throw new Error("network error");
+  it("is null when the request fails outright (network or CORS) rather than throwing", async () => {
+    const offline = (async () => {
+      throw new TypeError("Failed to fetch");
     }) as unknown as typeof fetch;
-    expect(await discoverProtectedResource("https://mcp.example.com/mcp", fn)).toBeNull();
+    expect(await challengeOf("https://mcp.linear.app/mcp", offline)).toBeNull();
   });
 
-  it("on a 401 with resource_metadata in WWW-Authenticate, fetches exactly that URL - Linear's real shape", async () => {
-    const { fn, requested } = routedFetch({
-      "https://mcp.linear.app/mcp": { status: 401, headers: { "www-authenticate": LINEAR_CHALLENGE } },
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp": { status: 200, json: LINEAR_PRM },
-    });
-    const result = await discoverProtectedResource("https://mcp.linear.app/mcp", fn);
-    expect(result?.metadata).toEqual(LINEAR_PRM);
-    expect(result?.challengeScope).toBeNull();
-    expect(requested).toEqual([
-      "https://mcp.linear.app/mcp",
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp",
-    ]);
+  it("gives the challenge a 401 carries", async () => {
+    const { fn } = routedFetch({ "https://mcp.linear.app/mcp": { status: 401, headers: { "www-authenticate": LINEAR_CHALLENGE } } });
+    expect(await challengeOf("https://mcp.linear.app/mcp", fn)).toBe(LINEAR_CHALLENGE);
   });
 
-  it("carries the challenge's scope hint through when the server sends one", async () => {
-    const { fn } = routedFetch({
-      "https://mcp.example.com/mcp": {
-        status: 401,
-        headers: {
-          "www-authenticate":
-            'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp", scope="files:read"',
-        },
-      },
-      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp": { status: 200, json: EXAMPLE_PRM },
-    });
-    const result = await discoverProtectedResource("https://mcp.example.com/mcp", fn);
-    expect(result?.challengeScope).toEqual(["files:read"]);
-  });
-
-  it("falls back to the well-known paths, server path then root, when the 401 has no header at all", async () => {
-    const { fn, requested } = routedFetch({
-      "https://mcp.example.com/mcp": { status: 401 },
-      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp": { status: 404 },
-      "https://mcp.example.com/.well-known/oauth-protected-resource": { status: 200, json: EXAMPLE_PRM },
-    });
-    const result = await discoverProtectedResource("https://mcp.example.com/mcp", fn);
-    expect(result?.metadata).toEqual(EXAMPLE_PRM);
-    expect(requested).toEqual([
-      "https://mcp.example.com/mcp",
-      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
-      "https://mcp.example.com/.well-known/oauth-protected-resource",
-    ]);
-  });
-
-  it("refuses a server that publishes no resource metadata, and says to use its current address", async () => {
-    const { fn } = routedFetch({ "https://mcp.example.com/mcp": { status: 401 } });
-    const refusal = discoverProtectedResource("https://mcp.example.com/mcp", fn);
-    await expect(refusal).rejects.toBeInstanceOf(SignInRefusedError);
-    await expect(refusal).rejects.toThrow(/publishes no sign-in metadata.*current one/);
-  });
-
-  it("rejects a metadata document with no authorization_servers", async () => {
-    const { fn } = routedFetch({
-      "https://mcp.example.com/mcp": {
-        status: 401,
-        headers: { "www-authenticate": 'Bearer resource_metadata="https://mcp.example.com/prm"' },
-      },
-      "https://mcp.example.com/prm": { status: 200, json: { resource: "https://mcp.example.com/mcp" } },
-    });
-    await expect(discoverProtectedResource("https://mcp.example.com/mcp", fn)).rejects.toThrow(/publishes no sign-in metadata/);
+  it("gives an empty challenge when a 401 carries none", async () => {
+    const { fn } = routedFetch({ "https://mcp.linear.app/mcp": { status: 401 } });
+    expect(await challengeOf("https://mcp.linear.app/mcp", fn)).toBe("");
   });
 });
 
-describe("the metadata address a challenge advertises", () => {
-  const server = "https://mcp.example.com/mcp";
-  const wellKnown = "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
-  const document = { resource: server, authorization_servers: ["https://auth.example.com"] };
-  const challenge = (address: string) => ({ "www-authenticate": `Bearer resource_metadata="${address}"` });
+describe("advertisedMetadataUrl", () => {
+  const server = "https://mcp.linear.app/mcp";
 
   it.each([
-    ["a plain http address on another host", "http://192.168.1.1/admin"],
-    ["a plain http address on a lookalike host", "http://mcp.example.com.evil.com/prm"],
-    ["a plain http address on the same host", "http://mcp.example.com/prm"],
-    ["something that is not an address", "not a url"],
-    ["a path with no host", "/prm"],
-  ])("is not fetched when it is %s, and the standard address is used instead", async (_label, advertised) => {
-    const { fn, requested } = routedFetch({
-      [server]: { status: 401, headers: challenge(advertised) },
-      [wellKnown]: { status: 200, json: document },
-    });
-    const result = await discoverProtectedResource(server, fn);
-    expect(result?.metadata).toEqual(document);
-    expect(requested).toEqual([server, wellKnown]);
+    ["Linear's real challenge", LINEAR_CHALLENGE, "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp"],
+    ["the parameter name in any letter case", 'Bearer Resource_Metadata="https://mcp.linear.app/prm"', "https://mcp.linear.app/prm"],
+    ["the parameter right after the scheme", 'Bearer resource_metadata="https://mcp.linear.app/prm", realm="x"', "https://mcp.linear.app/prm"],
+  ])("gives the address in %s", (_label, challenge, expected) => {
+    expect(advertisedMetadataUrl(challenge, server)).toEqual(new URL(expected));
   });
 
-  it("is fetched when it is https, even on another host", async () => {
-    const { fn, requested } = routedFetch({
-      [server]: { status: 401, headers: challenge("https://meta.example.com/prm") },
-      "https://meta.example.com/prm": { status: 200, json: document },
-    });
-    const result = await discoverProtectedResource(server, fn);
-    expect(result?.metadata).toEqual(document);
-    expect(requested).toEqual([server, "https://meta.example.com/prm"]);
-  });
-
-  it("is fetched over plain http when the server itself is at that origin", async () => {
-    const local = "http://localhost:3000/mcp";
-    const { fn, requested } = routedFetch({
-      [local]: { status: 401, headers: challenge("http://localhost:3000/custom/metadata") },
-      "http://localhost:3000/custom/metadata": { status: 200, json: { resource: local, authorization_servers: ["https://auth.example.com"] } },
-    });
-    const result = await discoverProtectedResource(local, fn);
-    expect(result?.metadata.authorization_servers).toEqual(["https://auth.example.com"]);
-    expect(requested).toEqual([local, "http://localhost:3000/custom/metadata"]);
+  it.each([
+    ["no challenge", ""],
+    ["a challenge without the parameter", 'Bearer realm="OAuth"'],
+    ["a longer parameter name that ends the same way", 'Bearer xresource_metadata="https://mcp.linear.app/prm"'],
+    ["an address on another host", 'Bearer resource_metadata="https://evil.example/prm"'],
+    ["an address on a lookalike host", 'Bearer resource_metadata="https://mcp.linear.app.evil.example/prm"'],
+    ["the same host over plain http", 'Bearer resource_metadata="http://mcp.linear.app/prm"'],
+    ["something that is not an address", 'Bearer resource_metadata="not an address"'],
+    ["a path with no host", 'Bearer resource_metadata="/prm"'],
+  ])("ignores %s, so the standard address is used instead", (_label, challenge) => {
+    expect(advertisedMetadataUrl(challenge, server)).toBeUndefined();
   });
 });
 
-describe("the server a resource document names", () => {
-  async function discoverNaming(serverUrl: string, resource: string) {
-    const { fn } = routedFetch({
-      [serverUrl]: { status: 401, headers: { "www-authenticate": 'Bearer resource_metadata="https://meta.example.com/prm"' } },
-      "https://meta.example.com/prm": { status: 200, json: { ...LINEAR_PRM, resource } },
-    });
-    return discoverProtectedResource(serverUrl, fn);
-  }
+describe("the resource a server's sign-in data names", () => {
+  it("is refused, saying to use the current address, when the server publishes none", () => {
+    expect(() => checkedResource("https://mcp.example.com/mcp", undefined)).toThrow(/publishes no sign-in metadata.*current one/);
+    expect(() => checkedResource("https://mcp.example.com/mcp", undefined)).toThrow(SignInRefusedError);
+  });
 
   it.each([
     ["the server's own address", "https://mcp.example.com/team/mcp", "https://mcp.example.com/team/mcp"],
@@ -260,8 +153,8 @@ describe("the server a resource document names", () => {
     ["the bare origin", "https://mcp.example.com/team/mcp", "https://mcp.example.com"],
     ["the origin with its slash", "https://mcp.example.com/team/mcp", "https://mcp.example.com/"],
     ["a parent path on a non-default port", "https://mcp.example.com:8443/team/mcp", "https://mcp.example.com:8443/team"],
-  ])("accepts %s", async (_label, serverUrl, resource) => {
-    expect(await discoverNaming(serverUrl, resource)).not.toBeNull();
+  ])("accepts %s", (_label, serverUrl, resource) => {
+    expect(checkedResource(serverUrl, resource)).toEqual(new URL(resource));
   });
 
   it.each([
@@ -275,120 +168,20 @@ describe("the server a resource document names", () => {
     ["a resource with a fragment", "https://mcp.example.com/team/mcp", "https://mcp.example.com/team#x"],
     ["a path that only matches once decoded", "https://mcp.example.com/team/mcp", "https://mcp.example.com/%74eam"],
     ["something that is not a URL", "https://mcp.example.com/team/mcp", "not a url"],
-  ])("refuses %s", async (_label, serverUrl, resource) => {
-    await expect(discoverNaming(serverUrl, resource)).rejects.toThrow(/does not name this server/);
-  });
-
-  it("moves on to the next well-known address when the first one names another server", async () => {
-    const { fn } = routedFetch({
-      "https://mcp.example.com/mcp": { status: 401 },
-      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp": { status: 200, json: LINEAR_PRM },
-      "https://mcp.example.com/.well-known/oauth-protected-resource": { status: 200, json: EXAMPLE_PRM },
-    });
-    expect((await discoverProtectedResource("https://mcp.example.com/mcp", fn))?.metadata).toEqual(EXAMPLE_PRM);
+  ])("refuses %s", (_label, serverUrl, resource) => {
+    expect(() => checkedResource(serverUrl, resource)).toThrow(/does not name this server/);
   });
 });
 
-describe("discoverSignIn", () => {
-  const LINEAR_ROUTES = {
-    "https://mcp.linear.app/mcp": { status: 401, headers: { "www-authenticate": LINEAR_CHALLENGE } },
-    "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp": { status: 200, json: LINEAR_PRM },
-    "https://mcp.linear.app/.well-known/oauth-authorization-server": { status: 200, json: LINEAR_AS_METADATA },
-  };
-
-  it("finds the checked authorization server and the scopes the resource lists - Linear's real shape", async () => {
-    const { fn } = routedFetch(LINEAR_ROUTES);
-    expect(await discoverSignIn("https://mcp.linear.app/mcp", fn)).toEqual({
-      metadata: LINEAR_AS_METADATA,
-      scopes: ["read", "write"],
-      challengeScope: null,
-      resource: "https://mcp.linear.app/mcp",
-    });
+describe("checkedAuthorizationServer", () => {
+  it("gives the metadata of an authorization server that passes the checks", async () => {
+    const { fn } = routedFetch({ "https://mcp.linear.app/.well-known/oauth-authorization-server": { status: 200, json: LINEAR_AS_METADATA } });
+    expect(await checkedAuthorizationServer("https://mcp.linear.app", fn)).toEqual(LINEAR_AS_METADATA);
   });
 
-  describe("when the resource document names several authorization servers", () => {
-    const routesFor = (issuers: string[]) => ({
-      ...LINEAR_ROUTES,
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp": { status: 200, json: { ...LINEAR_PRM, authorization_servers: issuers } },
-    });
-
-    it("uses the first one that passes the checks, whatever happened to those before it", async () => {
-      const { fn } = routedFetch(routesFor(["https://down.example", "http://plain.example", "https://mcp.linear.app"]));
-      expect((await discoverSignIn("https://mcp.linear.app/mcp", fn))?.metadata).toEqual(LINEAR_AS_METADATA);
-    });
-
-    it("refuses when none of them passes", async () => {
-      const { fn } = routedFetch(routesFor(["https://down.example", "http://plain.example"]));
-      await expect(discoverSignIn("https://mcp.linear.app/mcp", fn)).rejects.toThrow(/authorization server publishes no metadata/);
-    });
-
-    it("looks at no more than five, so a long list cannot make it ask for ever", async () => {
-      const six = [...Array.from({ length: 5 }, (_, i) => `https://down${i}.example`), "https://mcp.linear.app"];
-      const { fn, requested } = routedFetch(routesFor(six));
-      await expect(discoverSignIn("https://mcp.linear.app/mcp", fn)).rejects.toThrow(/authorization server publishes no metadata/);
-      expect(requested.some((url) => url.startsWith("https://mcp.linear.app/.well-known/oauth-authorization-server"))).toBe(false);
-    });
-  });
-
-  it("gives the resource the document names exactly as written, even when that is a parent of the server's address", async () => {
-    const { fn } = routedFetch({
-      ...LINEAR_ROUTES,
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp": { status: 200, json: { ...LINEAR_PRM, resource: "https://mcp.linear.app" } },
-    });
-    expect((await discoverSignIn("https://mcp.linear.app/mcp", fn))?.resource).toBe("https://mcp.linear.app");
-  });
-
-  it("prefers the scopes the 401 asked for", async () => {
-    const { fn } = routedFetch({
-      ...LINEAR_ROUTES,
-      "https://mcp.linear.app/mcp": { status: 401, headers: { "www-authenticate": `${LINEAR_CHALLENGE}, scope="files:read"` } },
-    });
-    expect((await discoverSignIn("https://mcp.linear.app/mcp", fn))?.scopes).toEqual(["files:read"]);
-  });
-
-  it("passes on whether the server sends an issuer with its answers", async () => {
-    const sends = { ...LINEAR_AS_METADATA, authorization_response_iss_parameter_supported: true };
-    const { fn } = routedFetch({ ...LINEAR_ROUTES, "https://mcp.linear.app/.well-known/oauth-authorization-server": { status: 200, json: sends } });
-    expect((await discoverSignIn("https://mcp.linear.app/mcp", fn))?.metadata.authorization_response_iss_parameter_supported).toBe(true);
-  });
-
-  it("refuses a server that publishes no resource metadata, whatever its own address offers", async () => {
-    const { fn, requested } = routedFetch({
-      "https://mcp.atlassian.com/v1/mcp": { status: 401 },
-      "https://mcp.atlassian.com/.well-known/oauth-authorization-server": { status: 200, json: { ...LINEAR_AS_METADATA, issuer: "https://mcp.atlassian.com" } },
-    });
-    await expect(discoverSignIn("https://mcp.atlassian.com/v1/mcp", fn)).rejects.toThrow(/publishes no sign-in metadata/);
-    expect(requested).not.toContain("https://mcp.atlassian.com/.well-known/oauth-authorization-server");
-  });
-
-  it("refuses a resource document that names another server, without asking its authorization server", async () => {
-    const { fn, requested } = routedFetch({
-      ...LINEAR_ROUTES,
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp": { status: 200, json: { ...LINEAR_PRM, resource: "https://other.example.com/mcp" } },
-    });
-    await expect(discoverSignIn("https://mcp.linear.app/mcp", fn)).rejects.toThrow(/does not name this server/);
-    expect(requested).not.toContain("https://mcp.linear.app/.well-known/oauth-authorization-server");
-  });
-
-  it("refuses an authorization server whose document does not pass the checks", async () => {
-    const { fn } = routedFetch({
-      ...LINEAR_ROUTES,
-      "https://mcp.linear.app/.well-known/oauth-authorization-server": { status: 200, json: { ...LINEAR_AS_METADATA, issuer: "https://attacker.example" } },
-    });
-    await expect(discoverSignIn("https://mcp.linear.app/mcp", fn)).rejects.toThrow(/authorization server publishes no metadata that passes the checks/);
-  });
-
-  it("refuses an authorization server that is not a URL", async () => {
-    const { fn } = routedFetch({
-      ...LINEAR_ROUTES,
-      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp": { status: 200, json: { ...LINEAR_PRM, authorization_servers: ["not a url"] } },
-    });
-    await expect(discoverSignIn("https://mcp.linear.app/mcp", fn)).rejects.toBeInstanceOf(SignInRefusedError);
-  });
-
-  it("finds nothing to sign in to when the server answers without a 401", async () => {
-    const { fn } = routedFetch({ "https://mcp.linear.app/mcp": { status: 200, json: {} } });
-    expect(await discoverSignIn("https://mcp.linear.app/mcp", fn)).toBeNull();
+  it("refuses one that does not, saying which checks it failed", async () => {
+    const { fn } = routedFetch({});
+    await expect(checkedAuthorizationServer("https://mcp.linear.app", fn)).rejects.toThrow(/publishes no metadata that passes the checks/);
   });
 });
 
@@ -416,6 +209,13 @@ describe("discoverAuthorizationServer", () => {
   ])("rejects a document whose %s is not an https address", async (_label, changed) => {
     const { fn } = routedFetch({
       "https://mcp.linear.app/.well-known/oauth-authorization-server": { status: 200, json: { ...LINEAR_AS_METADATA, ...changed } },
+    });
+    expect(await discoverAuthorizationServer("https://mcp.linear.app", fn)).toBeNull();
+  });
+
+  it.each([[undefined], [[]], [["token"]]])("rejects a document whose response types are %j, because the code flow needs `code`", async (types) => {
+    const { fn } = routedFetch({
+      "https://mcp.linear.app/.well-known/oauth-authorization-server": { status: 200, json: { ...LINEAR_AS_METADATA, response_types_supported: types } },
     });
     expect(await discoverAuthorizationServer("https://mcp.linear.app", fn)).toBeNull();
   });
@@ -597,128 +397,5 @@ describe("resolveClientId", () => {
   it("gives an empty id when the registration is refused", async () => {
     const { fn } = fakeFetch(400, { error: "invalid_client_metadata" });
     expect(await resolveClientId({ registration_endpoint: "https://as.example/register" }, undefined, REDIRECT, fn)).toBe("");
-  });
-});
-
-describe("discoverSignInServer", () => {
-  const MCP = "https://mcp.example.com/mcp";
-  const CIMD = "https://afm.example.com/oauth/client-metadata.json";
-  const published = {
-    issuer: "https://auth.example.com",
-    authorization_endpoint: config.authorizeUrl,
-    token_endpoint: config.tokenUrl,
-    code_challenge_methods_supported: ["S256"],
-    registration_endpoint: "https://auth.example.com/register",
-  };
-  const provider: OAuthProviderRef = { authorizeUrl: config.authorizeUrl, tokenUrl: config.tokenUrl, clientId: config.clientId, resource: MCP };
-
-  function serverFetch(as: Record<string, unknown> | null = published, resource: string = MCP) {
-    const requested: string[] = [];
-    const routes: Record<string, { status?: number; json?: unknown; headers?: Record<string, string> }> = {
-      [MCP]: { status: 401, headers: { "www-authenticate": 'Bearer resource_metadata="https://mcp.example.com/prm"' } },
-      "https://mcp.example.com/prm": { json: { resource, authorization_servers: ["https://auth.example.com"] } },
-      "https://auth.example.com/register": { status: 201, json: { client_id: "registered" } },
-      ...(as === null ? {} : { "https://auth.example.com/.well-known/oauth-authorization-server": { json: as } }),
-    };
-    const fn = (async (input: string) => {
-      requested.push(String(input));
-      const route = routes[String(input)];
-      return route === undefined ? new Response("", { status: 404 }) : Response.json(route.json ?? {}, { status: route.status ?? 200, headers: route.headers });
-    }) as unknown as typeof fetch;
-    return { fn, requested };
-  }
-
-  const discover = (fn: typeof fetch, from = provider, cimdClientId?: string) =>
-    discoverSignInServer(from, { fetchFn: fn, redirectUri: config.redirectUri, cimdClientId });
-
-  it("takes the endpoints and the issuer from what the server publishes, not from the file", async () => {
-    const fromFile = { ...provider, authorizeUrl: "https://attacker.example/authorize", tokenUrl: "https://attacker.example/token" };
-    const found = await discover(serverFetch().fn, fromFile);
-    expect(found).toMatchObject({ authorizeUrl: config.authorizeUrl, tokenUrl: config.tokenUrl, issuer: "https://auth.example.com" });
-  });
-
-  it("carries the scope the server asked for in its challenge, and nothing broader", async () => {
-    const { fn } = serverFetch();
-    const asking = (async (input: string, init?: RequestInit) =>
-      String(input) === MCP
-        ? Response.json({}, { status: 401, headers: { "www-authenticate": 'Bearer resource_metadata="https://mcp.example.com/prm", scope="files:read"' } })
-        : fn(input, init)) as unknown as typeof fetch;
-    expect((await discover(asking)).scopes).toEqual(["files:read"]);
-    expect((await discover(fn)).scopes).toBeUndefined();
-  });
-
-  it("takes the resource from what the server publishes, as written, even when it is a parent of the server's address", async () => {
-    expect((await discover(serverFetch(published, "https://mcp.example.com").fn)).resource).toBe("https://mcp.example.com");
-    expect((await discover(serverFetch().fn)).resource).toBe(MCP);
-  });
-
-  it("keeps the file's client id for the authorization server it was set up with, registering nothing", async () => {
-    const { fn, requested } = serverFetch();
-    expect((await discover(fn)).clientId).toBe(config.clientId);
-    expect(requested).not.toContain("https://auth.example.com/register");
-  });
-
-  it("compares the endpoints as normalised URLs", async () => {
-    const found = await discover(serverFetch({ ...published, token_endpoint: "https://auth.example.com:443/oauth2/token" }).fn);
-    expect(found.clientId).toBe(config.clientId);
-  });
-
-  it("registers a client when the file has none", async () => {
-    expect((await discover(serverFetch().fn, { ...provider, clientId: "" })).clientId).toBe("registered");
-  });
-
-  describe("when the server uses a different authorization server than the file was set up with", () => {
-    const moved = { ...provider, authorizeUrl: "https://old-auth.example.com/authorize", tokenUrl: "https://old-auth.example.com/token" };
-
-    it("does not reuse the file's client id: it registers a new one", async () => {
-      const { fn, requested } = serverFetch();
-      expect((await discover(fn, moved)).clientId).toBe("registered");
-      expect(requested).toContain("https://auth.example.com/register");
-    });
-
-    it("uses the client id document, when the server accepts one, registering nothing", async () => {
-      const { fn, requested } = serverFetch({ ...published, client_id_metadata_document_supported: true });
-      expect((await discover(fn, moved, CIMD)).clientId).toBe(CIMD);
-      expect(requested).not.toContain("https://auth.example.com/register");
-    });
-
-    it("refuses when no client id can be had, so the user is asked for one", async () => {
-      const { registration_endpoint: _omitted, ...noRegistration } = published;
-      await expect(discover(serverFetch(noRegistration).fn, moved)).rejects.toThrow(/client ID/);
-    });
-  });
-
-  it.each([
-    ["sends one", true, true],
-    ["does not say it sends one", undefined, false],
-    ["says it does not send one", false, false],
-  ])("notes whether the server %s", async (_label, flag, sent) => {
-    const found = await discover(serverFetch({ ...published, authorization_response_iss_parameter_supported: flag }).fn);
-    expect(found.issuerSent).toBe(sent);
-  });
-
-  it("refuses a server that publishes no resource document, so no sign-in starts", async () => {
-    const { fn, requested } = serverFetch();
-    const bare = (async (input: string, init?: RequestInit) =>
-      String(input) === "https://mcp.example.com/prm" ? new Response("", { status: 404 }) : fn(input, init)) as unknown as typeof fetch;
-    await expect(discover(bare)).rejects.toThrow(/publishes no sign-in metadata.*current one/);
-    expect(requested).not.toContain("https://auth.example.com/register");
-  });
-
-  it("refuses a server whose resource document names another server", async () => {
-    await expect(discover(serverFetch(published, "https://other.example.com/mcp").fn)).rejects.toThrow(/does not name this server/);
-  });
-
-  it("refuses a server whose authorization server does not pass the checks", async () => {
-    await expect(discover(serverFetch({ ...published, issuer: "https://attacker.example" }).fn)).rejects.toThrow(/authorization server publishes no metadata/);
-  });
-
-  it("refuses a server that does not ask for a sign-in", async () => {
-    const open = (async () => Response.json({}, { status: 200 })) as unknown as typeof fetch;
-    await expect(discover(open)).rejects.toThrow(/did not ask for a sign-in/);
-  });
-
-  it("refuses a file that names no server address", async () => {
-    await expect(discover(serverFetch().fn, { ...provider, resource: undefined })).rejects.toThrow(/did not ask for a sign-in/);
   });
 });
