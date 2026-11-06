@@ -32,7 +32,7 @@ export interface OAuth2MachineConfig {
   credentialBearer?: "auth_header" | "post_body";
 }
 
-export interface OAuth2MachineClient {
+interface OAuth2MachineClient {
   getAccessToken(fetchFn?: typeof fetch): Promise<string>;
   invalidate(): void;
 }

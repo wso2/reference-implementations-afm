@@ -14,10 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { ModelPort } from "@afm/engine";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamingModelPort } from "./stream";
+import { defaultSettingsMiddleware, type LanguageModel, streamText, wrapLanguageModel } from "ai";
 
 export interface ModelOptions {
   apiKey: string;
@@ -25,18 +24,15 @@ export interface ModelOptions {
   fetch?: typeof fetch;
 }
 
-export function createOpenAIModel(options: ModelOptions): ModelPort {
-  const provider = createOpenAI({ apiKey: options.apiKey, fetch: options.fetch });
-  return streamingModelPort(provider(options.model ?? "gpt-4o"), { openai: { store: false } });
+export function createOpenAIModel({ apiKey, model = "gpt-4o", fetch }: ModelOptions): LanguageModel {
+  return wrapLanguageModel({
+    model: createOpenAI({ apiKey, fetch })(model),
+    middleware: defaultSettingsMiddleware({ settings: { providerOptions: { openai: { store: false } } } }),
+  });
 }
 
-export function createAnthropicModel(options: ModelOptions): ModelPort {
-  const provider = createAnthropic({
-    apiKey: options.apiKey,
-    headers: { "anthropic-dangerous-direct-browser-access": "true" },
-    fetch: options.fetch,
-  });
-  return streamingModelPort(provider(options.model ?? "claude-sonnet-4-5"));
+export function createAnthropicModel({ apiKey, model = "claude-sonnet-4-5", fetch }: ModelOptions): LanguageModel {
+  return createAnthropic({ apiKey, fetch, headers: { "anthropic-dangerous-direct-browser-access": "true" } })(model);
 }
 
 export type KeyCheck = { ok: true } | { ok: false; status: number | null };
@@ -71,4 +67,13 @@ export async function checkModelKey(
   } catch (error) {
     return { ok: false, status: error instanceof DOMException && error.name === "TimeoutError" ? REQUEST_TIMEOUT : null };
   }
+}
+
+export async function completeText(model: LanguageModel, prompt: string): Promise<string> {
+  let text = "";
+  for await (const part of streamText({ model, prompt, onError: () => {} }).fullStream) {
+    if (part.type === "text-delta") text += part.text;
+    if (part.type === "error") throw part.error;
+  }
+  return text;
 }

@@ -15,21 +15,9 @@
 // under the License.
 
 export type {
-  ModelPort,
-  ModelRequest,
-  ModelEvent,
-  FinishReason,
-  ToolPort,
-  ToolDescriptor,
-  ToolCall,
-  ToolResult,
-  ToolResultMedia,
   SecretPort,
   SecretRef,
   SecretResolution,
-  ChatMessage,
-  ContentPart,
-  JsonSchema,
 } from "./types";
 export { parseAfm, splitFrontmatter, frontmatterEndOffset } from "./parse";
 export type { ParsedAfm, FrontmatterSplit } from "./parse";
@@ -39,6 +27,4 @@ export { resolveVariables, scanSecretUsage, referencedSecretNames, serverAddress
 export type { SecretUsage, SecretScope } from "./variables";
 export { planForBrowser, loadAfm, buildSystemPrompt } from "./load";
 export type { Plan, PlanIssue, PlanSeverity, LoadedAfm, LoadOptions } from "./load";
-export { runAgentTurn, allowAllPermissions, DEFAULT_MAX_ITERATIONS } from "./loop";
-export type { LoopEvent, TurnFinishReason, AgentTurnInput, PermissionBroker, Budget } from "./loop";
 export { AfmParseError, AfmValidationError, VariableResolutionError, describeError } from "./errors";

@@ -32,52 +32,6 @@ importers:
         specifier: ^5.0.3
         version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@26.0.1)(vite@8.1.6(@types/node@26.0.1)(esbuild@0.28.2)(tsx@4.22.4)(yaml@2.9.0))
 
-  packages/adapters/auth:
-    dependencies:
-      '@afm/engine':
-        specifier: workspace:*
-        version: link:../../engine
-
-  packages/adapters/model:
-    dependencies:
-      '@afm/engine':
-        specifier: workspace:*
-        version: link:../../engine
-      '@ai-sdk/anthropic':
-        specifier: ^3.0.122
-        version: 3.0.122(zod@4.6.7)
-      '@ai-sdk/openai':
-        specifier: ^3.0.118
-        version: 3.0.118(zod@4.6.7)
-      ai:
-        specifier: ^6.0.291
-        version: 6.0.291(zod@4.6.7)
-
-  packages/adapters/secret:
-    dependencies:
-      '@afm/engine':
-        specifier: workspace:*
-        version: link:../../engine
-
-  packages/adapters/tool:
-    dependencies:
-      '@afm/adapter-auth':
-        specifier: workspace:*
-        version: link:../auth
-      '@afm/engine':
-        specifier: workspace:*
-        version: link:../../engine
-      '@cfworker/json-schema':
-        specifier: ^4.1.1
-        version: 4.1.1
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.32.0
-        version: 1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7)
-    devDependencies:
-      '@types/node':
-        specifier: ^26.0.1
-        version: 26.0.1
-
   packages/engine:
     dependencies:
       yaml:
@@ -86,6 +40,37 @@ importers:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+
+  packages/runtime:
+    dependencies:
+      '@afm/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@ai-sdk/anthropic':
+        specifier: ^3.0.122
+        version: 3.0.122(zod@4.6.7)
+      '@ai-sdk/mcp':
+        specifier: ^1.0.101
+        version: 1.0.101(zod@4.6.7)
+      '@ai-sdk/openai':
+        specifier: ^3.0.118
+        version: 3.0.118(zod@4.6.7)
+      '@cfworker/json-schema':
+        specifier: ^4.1.1
+        version: 4.1.1
+      ai:
+        specifier: ^6.0.291
+        version: 6.0.291(zod@4.6.7)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.0
+        version: 1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7)
+      '@types/node':
+        specifier: ^26.0.1
+        version: 26.0.1
 
 packages:
 
@@ -97,6 +82,12 @@ packages:
 
   '@ai-sdk/gateway@3.0.201':
     resolution: {integrity: sha512-kbnt9E213FCVXJVyjRZDxxbTwANYIzKZ16eIGTGjsDeC4FlBDpiYx7miZFQ6Yym6DFekAXfZHshthYXjFf44HA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/mcp@1.0.101':
+    resolution: {integrity: sha512-5fWugyyOk6mLLnc0NWV9QHE9hWNREE4oXRCU1eG9N8zOCrpRr77wSHoNrLrLp20NMuYhGNZXy7XDEfN+jDufEg==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -113,8 +104,18 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
+  '@ai-sdk/provider-utils@4.0.64':
+    resolution: {integrity: sha512-NQp/xAFHZbnWLHNjm8EjwUILgEpURsQnE416aO/PS3XrZ/PGfghEcXEcHXkXmIvB5Jem/9SPQxXnm/0wu7Emsg==}
+    engines: {node: '>=18.17'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/provider@3.0.17':
     resolution: {integrity: sha512-ijb+g+XxIAmv46hpt73ty83LhQHwwsqA1IwVX6p1MAREyX0zGM9eIrz1m3KlFxTHr8E4k/ao01w6Dlx3UBOihQ==}
+    engines: {node: '>=18'}
+
+  '@ai-sdk/provider@3.0.19':
+    resolution: {integrity: sha512-5lWq7zSfRaU5ylDESn3sDQjgGl2AI1vjZKO/6JY3aFW70ct4zcP1kN+ZUYOuTXr28fVsYbyu2YFhddLdIgQFZQ==}
     engines: {node: '>=18'}
 
   '@cfworker/json-schema@4.1.1':
@@ -1112,6 +1113,14 @@ snapshots:
       '@vercel/oidc': 3.2.0
       zod: 4.6.7
 
+  '@ai-sdk/mcp@1.0.101(zod@4.6.7)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.19
+      '@ai-sdk/provider-utils': 4.0.64(zod@4.6.7)
+      cross-spawn: 7.0.6
+      pkce-challenge: 5.0.1
+      zod: 4.6.7
+
   '@ai-sdk/openai@3.0.118(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 3.0.17
@@ -1126,7 +1135,19 @@ snapshots:
       undici: 6.29.1
       zod: 4.6.7
 
+  '@ai-sdk/provider-utils@4.0.64(zod@4.6.7)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.19
+      '@standard-schema/spec': 1.1.0
+      eventsource-parser: 3.1.0
+      undici: 6.29.1
+      zod: 4.6.7
+
   '@ai-sdk/provider@3.0.17':
+    dependencies:
+      json-schema: 0.4.0
+
+  '@ai-sdk/provider@3.0.19':
     dependencies:
       json-schema: 0.4.0
 

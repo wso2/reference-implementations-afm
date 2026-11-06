@@ -17,7 +17,7 @@
 import type { OAuthProviderRef } from "./authorization-code";
 import { isHttpsUrl, sameUrl } from "./utils";
 
-export interface ProtectedResourceMetadata {
+interface ProtectedResourceMetadata {
   resource: string;
   authorization_servers: string[];
   scopes_supported?: string[];
@@ -97,7 +97,7 @@ export class SignInRefusedError extends Error {
   }
 }
 
-export interface ProtectedResourceDiscovery {
+interface ProtectedResourceDiscovery {
   metadata: ProtectedResourceMetadata;
   challengeScope: string[] | null;
 }
@@ -175,7 +175,7 @@ export async function discoverAuthorizationServer(issuerUrl: string, fetchFn: ty
   return null;
 }
 
-export interface SignInDiscovery {
+interface SignInDiscovery {
   metadata: AuthorizationServerMetadata;
   scopes: string[] | undefined;
   challengeScope: string[] | null;

@@ -1,8 +1,8 @@
 {
-  "name": "@afm/adapter-model",
+  "name": "@afm/runtime",
   "version": "0.0.0",
   "private": true,
-  "description": "OpenAI and Anthropic model adapters for the AFM engine.",
+  "description": "Runs AFM agents on the Vercel AI SDK: model, tools, file tools and sign-in.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -14,7 +14,14 @@
   "dependencies": {
     "@afm/engine": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.122",
+    "@ai-sdk/mcp": "^1.0.101",
     "@ai-sdk/openai": "^3.0.118",
-    "ai": "^6.0.291"
+    "@cfworker/json-schema": "^4.1.1",
+    "ai": "^6.0.291",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@types/node": "^26.0.1"
   }
 }

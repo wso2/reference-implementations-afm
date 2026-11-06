@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, it, expect } from "vitest";
-import { configSecretPort } from "./index";
+import { configSecretPort } from "./secret";
 import type { SecretRef } from "@afm/engine";
 
 const ref = (name: string): SecretRef => ({ prefix: "env", name, raw: `\${env:${name}}` });

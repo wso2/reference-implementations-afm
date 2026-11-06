@@ -2,29 +2,23 @@
 
 TypeScript packages for parsing and running [Agent-Flavored Markdown (AFM)](https://wso2.github.io/agent-flavored-markdown/) agents.
 
-The engine handles parsing, validation, variable resolution, browser-oriented setup planning, and streamed agent turns. Adapters connect it to model providers, authentication, secrets, and tools. The consuming application supplies the user interface and runtime integration; this workspace does not include a web application or an MCP relay.
+The engine reads an agent file: parsing, validation, variable resolution and browser-oriented setup planning. The runtime runs the agent on the [Vercel AI SDK](https://ai-sdk.dev): the streamed agent turn, model providers, MCP tools, file tools, secrets and OAuth sign-in. The consuming application supplies the user interface and runtime integration; this workspace does not include a web application or an MCP relay.
 
 ## Packages
 
 | Package | Directory | Purpose |
 |---|---|---|
-| `@afm/engine` | `packages/engine` | Agent parsing, validation, setup planning, and execution |
-| `@afm/adapter-auth` | `packages/adapters/auth` | MCP OAuth discovery, grants, and token handling |
-| `@afm/adapter-model` | `packages/adapters/model` | OpenAI and Anthropic model adapters |
-| `@afm/adapter-secret` | `packages/adapters/secret` | A config secret provider |
-| `@afm/adapter-tool` | `packages/adapters/tool` | MCP HTTP tools, file tools, filtering, and namespacing |
+| `@afm/engine` | `packages/engine` | Agent file parsing, validation, variables and setup planning |
+| `@afm/runtime` | `packages/runtime` | The agent turn, models, MCP and file tools, secrets and OAuth sign-in, on the AI SDK |
 
 ## Architecture
 
-Dependencies point one way: the adapters depend on the engine, and `@afm/adapter-tool` also depends on `@afm/adapter-auth`. The engine depends on no adapter. Each module has one job, and each test file sits beside the module it covers.
+The runtime depends on the engine. The engine depends on neither the runtime nor the AI SDK. Each module has one job, and each test file sits beside the module it covers.
 
 | Package | Modules |
 |---|---|
-| `@afm/engine` | `parse` (frontmatter, role, instructions), `schema` (agent metadata, authentication), `variables` (variable resolution, secret usage, address checks), `load` (`loadAfm` and the browser plan), `loop` (the agent turn), `errors` (error classes, rate limits), `types` (ports, messages, record guards) |
-| `@afm/adapter-auth` | `discovery` (RFC 9728 and 8414 discovery, sign-in server), `authorization-code` (provider, authorize URL, token exchange), `session`, `machine-grants`, `utils` (encoding, address checks, token requests) |
-| `@afm/adapter-model` | `providers` (OpenAI, Anthropic, key check), `convert` (messages, tools, events), `stream` (streaming, continuation cache) |
-| `@afm/adapter-tool` | `mcp` (HTTP port, result mapping), `mcp-auth`, `files`, `tool-ports` (composite, filtered, in-page and namespaced ports) |
-| `@afm/adapter-secret` | the config secret provider |
+| `@afm/engine` | `parse` (frontmatter, role, instructions), `schema` (agent metadata, authentication), `variables` (variable resolution, secret usage, address checks), `load` (`loadAfm` and the browser plan), `errors` (error classes), `types` (secret port, record guards) |
+| `@afm/runtime` | `run` (the agent turn: `streamText` with step, token and time limits), `model` (OpenAI, Anthropic, key check), `mcp` (one MCP server through the AI SDK MCP client, with its tool filter), `tool-guard` (permission question, one call at a time, result size), `tool-names` (`server__tool` names), `toolbox` (many servers as one tool set), `files` (file tools), `mcp-auth` (headers for a tool server), `secret` (config secret provider), `auth/` (OAuth discovery, sign-in session, machine grants) |
 
 ## Development
 
@@ -67,15 +61,15 @@ docker run --rm -it afm-typescript-interpreter:dev bash
 
 ## Using the packages
 
-The packages are private workspace packages and are not published to npm. Their entry points export TypeScript source, so consumers need tooling that supports TypeScript and the browser/Web APIs used by the selected adapters.
+The packages are private workspace packages and are not published to npm. Their entry points export TypeScript source, so consumers need tooling that supports TypeScript and the browser/Web APIs the runtime uses.
 
-Within this workspace, packages use `workspace:*` dependencies. Separate consumers must explicitly resolve the required packages and their internal dependencies; copying only one adapter is not sufficient.
+Within this workspace, packages use `workspace:*` dependencies. Separate consumers must resolve both packages: the runtime needs the engine.
 
 A consuming application normally:
 
 1. Provides a `SecretPort` and loads agent content with `loadAfm`.
-2. Creates model and tool adapters from the loaded configuration. A model port remembers the provider's own state between the turns of one conversation, so each conversation gets its own model port.
-3. Supplies conversation messages, a permission broker, and optional execution budgets to `runAgentTurn`. The loop does not read `max_iterations` from the agent file by itself: pass `loaded.metadata.max_iterations` as `budget.maxIterations` to apply it, otherwise the loop stops after `DEFAULT_MAX_ITERATIONS` (10) iterations.
+2. Creates a model with `createOpenAIModel` or `createAnthropicModel` (an AI SDK `LanguageModel`), and tool sources with `mcpServerTools` and `fileToolSource`. A tool source is built with a guard from `createToolGuard(permissionBroker)`, so every tool call asks the broker first, one call at a time. `createToolbox` joins the sources into one tool set and refuses two tools with the same name.
+3. Supplies the conversation (`ModelMessage[]`), the tool set and optional limits to `runAgentTurn`. The loop does not read `max_iterations` from the agent file by itself: pass `loaded.metadata.max_iterations` as `budget.maxIterations` to apply it, otherwise the loop stops after `DEFAULT_MAX_ITERATIONS` (10) steps. A rate limit from the model provider is retried by the AI SDK, up to three times, before any output.
 4. Handles the streamed loop events, cancellation, and application state.
 
 OAuth2 machine grants such as `client_credentials` send the client id and secret in an HTTP Basic header, form-encoded as RFC 6749 section 2.3.1 requires. A token server that does not decode them can receive them in the request body instead: set `credential_bearer: post_body`.
@@ -85,8 +79,8 @@ The public exports in each package's `src/index.ts` and the colocated tests desc
 ## Security responsibilities
 
 - Keep credentials out of source control, logs, and generated error messages.
-- The MCP adapter does not send credentials (headers, API keys, tokens) to an `http://` address, whether the server or the proxy, unless the address is `localhost`, `127.x.x.x` or `[::1]`; the browser plan reports such a server as blocked. A server with no credentials is not affected. The agent file schema still accepts `http://` addresses, as the specification does.
-- Supply an appropriate `PermissionBroker`; `allowAllPermissions` explicitly approves every tool call and is not a substitute for a permission policy.
+- The MCP client does not send credentials (headers, API keys, tokens) to an `http://` address, whether the server or the proxy, unless the address is `localhost`, `127.x.x.x` or `[::1]`; the browser plan reports such a server as blocked. A server with no credentials is not affected. The agent file schema still accepts `http://` addresses, as the specification does.
+- Supply an appropriate `PermissionBroker`. It decides every tool call; the runtime has no "allow all" broker.
 - Enforce application-level policies for secret destinations, network access, storage, and user consent in the consuming runtime.
 - Decide where the sign-in refresh token is kept. A session holds its access token in memory and writes the refresh token to the store you pass in; it does not read the token back by itself, so after a reload the person signs in again.
 - Preserve cancellation and execution budgets when integrating the agent loop.

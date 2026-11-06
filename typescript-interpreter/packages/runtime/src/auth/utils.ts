@@ -85,7 +85,7 @@ export interface TokenPayload {
   expires_in?: unknown;
 }
 
-export class TokenRequestError extends Error {
+class TokenRequestError extends Error {
   readonly status: number;
   readonly code?: string;
 

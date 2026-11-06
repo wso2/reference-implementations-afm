@@ -16,8 +16,8 @@
 
 import { isOAuth2MachineGrant } from "@afm/engine";
 import type { ClientAuthentication } from "@afm/engine";
-import { base64, createOAuth2MachineClient, oauth2MachineConfig, oauthProviderFrom } from "@afm/adapter-auth";
-import type { OAuthProviderRef } from "@afm/adapter-auth";
+import { base64, createOAuth2MachineClient, oauth2MachineConfig, oauthProviderFrom } from "./auth";
+import type { OAuthProviderRef } from "./auth";
 
 export class McpAuthError extends Error {
   constructor(message: string) {

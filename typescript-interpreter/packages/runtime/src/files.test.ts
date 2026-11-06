@@ -14,12 +14,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { asSchema, type Tool } from "ai";
 import { describe, it, expect } from "vitest";
-import { FILE_TOOL_NAMES, FileToolError, listFilesText, readFileText, searchFilesText, filesToolPort } from "./files";
+import { FILE_TOOL_NAMES, FileToolError, fileToolSource, listFilesText, readFileText, searchFilesText } from "./files";
+import type { ToolOutput } from "./run";
+import { createToolGuard } from "./tool-guard";
 import type { FileInfo } from "./files";
 
 function filesMap(entries: FileInfo[]): Map<string, FileInfo> {
   return new Map(entries.map((info) => [info.path, info]));
+}
+
+const guard = createToolGuard({ request: async () => "allow" });
+
+async function toolsOf(files: Map<string, FileInfo>) {
+  const tools = await fileToolSource(files, guard).tools();
+  const run = async (name: string, args: unknown): Promise<ToolOutput> =>
+    (await (tools[name] as Tool).execute?.(args, { toolCallId: "1", messages: [], abortSignal: new AbortController().signal })) as ToolOutput;
+  return { tools, run };
 }
 
 describe("listFilesText", () => {
@@ -123,54 +135,47 @@ describe("searchFilesText", () => {
   });
 });
 
-describe("filesToolPort", () => {
+describe("fileToolSource", () => {
   it("exposes list_files, read_file, and search_files as real tools", async () => {
-    const files = filesMap([{ name: "a.md", path: "a.md", text: "hello" }]);
-    const port = filesToolPort(files);
-    const descriptors = await port.list();
-    expect(descriptors.map((d) => d.name).sort()).toEqual(["list_files", "read_file", "search_files"]);
+    const { tools } = await toolsOf(filesMap([{ name: "a.md", path: "a.md", text: "hello" }]));
+    expect(Object.keys(tools).sort()).toEqual(["list_files", "read_file", "search_files"]);
   });
 
   it("reflects a live mutation to the underlying map with no rebuild needed", async () => {
     const files = filesMap([]);
-    const port = filesToolPort(files);
-
-    const before = await port.execute({ id: "1", name: "list_files", args: {} }, new AbortController().signal);
-    expect(before.content).toContain("No files are currently attached");
-
+    const { run } = await toolsOf(files);
+    expect((await run("list_files", {})).content).toContain("No files are currently attached");
     files.set("new.md", { name: "new.md", path: "new.md", text: "just attached" });
-
-    const after = await port.execute({ id: "2", name: "list_files", args: {} }, new AbortController().signal);
-    expect(after.content).toContain("new.md");
+    expect((await run("list_files", {})).content).toContain("new.md");
   });
 
-  it("read_file executes end-to-end through the tool port with offset/limit args", async () => {
-    const files = filesMap([{ name: "a.md", path: "a.md", text: "0123456789" }]);
-    const port = filesToolPort(files);
-    const result = await port.execute(
-      { id: "1", name: "read_file", args: { path: "a.md", offset: 2, limit: 3 } },
-      new AbortController().signal,
-    );
+  it("read_file executes end-to-end with offset/limit args", async () => {
+    const { run } = await toolsOf(filesMap([{ name: "a.md", path: "a.md", text: "0123456789" }]));
+    const result = await run("read_file", { path: "a.md", offset: 2, limit: 3 });
     expect(result.ok).toBe(true);
     expect(result.content).toContain("234");
   });
 
-  it("search_files executes end-to-end through the tool port", async () => {
-    const files = filesMap([{ name: "a.md", path: "a.md", text: "the answer is 42" }]);
-    const port = filesToolPort(files);
-    const result = await port.execute(
-      { id: "1", name: "search_files", args: { query: "answer" } },
-      new AbortController().signal,
-    );
+  it("search_files executes end-to-end", async () => {
+    const { run } = await toolsOf(filesMap([{ name: "a.md", path: "a.md", text: "the answer is 42" }]));
+    const result = await run("search_files", { query: "answer" });
     expect(result.ok).toBe(true);
     expect(result.content).toContain("a.md @ offset 4");
   });
 
-  it("turns a missing required arg into a failed tool result, not a crash", async () => {
-    const port = filesToolPort(filesMap([]));
-    const result = await port.execute({ id: "1", name: "read_file", args: {} }, new AbortController().signal);
+  it("turns a failure into a failed tool result, not a crash", async () => {
+    const { run } = await toolsOf(filesMap([]));
+    const result = await run("read_file", { path: "missing.md" });
     expect(result.ok).toBe(false);
-    expect(result.content).toContain("'path' is required");
+    expect(result.content).toContain("File 'missing.md' not found");
+  });
+
+  it("asks for the path and the query before it runs", async () => {
+    const { tools } = await toolsOf(filesMap([]));
+    for (const [name, args] of [["read_file", {}], ["search_files", {}], ["read_file", { path: 3 }]] as const) {
+      const checked = await asSchema((tools[name] as Tool).inputSchema).validate?.(args);
+      expect(checked?.success).toBe(false);
+    }
   });
 
   it("says a capped result is capped, rather than reporting the cap as the total", () => {
@@ -196,7 +201,7 @@ describe("filesToolPort", () => {
     expect(result.match(/@ offset/g)?.length).toBe(20);
   });
 
-  it("reports offsets in the original text when lowercasing makes a letter longer", () => {
+  it("reports offsets in the original text, also after letters that lowercase to more than one", () => {
     const files = filesMap([{ name: "t.md", path: "t.md", text: "İx and İİx" }]);
     const result = searchFilesText("x", files);
     expect(result).toContain("@ offset 1:");
@@ -205,10 +210,10 @@ describe("filesToolPort", () => {
     for (const offset of [1, 9]) expect(readFileText("t.md", files, { offset, limit: 1 }).startsWith("x")).toBe(true);
   });
 
-  it("still finds a match that starts or ends inside such a letter, at that letter", () => {
-    const files = filesMap([{ name: "t.md", path: "t.md", text: "aİb" }]);
-    expect(searchFilesText("i", files)).toContain("@ offset 1:");
-    expect(searchFilesText("b", files)).toContain("@ offset 2:");
+  it("treats the query as plain text, not as a pattern", () => {
+    const files = filesMap([{ name: "p.md", path: "p.md", text: "cost (a+b)? yes. cost aab no" }]);
+    expect(searchFilesText("(a+b)?", files)).toContain("1 match(es)");
+    expect(searchFilesText("a.b", files)).toContain("No matches found");
   });
 
   it("still reports an exact count when nothing was cut off", () => {
@@ -218,8 +223,8 @@ describe("filesToolPort", () => {
 });
 
 describe("FILE_TOOL_NAMES", () => {
-  it("names exactly the tools the file port offers", async () => {
-    const offered = (await filesToolPort(new Map()).list()).map((tool) => tool.name);
-    expect(offered).toEqual(FILE_TOOL_NAMES);
+  it("names exactly the tools the file source offers", async () => {
+    const { tools } = await toolsOf(new Map());
+    expect(Object.keys(tools)).toEqual(FILE_TOOL_NAMES);
   });
 });
