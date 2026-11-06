@@ -23,7 +23,6 @@ import {
   addressNote,
   AUTH_METHODS,
   captureAuthSecrets,
-  isListedServer,
   isSecretAuthField,
   lacksRequiredField,
   listedServer,
@@ -97,24 +96,6 @@ describe("searchDirectory", () => {
   it("searches the shipped directory when given no list", () => {
     expect(searchDirectory("linear")[0]?.id).toBe("linear");
     expect(searchDirectory("")).toHaveLength(DIRECTORY_ENTRIES.length);
-  });
-});
-
-describe("isListedServer", () => {
-  it("recognises the exact address of a directory entry", () => {
-    expect(isListedServer(DIRECTORY_ENTRIES[0]!.url)).toBe(true);
-  });
-
-  it.each([
-    ["a trailing slash", (url: string) => `${url}/`],
-    ["another path", (url: string) => `${url}/other`],
-    ["another host", (url: string) => url.replace("https://", "https://x.")],
-  ])("does not recognise an address with %s", (_label, change) => {
-    expect(isListedServer(change(DIRECTORY_ENTRIES[0]!.url))).toBe(false);
-  });
-
-  it("does not recognise an address that is not in the directory", () => {
-    expect(isListedServer("https://mcp.example.com/mcp")).toBe(false);
   });
 });
 
@@ -197,13 +178,6 @@ describe("server authentication fields", () => {
     ).toEqual([
       ["none", []],
       ["bearer", [["token", true]]],
-      [
-        "basic",
-        [
-          ["username", true],
-          ["password", true],
-        ],
-      ],
       [
         "api-key",
         [
@@ -326,7 +300,7 @@ describe("prepareServerSave", () => {
     const input: Save = {
       content: FILE,
       editing: null,
-      server: { ...server, auth: { type: "basic", fields: { username: "alice", password: "fake-password" } } },
+      server: { ...server, auth: { type: "api-key", fields: { api_key: "fake-key", header_name: "X-Key" } } },
       tools: [{ name: "read" }],
       allowed: ["read"],
       knownSecrets: [],
@@ -369,11 +343,11 @@ describe("addressNote", () => {
 
 describe("isSecretAuthField", () => {
   it("is true for the fields that hold a credential", () => {
-    expect(["token", "password", "api_key"].every(isSecretAuthField)).toBe(true);
+    expect(["token", "api_key"].every(isSecretAuthField)).toBe(true);
   });
 
   it("is false for the fields that only describe how to connect", () => {
-    const config = ["username", "header_name", "authorize_url", "token_url", "client_id", "scopes"];
+    const config = ["header_name", "authorize_url", "token_url", "client_id", "scopes"];
     expect(config.some(isSecretAuthField)).toBe(false);
   });
 });
@@ -385,7 +359,6 @@ describe("mcpSecretEnvName", () => {
 
   it("uses the right suffix per field", () => {
     expect(mcpSecretEnvName("acme", "token", [])).toBe("ACME_TOKEN");
-    expect(mcpSecretEnvName("acme", "password", [])).toBe("ACME_PASSWORD");
     expect(mcpSecretEnvName("acme", "api_key", [])).toBe("ACME_API_KEY");
   });
 
@@ -405,7 +378,7 @@ describe("mcpSecretEnvName", () => {
   });
 
   it("ignores names that do not clash", () => {
-    expect(mcpSecretEnvName("acme", "token", ["OTHER_TOKEN", "ACME_PASSWORD"])).toBe("ACME_TOKEN");
+    expect(mcpSecretEnvName("acme", "token", ["OTHER_TOKEN", "ACME_API_KEY"])).toBe("ACME_TOKEN");
   });
 });
 
@@ -417,10 +390,10 @@ describe("captureAuthSecrets", () => {
   });
 
   it("leaves the fields that are not credentials exactly as typed", () => {
-    const { fields, secrets } = captureAuthSecrets("acme", { username: "alice", password: "hunter2" }, []);
-    expect(fields.username).toBe("alice");
-    expect(fields.password).toBe("${env:ACME_PASSWORD}");
-    expect(secrets).toEqual([{ name: "ACME_PASSWORD", value: "hunter2" }]);
+    const { fields, secrets } = captureAuthSecrets("acme", { header_name: "X-Key", api_key: "hunter2" }, []);
+    expect(fields.header_name).toBe("X-Key");
+    expect(fields.api_key).toBe("${env:ACME_API_KEY}");
+    expect(secrets).toEqual([{ name: "ACME_API_KEY", value: "hunter2" }]);
   });
 
   it("never captures an oauth2 block, which holds no credential of its own", () => {
@@ -537,12 +510,12 @@ describe("adding an MCP server that needs a credential", () => {
     const { content, stored } = saveWith(TESTER_FILE, {
       name: "acme",
       url: "https://acme/mcp",
-      type: "basic",
-      fields: { username: "alice", password: "hunter2" },
+      type: "api-key",
+      fields: { header_name: "X-Acme-Key", api_key: "hunter2" },
     });
-    expect(content).toContain("alice");
+    expect(content).toContain("X-Acme-Key");
     expect(content).not.toContain("hunter2");
-    expect(stored).toEqual([{ name: "ACME_PASSWORD", value: "hunter2" }]);
+    expect(stored).toEqual([{ name: "ACME_API_KEY", value: "hunter2" }]);
   });
 
   it("does not collide with a name the file already uses", () => {
@@ -613,9 +586,9 @@ describe("a file that still holds a raw credential", () => {
 
 describe("lacksRequiredField", () => {
   const token = [{ key: "token", required: true }];
-  const basic = [
-    { key: "username", required: true },
-    { key: "password", required: true },
+  const signIn = [
+    { key: "authorize_url", required: true },
+    { key: "token_url", required: true },
   ];
 
   it("is true while a required field is not in what would be written", () => {
@@ -627,8 +600,8 @@ describe("lacksRequiredField", () => {
   });
 
   it("wants every required field of a method, not just one", () => {
-    expect(lacksRequiredField(basic, { type: "basic", fields: { username: "ada" } })).toBe(true);
-    expect(lacksRequiredField(basic, { type: "basic", fields: { username: "ada", password: "${env:P}" } })).toBe(false);
+    expect(lacksRequiredField(signIn, { type: "oauth2", fields: { authorize_url: "https://a/authorize" } })).toBe(true);
+    expect(lacksRequiredField(signIn, { type: "oauth2", fields: { authorize_url: "https://a/authorize", token_url: "https://a/token" } })).toBe(false);
   });
 
   it("does not ask for an optional field", () => {

@@ -173,8 +173,8 @@ describe("the lines of the settings block", () => {
 });
 
 describe("a very long line", () => {
-  it("is read in a moment, even when it is mostly spaces and has no colon", () => {
-    const content = `---\na${" ".repeat(200_000)}x\nname: X\n---\n`;
+  it("is read in a moment, even when it is mostly spaces", () => {
+    const content = `---\nnote: a${" ".repeat(200_000)}x\nname: X\n---\n`;
     const started = Date.now();
     expect(lineOfPath(content, ["name"])).toBe(3);
     expect(Date.now() - started).toBeLessThan(1000);

@@ -16,7 +16,8 @@
 
 import { describe, it, expect } from "vitest";
 import { createServer } from "node:http";
-import { mcpToolPort } from "@afm/adapter-tool";
+import { createToolGuard, mcpServerTools } from "@afm/runtime";
+import type { Tool } from "ai";
 import {
   MAX_AGENT_FILE_BYTES,
   MAX_RESPONSE_BYTES,
@@ -272,12 +273,15 @@ describe("limitResponses with a tool server", () => {
   }
 
   const run = async (url: string, max: number) => {
-    const port = mcpToolPort({ serverUrl: url, fetchFn: limitResponses(fetch, max) });
+    const source = mcpServerTools(
+      { name: "t", url, fetchFn: limitResponses(fetch, max) },
+      createToolGuard({ request: async () => "allow" }),
+    );
     try {
-      await port.list();
-      return await port.execute({ id: "1", name: "dump", args: {} }, new AbortController().signal);
+      const tools = await source.tools();
+      return await (tools["t__dump"] as Tool).execute?.({}, { toolCallId: "1", messages: [], abortSignal: new AbortController().signal });
     } finally {
-      await port.dispose?.();
+      await source.close();
     }
   };
 

@@ -4,7 +4,7 @@ A web app that runs an [AFM](https://wso2.github.io/agent-flavored-markdown/) ag
 
 ## Run it
 
-You need Node.js 24 and pnpm 11 (`packageManager` pins the version). The five `@afm/*` packages are installed from the `typescript-interpreter/` folder next to this one (`file:../typescript-interpreter/packages/*`), so work from a checkout of the whole repository. If that folder is not there yet, it comes from #42, the TypeScript interpreter.
+You need Node.js 24 and pnpm 11 (`packageManager` pins the version). The two `@afm/*` packages (`engine` and `runtime`) are installed from the `typescript-interpreter/` folder next to this one (`file:../typescript-interpreter/packages/*`), so work from a checkout of the whole repository. If that folder is not there yet, it comes from #42, the TypeScript interpreter.
 
 ```sh
 cd browser-based-interpreter

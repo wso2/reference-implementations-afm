@@ -14,7 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type AgentMetadata, type ModelPort } from "@afm/engine";
+import { type AgentMetadata } from "@afm/engine";
+import { completeText, type LanguageModel } from "@afm/runtime";
 import { DEFAULT_PROVIDER, findProvider } from "./catalogs";
 import { secretReference } from "./secret-reference";
 
@@ -67,9 +68,9 @@ export async function generateDraft(
   promptText: string,
   model: AgentMetadata["model"],
   final: boolean,
-  resolveAuthoringModel: (model: AgentMetadata["model"]) => Promise<ModelPort>,
+  resolveAuthoringModel: (model: AgentMetadata["model"]) => Promise<LanguageModel>,
 ): Promise<DraftResult> {
-  const modelPort = await resolveAuthoringModel(model);
+  const languageModel = await resolveAuthoringModel(model);
   const provider = (model?.provider ?? DEFAULT_PROVIDER).toLowerCase();
   const catalog = findProvider(provider);
   const modelName = model?.name ?? catalog?.models[0]?.id ?? "";
@@ -95,13 +96,7 @@ export async function generateDraft(
       "short, concrete questions.\n" +
       `Otherwise, ${fileSpec}\n\n` +
       `Request: ${promptText}`;
-  let text = "";
-  for await (const event of modelPort.stream(
-    { system: "", messages: [{ role: "user", content: instruction }], tools: [] },
-    new AbortController().signal,
-  )) {
-    if (event.type === "text-delta") text += event.text;
-  }
+  const text = await completeText(languageModel, instruction);
   const questions = final ? null : clarifyingQuestions(stripCodeFence(text));
   if (questions !== null) return { kind: "clarify", questions };
   return { kind: "draft", source: buildAfmSource(text, provider, modelName, secretName) };
