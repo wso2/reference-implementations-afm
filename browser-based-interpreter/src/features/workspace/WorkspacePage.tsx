@@ -43,7 +43,7 @@ export function WorkspacePage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const draftSource = (location.state as { draftSource?: string } | null)?.draftSource;
-  const [serverEditing] = useState<string | null>(null);
+  const [serverEditing, setServerEditing] = useState<string | null>(null);
   const theme = useThemeContext();
   const library = useAgentsLibrary();
   const compact = useMediaQuery(COMPACT_QUERY);
@@ -187,7 +187,10 @@ export function WorkspacePage() {
             activity={activity}
             reach={reachOf(setup.rows, reachedServerIds)}
             onOpenModel={() => openSide("model")}
-            onOpenServer={() => {}}
+            onOpenServer={(name) => {
+              setServerEditing(name);
+              openSide("tools");
+            }}
             openPanel={{
               model: overPanel === "model",
               server: overPanel === "tools" ? serverEditing : null,
@@ -221,6 +224,7 @@ export function WorkspacePage() {
               serverEditing={serverEditing}
               backToSetup={backToSetup}
               onContent={doc.setContent}
+              onApplyServer={doc.applyServer}
               onLeave={leavePanel}
             />
           )}

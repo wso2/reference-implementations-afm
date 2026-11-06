@@ -15,7 +15,7 @@
 // under the License.
 
 import { type buildableAgent } from "../../core/agent/agent-validation";
-import { MODEL_ROW } from "../../core/setup/setup-check";
+import { MODEL_ROW, serverRowId } from "../../core/setup/setup-check";
 import { type SavedAgent } from "../../core/storage/stores";
 import { SidePane } from "../../ui/SideWindow";
 import { type useStandaloneSession } from "../../worker-client/useStandaloneSession";
@@ -23,6 +23,7 @@ import { ModelPanel } from "../model/ModelPanel";
 import { type useSetup } from "../setup/useSetup";
 import { InfoPanel } from "../share/InfoPanel";
 import { SharePanel } from "../share/SharePanel";
+import { ServerPanel } from "../tools/ServerPanel";
 import { type SidePanel, sideTitle } from "./workspace-view";
 
 const FLUSH: SidePanel[] = ["model", "tools", "info", "share", "setup"];
@@ -37,6 +38,7 @@ interface Props {
   serverEditing: string | null;
   backToSetup: boolean;
   onContent: (next: string) => void;
+  onApplyServer: (next: string) => void;
   onLeave: () => void;
 }
 
@@ -72,6 +74,26 @@ export function OverPanel(props: Props) {
             setup.changed(MODEL_ROW);
           }}
           onSaveKey={session.storeSecret}
+          onBack={backToSetup ? onLeave : undefined}
+          onClose={onLeave}
+        />
+      )}
+      {panel === "tools" && metadata !== null && (
+        <ServerPanel
+          key={serverEditing ?? "new"}
+          content={content}
+          editing={serverEditing}
+          metadata={metadata}
+          onApply={(next) => {
+            props.onApplyServer(next);
+            if (serverEditing !== null) setup.changed(serverRowId(serverEditing));
+          }}
+          onStoreSecret={session.storeSecret}
+          knownSecrets={session.state.savedSecrets}
+          issue={serverEditing === null ? null : setup.issueOf(serverRowId(serverEditing))}
+          onProbe={session.probeServer}
+          onSignIn={session.startOAuthSignIn}
+          onSignOut={session.signOutOAuth}
           onBack={backToSetup ? onLeave : undefined}
           onClose={onLeave}
         />

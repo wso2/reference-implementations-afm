@@ -119,6 +119,11 @@ code {
 .u-btn.quiet {
   color: var(--muted);
 }
+.u-btn.danger {
+  border-color: var(--line);
+  color: var(--bad);
+  background: var(--surface);
+}
 .u-btn.sm {
   height: 28px;
   padding: 0 11px;
@@ -219,6 +224,14 @@ code {
   gap: 5px;
   white-space: nowrap;
   flex: none;
+}
+.u-chip.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.u-chip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 .u-chip.neutral {
   background: var(--sunk);
@@ -420,6 +433,12 @@ code {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+.u-node.ok {
+  border-color: #cde7da;
+}
+[data-theme="dark"] .u-node.ok {
+  border-color: #24503e;
+}
 .u-node.add {
   color: var(--muted);
   justify-content: center;
@@ -484,6 +503,19 @@ code {
 .u-node-add-sm svg {
   width: 13px;
   height: 13px;
+}
+.u-linkish {
+  font-size: 12.5px;
+  color: var(--accent);
+  font-weight: 600;
+  background: none;
+  border: 0;
+  padding: 5px 0;
+  margin: -5px 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .u-panel {
   position: absolute;
@@ -636,6 +668,11 @@ code {
   border-radius: 11px;
   overflow: hidden;
 }
+.u-rows.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .u-row {
   display: flex;
   align-items: center;
@@ -717,6 +754,11 @@ code {
   font-size: 11.5px;
   color: var(--muted);
   font-weight: 400;
+}
+.u-row-meta {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-family: "IBM Plex Mono", monospace;
 }
 .u-setup {
   display: flex;
@@ -961,6 +1003,9 @@ code {
   border-radius: 999px;
   flex: none;
   margin-top: 5px;
+}
+.u-issue-dot.warn {
+  background: var(--warn);
 }
 .u-issue-body {
   flex: 1;
