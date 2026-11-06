@@ -14,16 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type OAuthProviderRef } from "@afm/adapter-auth";
-import { FILE_TOOL_NAMES, type FileInfo, filesToolPort, listFilesText } from "@afm/adapter-tool";
+import { type AgentMetadata, describeError, type SecretPort } from "@afm/engine";
 import {
-  type AgentMetadata,
-  describeError,
-  type ModelPort,
+  FILE_TOOL_NAMES,
+  type FileInfo,
+  fileToolSource,
+  type LanguageModel,
+  listFilesText,
+  type OAuthProviderRef,
   type PermissionBroker,
-  type SecretPort,
-  type ToolPort,
-} from "@afm/engine";
+  probeMcpServer,
+} from "@afm/runtime";
 import { generateDraft } from "../agent/drafts";
 import { failureFromStatus, failureOf } from "../chat/failure";
 import { appAddress } from "../links/app-address";
@@ -33,7 +34,7 @@ import { createPermissionBridge } from "./bridges";
 import {
   checkModelFromMetadata,
   defaultMcpProxyConfig,
-  mcpServerPort,
+  mcpServerOptions,
   modelFromMetadata,
   modelWithResolvedKey,
   proxyAwareFetch,
@@ -70,20 +71,17 @@ const secrets = gatedVault();
 const oauth = createOAuthManager({
   fetchFn: (input, init) => proxyAwareFetch()(input, init),
   redirectUri: appAddress(self.location.origin, import.meta.env.BASE_URL),
-  cimdClientId: import.meta.env.VITE_OAUTH_CLIENT_ID_URL || undefined,
   refreshStore: store.refreshStore,
   emitAuthorizeUrl: (id, url) => scope.postMessage({ type: "oauth-authorize-url", id, url }),
-  emitSignInConfirm: (id, host) => scope.postMessage({ type: "oauth-signin-confirm", id, host }),
   emitSignInResult: (id, ok, error) => scope.postMessage({ type: "oauth-signin-done", id, ok, error }),
 });
 
 const oauthDeps = {
   getInteractiveToken: (provider: OAuthProviderRef) => oauth.getAccessToken(provider),
-  onInteractiveAuthRejected: (provider: OAuthProviderRef) => oauth.signOut(provider),
+  renewInteractiveToken: (provider: OAuthProviderRef, rejectedToken: string) => oauth.renewAccessToken(provider, rejectedToken),
 };
 
 async function probeServer(probeId: string, server: AgentMetadata["tools"]): Promise<void> {
-  let port: ToolPort | null = null;
   try {
     const resolved = await resolveProbeAuth(
       server,
@@ -93,20 +91,12 @@ async function probeServer(probeId: string, server: AgentMetadata["tools"]): Pro
       ),
     );
     const entry = resolved?.mcp?.[0];
-    port =
-      entry === undefined
-        ? null
-        : mcpServerPort(entry, defaultMcpProxyConfig, oauthDeps, { setupTimeoutMs: PROBE_TIMEOUT_MS });
-    const tools = (await port?.list()) ?? [];
-    scope.postMessage({
-      type: "probe-result",
-      id: probeId,
-      tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
-    });
+    const options =
+      entry === undefined ? null : mcpServerOptions(entry, defaultMcpProxyConfig, oauthDeps, { setupTimeoutMs: PROBE_TIMEOUT_MS });
+    const tools = options === null ? [] : await probeMcpServer(options);
+    scope.postMessage({ type: "probe-result", id: probeId, tools });
   } catch (error) {
     scope.postMessage({ type: "probe-result", id: probeId, failure: failureOf(error) });
-  } finally {
-    void port?.dispose?.();
   }
 }
 
@@ -134,7 +124,7 @@ async function withResolvedKey(model: AgentMetadata["model"]): Promise<AgentMeta
   });
 }
 
-async function resolveAuthoringModel(model: AgentMetadata["model"]): Promise<ModelPort> {
+async function resolveAuthoringModel(model: AgentMetadata["model"]): Promise<LanguageModel> {
   return modelFromMetadata(await withResolvedKey(model));
 }
 
@@ -164,12 +154,11 @@ const permission: PermissionBroker = {
 };
 
 const attachedFiles = new Map<string, FileInfo>();
-const filesPort = filesToolPort(attachedFiles);
 
 const session = new AgentSession({
   createModel: modelFromMetadata,
-  createTools: (metadata) => toolsFromMetadata(metadata, defaultMcpProxyConfig, oauthDeps),
-  filesTools: filesPort,
+  createTools: (metadata, guard) => toolsFromMetadata(metadata, defaultMcpProxyConfig, guard, oauthDeps),
+  filesTools: (guard) => fileToolSource(attachedFiles, guard),
   describeAttachedFiles: () => listFilesText(attachedFiles),
   secrets,
   permission,
@@ -230,10 +219,7 @@ scope.addEventListener("message", (event) => {
       });
       break;
     case "oauth-signin-start":
-      void oauth.startSignIn(message.id, message.provider, {
-        listed: message.listed,
-        confirmedHost: message.confirmedHost,
-      });
+      void oauth.startSignIn(message.id, message.provider);
       break;
     case "oauth-signin-code":
       void oauth.completeSignIn(message.id, message.code, message.state, message.iss);

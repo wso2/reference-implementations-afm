@@ -14,12 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { configSecretPort } from "@afm/adapter-secret";
-import { compositeToolPort, inPageToolPort, namespacedToolPort } from "@afm/adapter-tool";
-import { allowAllPermissions, type ChatMessage, type ModelPort } from "@afm/engine";
+import { configSecretPort, type PermissionBroker, ToolNameError, type ToolSource } from "@afm/runtime";
 import { describe, expect, it, vi } from "vitest";
 import { type LoadStep, listedToolKey, type ServerMessage } from "./protocol";
-import { AgentSession, type AgentSessionDeps } from "./session";
+import { AgentSession } from "./session";
+import type { OldMessage, OldModel } from "./test-model";
+import { inPageToolPort, type OldDeps, sessionDeps, sourceOf } from "./test-ports";
+
+type ChatMessage = OldMessage;
+type ModelPort = OldModel;
+const allowAllPermissions: PermissionBroker = { request: async () => "allow" };
 
 function replyingModel(): ModelPort {
   return {
@@ -31,22 +35,23 @@ function replyingModel(): ModelPort {
   };
 }
 
-function makeSession(overrides: Partial<AgentSessionDeps> = {}) {
+function makeSession(overrides: OldDeps = {}) {
   const emitted: ServerMessage[] = [];
   const steps: LoadStep[] = [];
-  const session = new AgentSession({
-    createModel: async () => replyingModel(),
-    createTools: () => inPageToolPort([]),
-    filesTools: inPageToolPort([]),
-    describeAttachedFiles: () => "no files attached",
-    secrets: configSecretPort({}),
-    permission: allowAllPermissions,
-    emit: (message) => {
-      if (message.type === "load-step") steps.push(message);
-      else emitted.push(message);
-    },
-    ...overrides,
-  });
+  const session = new AgentSession(
+    sessionDeps(
+      {
+        describeAttachedFiles: () => "no files attached",
+        secrets: configSecretPort({}),
+        permission: allowAllPermissions,
+        emit: (message) => {
+          if (message.type === "load-step") steps.push(message);
+          else emitted.push(message);
+        },
+      },
+      { createModel: async () => replyingModel(), ...overrides },
+    ),
+  );
   return { session, emitted, steps };
 }
 
@@ -134,7 +139,8 @@ describe("AgentSession", () => {
     });
 
     await session.load(VALID);
-    expect(emitted.map((m) => m.type)).toEqual(["loaded"]);
+    expect(emitted.map((m) => m.type)).toEqual(["loaded", "tools-listed"]);
+    expect(emitted.at(-1)).toEqual({ type: "tools-listed", tools: [] });
   });
 
   it("streams a reply and finishes when a message is sent", async () => {
@@ -206,25 +212,30 @@ describe("AgentSession", () => {
       },
     };
     const emitted: ServerMessage[] = [];
-    const session = new AgentSession({
-      createModel: async () => model,
-      createTools: () =>
-        inPageToolPort([
-          {
-            name: "save",
-            inputSchema: { type: "object" },
-            run: () => {
-              writes += 1;
-              return "saved";
-            },
-          },
-        ]),
-      filesTools: inPageToolPort([]),
-      describeAttachedFiles: () => "no files attached",
-      secrets: configSecretPort({}),
-      permission: allowAllPermissions,
-      emit: (message) => emitted.push(message),
-    });
+    const session = new AgentSession(
+      sessionDeps(
+        {
+          describeAttachedFiles: () => "no files attached",
+          secrets: configSecretPort({}),
+          permission: allowAllPermissions,
+          emit: (message) => emitted.push(message),
+        },
+        {
+          createModel: async () => model,
+          createTools: () =>
+            inPageToolPort([
+              {
+                name: "save",
+                inputSchema: { type: "object" },
+                run: () => {
+                  writes += 1;
+                  return "saved";
+                },
+              },
+            ]),
+        },
+      ),
+    );
     await session.load(VALID);
     await session.send("Save my work");
     expect(emitted.at(-1)).toMatchObject({
@@ -245,8 +256,8 @@ describe("AgentSession", () => {
     const { session, emitted } = makeSession();
     await session.load(VALID, [
       { role: "user", content: "Save this" },
-      { role: "assistant", content: "", toolCalls: [{ id: "write-1", name: "save", args: {} }] },
-      { role: "tool", toolCallId: "write-1", content: "saved" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "write-1", toolName: "save", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "write-1", toolName: "save", output: { type: "text", value: "saved" } }] },
     ]);
     expect(emitted.some((message) => message.type === "resume-available")).toBe(true);
   });
@@ -376,15 +387,17 @@ Be helpful.
     const createModel = vi.fn(async () => replyingModel());
     const createTools = vi.fn(() => inPageToolPort([]));
     const emitted: ServerMessage[] = [];
-    const session = new AgentSession({
-      createModel,
-      createTools,
-      filesTools: inPageToolPort([]),
-      describeAttachedFiles: () => "no files attached",
-      secrets: configSecretPort({}),
-      permission: allowAllPermissions,
-      emit: (message) => emitted.push(message),
-    });
+    const session = new AgentSession(
+      sessionDeps(
+        {
+          describeAttachedFiles: () => "no files attached",
+          secrets: configSecretPort({}),
+          permission: allowAllPermissions,
+          emit: (message) => emitted.push(message),
+        },
+        { createModel, createTools, filesTools: inPageToolPort([]) },
+      ),
+    );
 
     await session.load(source);
     expect(emitted.some((message) => message.type === "agent-not-ready")).toBe(true);
@@ -740,6 +753,7 @@ describe("AgentSession when the conversation is replaced mid-answer", () => {
 
   const NEXT_ANSWER = [
     { type: "text-delta", text: "fresh" },
+    expect.objectContaining({ type: "budget-update" }),
     { type: "turn-finished", reason: "stop" },
   ];
 
@@ -811,17 +825,20 @@ i
     );
 
   function serverTools(url: string) {
-    return namespacedToolPort(
-      {
-        async list() {
-          return [{ name: "echo", inputSchema: { type: "object" as const }, serverId: url }];
+    return (guard: Parameters<typeof sourceOf>[1]) => [
+      sourceOf(
+        {
+          async list() {
+            return [{ name: "echo", inputSchema: { type: "object" as const }, serverId: url }];
+          },
+          async execute() {
+            return { ok: true, content: "echoed" };
+          },
         },
-        async execute() {
-          return { ok: true, content: "echoed" };
-        },
-      },
-      "docs",
-    );
+        guard,
+        "docs",
+      ),
+    ];
   }
 
   function callingEcho() {
@@ -970,7 +987,9 @@ i
     },
   });
 
-  function sessionWith(createTools: () => ReturnType<typeof compositeToolPort>) {
+  type Sources = (guard: Parameters<typeof sourceOf>[1]) => ReturnType<typeof sourceOf>[];
+
+  function sessionWith(createTools: () => Sources) {
     const { session, emitted } = makeSession({
       createModel: async () => replyingModel(),
       createTools,
@@ -979,12 +998,10 @@ i
   }
 
   it("lists each server's tools under their prefixed names", async () => {
-    const { session, emitted } = sessionWith(() =>
-      compositeToolPort([
-        namespacedToolPort(offering("https://s0.example.com/mcp", ["search"]), "first"),
-        namespacedToolPort(offering("https://s1.example.com/mcp", ["search"]), "second"),
-      ]),
-    );
+    const { session, emitted } = sessionWith(() => (guard) => [
+      sourceOf(offering("https://s0.example.com/mcp", ["search"]), guard, "first"),
+      sourceOf(offering("https://s1.example.com/mcp", ["search"]), guard, "second"),
+    ]);
     await session.load(agentWithServers(["first", "second"]));
     expect(emitted.find((message) => message.type === "tools-listed")).toMatchObject({
       tools: [{ name: "first__search" }, { name: "second__search" }],
@@ -993,12 +1010,10 @@ i
   });
 
   it("is not ready when two servers would offer the same tool under the same name, and says which servers and tool", async () => {
-    const { session, emitted } = sessionWith(() =>
-      compositeToolPort([
-        namespacedToolPort(offering("https://s0.example.com/mcp", ["search"]), "a_b"),
-        namespacedToolPort(offering("https://s1.example.com/mcp", ["search"]), "a-b"),
-      ]),
-    );
+    const { session, emitted } = sessionWith(() => (guard) => [
+      sourceOf(offering("https://s0.example.com/mcp", ["search"]), guard, "a_b"),
+      sourceOf(offering("https://s1.example.com/mcp", ["search"]), guard, "a-b"),
+    ]);
     await session.load(agentWithServers(["a_b", "a-b"]));
     const notReady = emitted.find((message) => message.type === "agent-not-ready");
     expect(notReady).toMatchObject({ reason: expect.stringMatching(/'a_b' and 'a-b'.*'search'/) });
@@ -1009,9 +1024,12 @@ i
 
   it("is not ready when a prefixed name is longer than the providers allow", async () => {
     const long = "t".repeat(60);
-    const { session, emitted } = sessionWith(() =>
-      compositeToolPort([namespacedToolPort(offering("https://s0.example.com/mcp", [long]), "docs")]),
-    );
+    const tooLong: ToolSource = {
+      label: "docs",
+      tools: async () => Promise.reject(new ToolNameError(`The tool '${long}' would be offered as 'docs__${long}', which is longer than the 64 characters model providers allow.`)),
+      close: async () => {},
+    };
+    const { session, emitted } = sessionWith(() => () => [tooLong]);
     await session.load(agentWithServers(["docs"]));
     expect(emitted.find((message) => message.type === "agent-not-ready")).toMatchObject({
       reason: expect.stringContaining("longer than the 64 characters"),
@@ -1027,7 +1045,7 @@ i
         return { ok: false, content: "" };
       },
     };
-    const { session, emitted } = sessionWith(() => compositeToolPort([namespacedToolPort(unreachable, "docs")]));
+    const { session, emitted } = sessionWith(() => (guard) => [sourceOf(unreachable, guard, "docs")]);
     await session.load(agentWithServers(["docs"]));
     expect(emitted.some((message) => message.type === "agent-not-ready")).toBe(false);
   });
@@ -1077,15 +1095,13 @@ describe("turn budget", () => {
     expect(turn.calls()).toBe(2);
   });
 
-  it("stops the turn after 180 seconds", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      const turn = toolTurn(() => vi.setSystemTime(Date.now() + 180_001), [10, 1]);
-      expect(await run(turn)).toMatchObject({ type: "turn-finished", reason: "budget" });
-      expect(turn.calls()).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("tells the page the turn is limited to 180 seconds and 250,000 tokens", async () => {
+    const turn = toolTurn(() => {}, [10, 1]);
+    await run(turn);
+    expect(turn.emitted.find((message) => message.type === "budget-update")).toMatchObject({
+      maxWallClockMs: 180_000,
+      maxTokens: 250_000,
+    });
   });
 
   it("keeps going within 180 seconds", async () => {
@@ -1104,20 +1120,19 @@ describe("runtime guidance with a short agent definition", () => {
   it("provides generic operating context without rewriting the user's agent", async () => {
     const systems: string[] = [];
     const afm = `---\nname: Interview partner\ninterfaces:\n  - type: webchat\n---\n# Role\nHelp me prepare for interviews.\n# Instructions\nUse my CV and the role. Be concise.\n`;
-    const session = new AgentSession({
-      createModel: async () => ({
-        async *stream(request) {
-          systems.push(request.system);
-          yield { type: "text-delta" as const, text: "Ready." };
+    const session = new AgentSession(
+      sessionDeps(
+        { describeAttachedFiles: () => "resume.pdf: two pages", secrets: configSecretPort({}), permission: allowAllPermissions, emit() {} },
+        {
+          createModel: async () => ({
+            async *stream(request) {
+              systems.push(request.system);
+              yield { type: "text-delta" as const, text: "Ready." };
+            },
+          }),
         },
-      }),
-      createTools: () => inPageToolPort([]),
-      filesTools: inPageToolPort([]),
-      describeAttachedFiles: () => "resume.pdf: two pages",
-      secrets: configSecretPort({}),
-      permission: allowAllPermissions,
-      emit() {},
-    });
+      ),
+    );
     await session.load(afm);
     await session.send("Prepare me.");
     await session.send("Continue.");

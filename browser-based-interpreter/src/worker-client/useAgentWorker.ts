@@ -14,11 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { OAuthProviderRef } from "@afm/adapter-auth";
+import type { OAuthProviderRef } from "@afm/runtime";
 import { useEffect, useRef } from "react";
 import { startBlobWorker } from "../core/files/blob-worker";
 import { createOAuthSignIns, type OAuthSignIns, type SignInOutcome } from "../core/oauth/oauth-signin";
-import type { ClientMessage, ProbeResult, ServerMessage, SignInVetting } from "../core/runtime/protocol";
+import type { ClientMessage, ProbeResult, ServerMessage } from "../core/runtime/protocol";
 import agentWorkerUrl from "../core/runtime/worker.ts?worker&url";
 
 const READY_DEADLINE_MS = 30_000;
@@ -78,9 +78,6 @@ export function useAgentWorker(onMessage: (message: ServerMessage) => void) {
           return;
         case "oauth-authorize-url":
           oauth.onAuthorizeUrl(incoming.id, incoming.url);
-          return;
-        case "oauth-signin-confirm":
-          oauth.onConfirm(incoming.id, incoming.host);
           return;
         case "oauth-signin-done":
           oauth.onDone(incoming.id, incoming.ok, incoming.error);
@@ -156,9 +153,9 @@ export function useAgentWorker(onMessage: (message: ServerMessage) => void) {
     });
   }
 
-  function startOAuthSignIn(provider: OAuthProviderRef, vetting: SignInVetting): Promise<SignInOutcome> {
+  function startOAuthSignIn(provider: OAuthProviderRef): Promise<SignInOutcome> {
     if (failedRef.current) return Promise.resolve({ status: "failed", reason: "Reload the agent to sign in again." });
-    return oauth.start(provider, vetting);
+    return oauth.start(provider);
   }
 
   return { post, probe, startOAuthSignIn };

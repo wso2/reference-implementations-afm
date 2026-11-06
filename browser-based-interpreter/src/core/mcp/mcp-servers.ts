@@ -49,10 +49,6 @@ export function listedServer(url: string): DirectoryEntry | undefined {
   return DIRECTORY_ENTRIES.find((entry) => entry.url === url);
 }
 
-export function isListedServer(url: string): boolean {
-  return listedServer(url) !== undefined;
-}
-
 export function serverIcon(url: string | undefined): string | undefined {
   const entry = url === undefined ? undefined : listedServer(url);
   return entry === undefined ? undefined : `${import.meta.env.BASE_URL}mcp-icons/${entry.id}.png`;
@@ -77,14 +73,6 @@ export const AUTH_METHODS: Method[] = [
     id: "bearer",
     label: "Access token",
     fields: [{ key: "token", name: "token", required: true, placeholder: "${env:MY_TOKEN}" }],
-  },
-  {
-    id: "basic",
-    label: "Username",
-    fields: [
-      { key: "username", name: "username", required: true, placeholder: "Your username" },
-      { key: "password", name: "password", required: true, placeholder: "${env:MY_PASSWORD}" },
-    ],
   },
   {
     id: "api-key",
@@ -173,7 +161,6 @@ export function prepareServerSave({ content, editing, server, knownSecrets, tool
 
 const SECRET_SUFFIX: Record<string, string> = {
   token: "_TOKEN",
-  password: "_PASSWORD",
   api_key: "_API_KEY",
 };
 

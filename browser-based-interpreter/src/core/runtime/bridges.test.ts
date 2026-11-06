@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createPermissionBridge } from "./bridges";
-import type { ToolCall } from "@afm/engine";
+import type { ToolCall } from "@afm/runtime";
 
 describe("createPermissionBridge", () => {
   const call: ToolCall = { id: "c1", name: "lookup", args: {} };

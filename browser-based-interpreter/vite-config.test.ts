@@ -180,7 +180,7 @@ describe("the fix that lets the MCP schema validator start inside a blob worker"
     (new Function("self", "location", `return ${BLOB_SAFE_BASE_URI}`)({ location: where }, where) as URL).href;
 
   it("applies to the validator that is installed", () => {
-    const toolRequire = createRequire(createRequire(import.meta.url).resolve("@afm/adapter-tool/package.json"));
+    const toolRequire = createRequire(createRequire(import.meta.url).resolve("@afm/runtime/package.json"));
     const source = join(dirname(toolRequire.resolve("@cfworker/json-schema")), "../esm/dereference.js");
     expect(blobSafeBaseUri(readFileSync(source, "utf8"))).not.toBeNull();
   });

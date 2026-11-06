@@ -143,6 +143,7 @@ describe("createOAuthSignIns", () => {
     authorizeUrl: "https://auth.example.com/authorize",
     tokenUrl: "https://auth.example.com/token",
     clientId: "c",
+    resource: "https://mcp.example.com/mcp",
   };
   const AUTHORIZE = "https://auth.example.com/authorize?state=s";
 
@@ -154,7 +155,7 @@ describe("createOAuthSignIns", () => {
     const posted: ClientMessage[] = [];
     const deps = { post: (message: ClientMessage) => void posted.push(message) };
     const signIns = createOAuthSignIns(deps);
-    const result = signIns.start(provider, { listed: true });
+    const result = signIns.start(provider);
     const startId = (posted[0] as { id: string }).id;
     if (navigate) signIns.onAuthorizeUrl(startId, AUTHORIZE);
     return { popup, win, posted, deps, signIns, result, startId };
@@ -185,22 +186,14 @@ describe("createOAuthSignIns", () => {
     expect(await result).toEqual({ status: "signed-in" });
   });
 
-  it("tells the worker whether the server is in the directory and which host the user agreed to", async () => {
+  it("asks the worker to start the sign-in for the provider", async () => {
     const popup = fakePopup();
     const win = fakeWindow();
     win.open.mockReturnValue(popup);
     vi.stubGlobal("window", win);
     const posted: ClientMessage[] = [];
-    void createOAuthSignIns({ post: (message) => void posted.push(message) }).start(provider, {
-      listed: false,
-      confirmedHost: "auth.example.com",
-    });
-    expect(posted[0]).toMatchObject({
-      type: "oauth-signin-start",
-      provider,
-      listed: false,
-      confirmedHost: "auth.example.com",
-    });
+    void createOAuthSignIns({ post: (message) => void posted.push(message) }).start(provider);
+    expect(posted[0]).toMatchObject({ type: "oauth-signin-start", provider });
   });
 
   it("says the pop-up was blocked, and asks the worker for nothing", async () => {
@@ -208,18 +201,9 @@ describe("createOAuthSignIns", () => {
     win.open.mockReturnValue(null);
     vi.stubGlobal("window", win);
     const posted: ClientMessage[] = [];
-    const outcome = await createOAuthSignIns({ post: (message) => void posted.push(message) }).start(provider, {
-      listed: true,
-    });
+    const outcome = await createOAuthSignIns({ post: (message) => void posted.push(message) }).start(provider);
     expect(outcome).toEqual({ status: "failed", reason: "Allow pop-ups to sign in." });
     expect(posted).toHaveLength(0);
-  });
-
-  it("closes the pop-up and hands over the provider's host when the user has to decide first", async () => {
-    const { popup, signIns, result, startId } = setup();
-    signIns.onConfirm(startId, "auth.example.com");
-    expect(await result).toEqual({ status: "confirm", host: "auth.example.com" });
-    expect(popup.close).toHaveBeenCalled();
   });
 
   it("still hears the answer when the provider has cut the popup loose and it reads as closed", async () => {
@@ -324,7 +308,7 @@ describe("createOAuthSignIns", () => {
 
   it("refuses a second sign-in while the first window is still open", async () => {
     const { win, signIns } = setup();
-    const second = await signIns.start(provider, { listed: true });
+    const second = await signIns.start(provider);
     expect(second).toEqual({ status: "failed", reason: "Finish the sign-in window that is already open." });
     expect(win.open).toHaveBeenCalledTimes(1);
   });
@@ -353,6 +337,7 @@ describe("an authorization address that is not https", () => {
     authorizeUrl: "https://auth.example.com/authorize",
     tokenUrl: "https://auth.example.com/token",
     clientId: "c",
+    resource: "https://mcp.example.com/mcp",
   };
 
   beforeEach(() => {
@@ -374,7 +359,7 @@ describe("an authorization address that is not https", () => {
       vi.stubGlobal("window", win);
       const posted: ClientMessage[] = [];
       const signIns = createOAuthSignIns({ post: (message: ClientMessage) => void posted.push(message) });
-      const result = signIns.start(provider, { listed: true });
+      const result = signIns.start(provider);
       const id = (posted[0] as { id: string }).id;
       signIns.onAuthorizeUrl(id, address);
       expect(popup.location.href).toBe("");

@@ -16,10 +16,6 @@
 
 export interface OAuthSignIn {
   type: "oauth2";
-  authorizeUrl: string;
-  tokenUrl: string;
-  registrationUrl?: string;
-  clientIdMetadata?: boolean;
   scopes?: string[];
 }
 
@@ -57,22 +53,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.airtable.com/mcp",
     publisher: "airtable.com",
     docsUrl: "https://support.airtable.com/docs/using-the-airtable-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://airtable.com/oauth2/v1/authorize",
-      tokenUrl: "https://airtable.com/oauth2/v1/token",
-      registrationUrl: "https://airtable.com/oauth2/v1/register",
-      clientIdMetadata: true,
-      scopes: [
-        "data.records:read",
-        "data.records:write",
-        "schema.bases:read",
-        "schema.bases:write",
-        "data.recordComments:read",
-        "data.recordComments:write",
-        "workspacesAndBases:read",
-      ],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "amplitude",
@@ -84,9 +65,6 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     docsUrl: "https://amplitude.com/docs/amplitude-ai/amplitude-mcp",
     auth: {
       type: "oauth2",
-      authorizeUrl: "https://mcp.amplitude.com/authorize",
-      tokenUrl: "https://mcp.amplitude.com/token",
-      registrationUrl: "https://mcp.amplitude.com/register",
       scopes: ["mcp:read", "mcp:write"],
     },
   },
@@ -98,14 +76,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.apify.com",
     publisher: "apify.com",
     docsUrl: "https://docs.apify.com/platform/integrations/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://console.apify.com/authorize/oauth",
-      tokenUrl: "https://console-backend.apify.com/oauth/apps/token",
-      registrationUrl: "https://console-backend.apify.com/oauth/apps",
-      clientIdMetadata: true,
-      scopes: ["full_api_access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "atlassian",
@@ -118,10 +89,6 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
       "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/",
     auth: {
       type: "oauth2",
-      authorizeUrl: "https://auth.atlassian.com/authorize",
-      tokenUrl: "https://auth.atlassian.com/oauth/token",
-      registrationUrl: "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/dcr/register",
-      clientIdMetadata: true,
       scopes: [
         "read:me",
         "read:account",
@@ -172,13 +139,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.attio.com/mcp",
     publisher: "attio.com",
     docsUrl: "https://docs.attio.com/mcp/overview",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://app.attio.com/oidc/authorize",
-      tokenUrl: "https://app.attio.com/oidc/token",
-      registrationUrl: "https://app.attio.com/oauth/register",
-      scopes: ["openid", "offline_access", "mcp"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "aws-knowledge",
@@ -198,13 +159,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.braze.com/mcp",
     publisher: "braze.com",
     docsUrl: "https://www.braze.com/docs/user_guide/brazeai/mcp_server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://dashboard.braze.com/oauth/authorize",
-      tokenUrl: "https://rest.iad-01.braze.com/oauth/token",
-      registrationUrl: "https://rest.iad-01.braze.com/oauth/register",
-      scopes: ["mcp:tools", "mcp:resources", "mcp:operator"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "buildkite",
@@ -214,12 +169,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.buildkite.com/mcp",
     publisher: "buildkite.com",
     docsUrl: "https://buildkite.com/docs/apis/mcp-server/remote/configuring-ai-tools",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.buildkite.com/oauth/authorize",
-      tokenUrl: "https://mcp.buildkite.com/oauth/token",
-      registrationUrl: "https://mcp.buildkite.com/oauth/register",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "calendly",
@@ -231,9 +181,6 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     docsUrl: "https://developer.calendly.com/calendly-mcp-server",
     auth: {
       type: "oauth2",
-      authorizeUrl: "https://calendly.com/oauth/authorize",
-      tokenUrl: "https://calendly.com/oauth/token",
-      registrationUrl: "https://calendly.com/oauth/register",
       scopes: ["mcp:scheduling:read", "mcp:scheduling:write"],
     },
   },
@@ -245,31 +192,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.canva.com/mcp",
     publisher: "canva.com",
     docsUrl: "https://www.canva.dev/docs/mcp/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.canva.com/authorize",
-      tokenUrl: "https://mcp.canva.com/token",
-      registrationUrl: "https://mcp.canva.com/register",
-      clientIdMetadata: true,
-      scopes: [
-        "profile:read",
-        "design:meta:read",
-        "design:content:write",
-        "design:content:read",
-        "folder:read",
-        "folder:write",
-        "brandtemplate:content:read",
-        "brandtemplate:meta:read",
-        "brandtemplate:content:write",
-        "comment:write",
-        "comment:read",
-        "asset:read",
-        "asset:write",
-        "brandkit:read",
-        "help:answers:read",
-        "help:answers:write",
-      ],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "clickup",
@@ -279,13 +202,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.clickup.com/mcp",
     publisher: "clickup.com",
     docsUrl: "https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.clickup.com/oauth/authorize",
-      tokenUrl: "https://mcp.clickup.com/oauth/token",
-      registrationUrl: "https://mcp.clickup.com/oauth/register",
-      scopes: ["read", "write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "close",
@@ -295,13 +212,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.close.com/mcp",
     publisher: "close.com",
     docsUrl: "https://help.close.com/docs/mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://app.close.com/oauth2/authorize/",
-      tokenUrl: "https://api.close.com/oauth2/token/",
-      registrationUrl: "https://api.close.com/oauth2/register/",
-      scopes: ["mcp.read", "mcp.write_destructive", "mcp.write_safe", "offline_access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "cloudflare-api",
@@ -311,14 +222,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.cloudflare.com/mcp",
     publisher: "cloudflare.com",
     docsUrl: "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.cloudflare.com/authorize",
-      tokenUrl: "https://mcp.cloudflare.com/token",
-      registrationUrl: "https://mcp.cloudflare.com/register",
-      clientIdMetadata: true,
-      scopes: ["user:read", "account:read"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "cloudflare-docs",
@@ -338,12 +242,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://bindings.mcp.cloudflare.com/mcp",
     publisher: "cloudflare.com",
     docsUrl: "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://bindings.mcp.cloudflare.com/oauth/authorize",
-      tokenUrl: "https://bindings.mcp.cloudflare.com/token",
-      registrationUrl: "https://bindings.mcp.cloudflare.com/register",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "cloudinary",
@@ -353,13 +252,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://asset-management.mcp.cloudinary.com/mcp",
     publisher: "cloudinary.com",
     docsUrl: "https://cloudinary.com/documentation/cloudinary_llm_mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://asset-management.mcp.cloudinary.com/authorize",
-      tokenUrl: "https://asset-management.mcp.cloudinary.com/token",
-      registrationUrl: "https://asset-management.mcp.cloudinary.com/register",
-      scopes: ["openid", "profile", "email", "offline_access", "asset_management", "upload", "media_generation"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "context7",
@@ -399,14 +292,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://api.fireflies.ai/mcp",
     publisher: "fireflies.ai",
     docsUrl: "https://docs.fireflies.ai/getting-started/mcp-configuration",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://api.fireflies.ai/authorize",
-      tokenUrl: "https://api.fireflies.ai/token",
-      registrationUrl: "https://api.fireflies.ai/register",
-      clientIdMetadata: true,
-      scopes: ["email", "profile"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "github",
@@ -426,13 +312,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://gitlab.com/api/v4/mcp",
     publisher: "gitlab.com",
     docsUrl: "https://docs.gitlab.com/user/model_context_protocol/mcp_server/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://gitlab.com/oauth/authorize",
-      tokenUrl: "https://gitlab.com/oauth/token",
-      registrationUrl: "https://gitlab.com/oauth/register",
-      scopes: ["mcp"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "grafana",
@@ -442,14 +322,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.grafana.com/mcp",
     publisher: "grafana.com",
     docsUrl: "https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.grafana.com/mcp/oauth/authorize",
-      tokenUrl: "https://mcp.grafana.com/mcp/oauth/token",
-      registrationUrl: "https://mcp.grafana.com/mcp/oauth/register",
-      clientIdMetadata: true,
-      scopes: ["grafana:read", "grafana:query", "grafana:write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "granola",
@@ -459,14 +332,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.granola.ai/mcp",
     publisher: "granola.ai",
     docsUrl: "https://docs.granola.ai/help-center/sharing/integrations/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp-auth.granola.ai/oauth2/authorize",
-      tokenUrl: "https://mcp-auth.granola.ai/oauth2/token",
-      registrationUrl: "https://mcp-auth.granola.ai/oauth2/register",
-      clientIdMetadata: true,
-      scopes: ["mcp"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "heroku",
@@ -476,13 +342,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.heroku.com/mcp",
     publisher: "heroku.com",
     docsUrl: "https://devcenter.heroku.com/articles/heroku-remote-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.heroku.com/auth",
-      tokenUrl: "https://mcp.heroku.com/token",
-      registrationUrl: "https://mcp.heroku.com/reg",
-      scopes: ["openid", "offline_access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "honeycomb",
@@ -492,14 +352,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.honeycomb.io/mcp",
     publisher: "honeycomb.io",
     docsUrl: "https://docs.honeycomb.io/integrations/mcp/configuration-guide/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://ui.honeycomb.io/oauth/authorize",
-      tokenUrl: "https://ui.honeycomb.io/oauth/token",
-      registrationUrl: "https://ui.honeycomb.io/oauth/register",
-      clientIdMetadata: true,
-      scopes: ["mcp:read", "mcp:write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "hugging-face",
@@ -519,13 +372,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.intercom.com/mcp",
     publisher: "intercom.com",
     docsUrl: "https://developers.intercom.com/docs/guides/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.intercom.com/authorize",
-      tokenUrl: "https://mcp.intercom.com/token",
-      registrationUrl: "https://mcp.intercom.com/register",
-      scopes: ["mcp", "operator"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "klaviyo",
@@ -535,13 +382,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.klaviyo.com/mcp",
     publisher: "klaviyo.com",
     docsUrl: "https://www.klaviyo.com/solutions/ai/klaviyo-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.klaviyo.com/authorize",
-      tokenUrl: "https://mcp.klaviyo.com/token",
-      registrationUrl: "https://mcp.klaviyo.com/register",
-      clientIdMetadata: true,
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "launchdarkly",
@@ -551,12 +392,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.launchdarkly.com/mcp/launchdarkly",
     publisher: "launchdarkly.com",
     docsUrl: "https://launchdarkly.com/docs/home/getting-started/mcp-hosted",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://app.launchdarkly.com/trust/oauth/authorize",
-      tokenUrl: "https://app.launchdarkly.com/trust/oauth/token",
-      registrationUrl: "https://app.launchdarkly.com/trust/oauth/register/dcr",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "linear",
@@ -566,14 +402,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.linear.app/mcp",
     publisher: "linear.app",
     docsUrl: "https://linear.app/docs/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.linear.app/authorize",
-      tokenUrl: "https://mcp.linear.app/token",
-      registrationUrl: "https://mcp.linear.app/register",
-      clientIdMetadata: true,
-      scopes: ["read", "write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "make",
@@ -583,12 +412,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.make.com",
     publisher: "make.com",
     docsUrl: "https://developers.make.com/mcp-server/connect-using-oauth",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://www.make.com/oauth/v2/authorize",
-      tokenUrl: "https://www.make.com/oauth/v2/token",
-      registrationUrl: "https://www.make.com/oauth/v2/register/mcp",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "mapbox",
@@ -598,14 +422,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.mapbox.com/mcp",
     publisher: "mapbox.com",
     docsUrl: "https://docs.mapbox.com/api/guides/mcp-server/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.mapbox.com/oauth/authorize",
-      tokenUrl: "https://mcp.mapbox.com/oauth/token",
-      registrationUrl:
-        "https://api.mapbox.com/oauth/register?scope=styles%3Atiles%20styles%3Aread%20fonts%3Aread%20datasets%3Aread%20tokens%3Aread",
-      scopes: ["styles:tiles", "styles:read", "fonts:read", "datasets:read", "tokens:read"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "microsoft-learn",
@@ -625,13 +442,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.miro.com",
     publisher: "miro.com",
     docsUrl: "https://developers.miro.com/docs/connecting-to-miro-mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.miro.com/authorize",
-      tokenUrl: "https://mcp.miro.com/token",
-      registrationUrl: "https://mcp.miro.com/register",
-      scopes: ["boards:read", "boards:write", "openid", "email"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "mixpanel",
@@ -641,38 +452,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.mixpanel.com/mcp",
     publisher: "mixpanel.com",
     docsUrl: "https://docs.mixpanel.com/docs/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mixpanel.com/oauth/authorize",
-      tokenUrl: "https://mixpanel.com/oauth/token/",
-      registrationUrl: "https://mixpanel.com/oauth/mcp/register/",
-      scopes: [
-        "projects",
-        "analysis",
-        "events",
-        "insights",
-        "segmentation",
-        "retention",
-        "data:read",
-        "funnels",
-        "flows",
-        "data_definitions",
-        "alerts",
-        "annotations",
-        "bookmarks",
-        "business_context",
-        "cohorts",
-        "context",
-        "custom_alerts",
-        "custom_events",
-        "custom_properties",
-        "dashboard_reports",
-        "experiments",
-        "feature_flags",
-        "metrics",
-        "user_details",
-      ],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "monday",
@@ -682,12 +462,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.monday.com/mcp",
     publisher: "monday.com",
     docsUrl: "https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://auth.monday.com/oauth2/authorize",
-      tokenUrl: "https://auth.monday.com/oauth_ms/oauth/token",
-      registrationUrl: "https://auth.monday.com/oauth_ms/oauth/register",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "neon",
@@ -697,12 +472,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.neon.tech/mcp",
     publisher: "neon.com",
     docsUrl: "https://neon.com/docs/ai/neon-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.neon.tech/api/authorize",
-      tokenUrl: "https://mcp.neon.tech/api/token",
-      registrationUrl: "https://mcp.neon.tech/api/register",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "netlify",
@@ -712,13 +482,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://netlify-mcp.netlify.app/mcp",
     publisher: "netlify.com",
     docsUrl: "https://docs.netlify.com/build/build-with-ai/netlify-mcp-server/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://netlify-mcp.netlify.app/oauth-server/auth",
-      tokenUrl: "https://netlify-mcp.netlify.app/oauth-server/token",
-      registrationUrl: "https://netlify-mcp.netlify.app/oauth-server/reg",
-      scopes: ["offline_access", "read", "write", "claudeai"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "notion",
@@ -728,14 +492,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.notion.com/mcp",
     publisher: "notion.com",
     docsUrl: "https://developers.notion.com/guides/mcp/get-started-with-mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.notion.com/authorize",
-      tokenUrl: "https://mcp.notion.com/token",
-      registrationUrl: "https://mcp.notion.com/register",
-      clientIdMetadata: true,
-      scopes: ["default"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "perplexity",
@@ -745,14 +502,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://api.perplexity.ai/mcp",
     publisher: "perplexity.ai",
     docsUrl: "https://docs.perplexity.ai/guides/mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://api.perplexity.ai/oauth/authorize",
-      tokenUrl: "https://api.perplexity.ai/oauth/token",
-      registrationUrl: "https://api.perplexity.ai/oauth/register",
-      clientIdMetadata: true,
-      scopes: ["perplexity_api"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "planetscale",
@@ -762,12 +512,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.pscale.dev/mcp/planetscale",
     publisher: "planetscale.com",
     docsUrl: "https://planetscale.com/docs/connect/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://app.planetscale.com/oauth/authorize",
-      tokenUrl: "https://auth.planetscale.com/oauth/token",
-      registrationUrl: "https://auth.planetscale.com/oauth/registration",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "posthog",
@@ -779,10 +524,6 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     docsUrl: "https://posthog.com/docs/model-context-protocol",
     auth: {
       type: "oauth2",
-      authorizeUrl: "https://oauth.posthog.com/oauth/authorize/",
-      tokenUrl: "https://oauth.posthog.com/oauth/token/",
-      registrationUrl: "https://oauth.posthog.com/oauth/register/",
-      clientIdMetadata: true,
       scopes: [
         "openid",
         "profile",
@@ -952,12 +693,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     publisher: "postman.com",
     docsUrl:
       "https://learning.postman.com/latest-v-12/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.postman.com/authorize",
-      tokenUrl: "https://mcp.postman.com/token",
-      registrationUrl: "https://mcp.postman.com/register",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "prisma",
@@ -967,13 +703,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.prisma.io/mcp",
     publisher: "prisma.io",
     docsUrl: "https://www.prisma.io/docs/postgres/integrations/mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://auth.prisma.io/authorize",
-      tokenUrl: "https://auth.prisma.io/token",
-      registrationUrl: "https://auth.prisma.io/register",
-      scopes: ["workspace:admin", "offline_access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "pulumi",
@@ -983,13 +713,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.ai.pulumi.com/mcp",
     publisher: "pulumi.com",
     docsUrl: "https://www.pulumi.com/docs/iac/guides/ai-integration/mcp-server/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.ai.pulumi.com/oauth/authorize",
-      tokenUrl: "https://mcp.ai.pulumi.com/oauth/token",
-      registrationUrl: "https://mcp.ai.pulumi.com/oauth/register",
-      scopes: ["mcp.read", "mcp.write", "pulumi:read", "pulumi:write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "railway",
@@ -999,14 +723,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.railway.com",
     publisher: "railway.com",
     docsUrl: "https://docs.railway.com/ai/remote-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://backboard.railway.com/oauth/auth",
-      tokenUrl: "https://backboard.railway.com/oauth/token",
-      registrationUrl: "https://backboard.railway.com/oauth/register",
-      clientIdMetadata: true,
-      scopes: ["workspace:member"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "render",
@@ -1026,13 +743,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.resend.com/mcp",
     publisher: "resend.com",
     docsUrl: "https://resend.com/changelog/remote-mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://api.resend.com/oauth/authorize",
-      tokenUrl: "https://api.resend.com/oauth/token",
-      registrationUrl: "https://api.resend.com/oauth/register",
-      clientIdMetadata: true,
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "sanity",
@@ -1042,13 +753,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.sanity.io",
     publisher: "sanity.io",
     docsUrl: "https://www.sanity.io/docs/compute-and-ai/mcp-server",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.sanity.io/authorize",
-      tokenUrl: "https://mcp.sanity.io/token",
-      registrationUrl: "https://mcp.sanity.io/register",
-      scopes: ["global"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "semrush",
@@ -1058,13 +763,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.semrush.com/v2/mcp",
     publisher: "semrush.com",
     docsUrl: "https://developer.semrush.com/api/basics/semrush-mcp/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://api.semrush.com/apis/v4/auth/v0/oauth2/auth",
-      tokenUrl: "https://api.semrush.com/apis/v4-raw/auth/v1/oauth2/access_token",
-      registrationUrl: "https://api.semrush.com/apis/v4-raw/auth/v1/oauth2/register",
-      scopes: ["mcp.access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "sentry",
@@ -1074,14 +773,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.sentry.dev/mcp",
     publisher: "sentry.io",
     docsUrl: "https://docs.sentry.io/product/sentry-mcp/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.sentry.dev/oauth/authorize",
-      tokenUrl: "https://mcp.sentry.dev/oauth/token",
-      registrationUrl: "https://mcp.sentry.dev/oauth/register",
-      clientIdMetadata: true,
-      scopes: ["org:read", "project:write", "team:write", "event:write", "alerts:write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "shortcut",
@@ -1093,10 +785,6 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     docsUrl: "https://www.shortcut.com/help/integrations/mcp-server",
     auth: {
       type: "oauth2",
-      authorizeUrl: "https://api.app.shortcut.com/oauth-authorization-code-flow/code",
-      tokenUrl: "https://api.app.shortcut.com/oauth-authorization-code-flow/token",
-      registrationUrl: "https://api.app.shortcut.com/oauth-client-registration-flow/register",
-      clientIdMetadata: true,
       scopes: ["openid"],
     },
   },
@@ -1108,13 +796,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.stripe.com",
     publisher: "stripe.com",
     docsUrl: "https://docs.stripe.com/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://access.stripe.com/mcp/oauth2/authorize",
-      tokenUrl: "https://access.stripe.com/mcp/oauth2/token",
-      registrationUrl: "https://access.stripe.com/mcp/oauth2/register",
-      scopes: ["mcp"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "supabase",
@@ -1124,27 +806,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.supabase.com/mcp",
     publisher: "supabase.com",
     docsUrl: "https://supabase.com/docs/guides/getting-started/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://api.supabase.com/v1/oauth/authorize",
-      tokenUrl: "https://api.supabase.com/v1/oauth/token",
-      registrationUrl: "https://api.supabase.com/platform/oauth/apps/register",
-      scopes: [
-        "organizations:read",
-        "projects:read",
-        "projects:write",
-        "database:write",
-        "database:read",
-        "analytics:read",
-        "secrets:read",
-        "edge_functions:read",
-        "edge_functions:write",
-        "environment:read",
-        "environment:write",
-        "storage:read",
-        "storage:write",
-      ],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "tavily",
@@ -1154,14 +816,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.tavily.com/mcp",
     publisher: "tavily.com",
     docsUrl: "https://docs.tavily.com/documentation/mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.tavily.com/authorize",
-      tokenUrl: "https://mcp.tavily.com/token",
-      registrationUrl: "https://mcp.tavily.com/register",
-      clientIdMetadata: true,
-      scopes: ["openid", "offline_access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "todoist",
@@ -1171,14 +826,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://ai.todoist.net/mcp",
     publisher: "todoist.com",
     docsUrl: "https://developer.todoist.com/api/v1/",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://todoist.com/oauth/authorize",
-      tokenUrl: "https://todoist.com/oauth/access_token",
-      registrationUrl: "https://todoist.com/oauth/register",
-      clientIdMetadata: true,
-      scopes: ["data:read_write"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "vercel",
@@ -1188,13 +836,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.vercel.com",
     publisher: "vercel.com",
     docsUrl: "https://vercel.com/docs/mcp/vercel-mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://vercel.com/oauth/authorize",
-      tokenUrl: "https://api.vercel.com/login/oauth/token",
-      registrationUrl: "https://api.vercel.com/login/oauth/register",
-      scopes: ["openid"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "webflow",
@@ -1204,12 +846,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.webflow.com/mcp",
     publisher: "webflow.com",
     docsUrl: "https://developers.webflow.com/mcp/reference/getting-started",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.webflow.com/oauth/authorize",
-      tokenUrl: "https://mcp.webflow.com/oauth/token",
-      registrationUrl: "https://mcp.webflow.com/oauth/register",
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "wix",
@@ -1219,13 +856,7 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.wix.com/mcp",
     publisher: "wix.com",
     docsUrl: "https://dev.wix.com/docs/sdk/articles/use-the-wix-mcp/about-the-wix-mcp",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.wix.com/authorize",
-      tokenUrl: "https://mcp.wix.com/token",
-      registrationUrl: "https://mcp.wix.com/register",
-      scopes: ["offline_access"],
-    },
+    auth: { type: "oauth2" },
   },
   {
     id: "zapier",
@@ -1235,12 +866,6 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = [
     url: "https://mcp.zapier.com/api/v1/connect",
     publisher: "zapier.com",
     docsUrl: "https://docs.zapier.com/mcp/overview/how-connections-work",
-    auth: {
-      type: "oauth2",
-      authorizeUrl: "https://mcp.zapier.com/oauth/authorize",
-      tokenUrl: "https://mcp.zapier.com/api/v1/oauth/token",
-      registrationUrl: "https://mcp.zapier.com/api/v1/oauth/register",
-      scopes: ["openid", "profile", "email"],
-    },
+    auth: { type: "oauth2" },
   },
 ];

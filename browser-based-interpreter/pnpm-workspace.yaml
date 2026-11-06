@@ -1,9 +1,5 @@
 overrides:
-  '@afm/adapter-model>@afm/engine@workspace:*': '-'
-  '@afm/adapter-secret>@afm/engine@workspace:*': '-'
-  '@afm/adapter-tool>@afm/engine@workspace:*': '-'
-  '@afm/adapter-tool>@afm/adapter-auth@workspace:*': '-'
-  '@afm/adapter-auth>@afm/engine@workspace:*': '-'
+  '@afm/runtime>@afm/engine@workspace:*': '-'
   fast-uri: '>=4.2.3'
   ip-address: '>=10.7.4'
   hono: '>=4.13.11'
@@ -18,19 +14,9 @@ overrides:
   'body-parser@>=2.0.0 <2.4.0': '^2.4.0'
   'undici@>=6.23.0 <6.29.1': '^6.29.1'
 packageExtensions:
-  '@afm/adapter-auth@0.0.0':
+  '@afm/runtime@0.0.0':
     peerDependencies:
       '@afm/engine': '0.0.0'
-  '@afm/adapter-model@0.0.0':
-    peerDependencies:
-      '@afm/engine': '0.0.0'
-  '@afm/adapter-secret@0.0.0':
-    peerDependencies:
-      '@afm/engine': '0.0.0'
-  '@afm/adapter-tool@0.0.0':
-    peerDependencies:
-      '@afm/engine': '0.0.0'
-      '@afm/adapter-auth': '0.0.0'
 blockExoticSubdeps: true
 allowBuilds:
   esbuild: true

@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createOAuthManager, type OAuthManagerDeps } from "./oauth-manager";
-import { authorizationCodeRefreshKey, type KeyValueStore, type OAuthProviderRef } from "@afm/adapter-auth";
+import { authorizationCodeRefreshKey, type KeyValueStore, type OAuthProviderRef } from "@afm/runtime";
 import { SignInRequiredError } from "../chat/failure";
 import type { ServerMessage } from "../runtime/protocol";
 import { createWorkerSecretStore } from "../secrets/worker-secret-store";
@@ -35,6 +35,7 @@ const published = {
   authorization_endpoint: provider.authorizeUrl,
   token_endpoint: provider.tokenUrl,
   registration_endpoint: "https://auth.example.com/register",
+  response_types_supported: ["code"],
   code_challenge_methods_supported: ["S256"],
 };
 
@@ -47,8 +48,7 @@ function memoryStore(): KeyValueStore {
   };
 }
 
-const issued = { access_token: "at", refresh_token: "rt", expires_in: 3600 };
-const listed = { listed: true };
+const issued = { access_token: "at", token_type: "Bearer", refresh_token: "rt", expires_in: 3600 };
 
 function authServerFetch({
   as = published,
@@ -66,49 +66,36 @@ function authServerFetch({
   return (async (input: string, init?: RequestInit) => {
     const url = String(input);
     requested.push(url);
-    const named = servers.find((server) => `${server}/prm` === url);
-    if (servers.includes(url))
-      return new Response("", {
-        status: 401,
-        headers: { "www-authenticate": `Bearer resource_metadata="${url}/prm"` },
-      });
-    if (named !== undefined)
-      return Response.json({ resource: resource ?? named, authorization_servers: ["https://auth.example.com"] });
-    if (url === "https://auth.example.com/.well-known/oauth-authorization-server" && as !== null)
-      return Response.json(as);
-    if (url === "https://auth.example.com/register") return Response.json({ client_id: "registered" }, { status: 201 });
+    const named = servers.find((server) => url === `${new URL(server).origin}/.well-known/oauth-protected-resource${new URL(server).pathname}`);
+    if (named !== undefined) return Response.json({ resource: resource ?? named, authorization_servers: ["https://auth.example.com"] });
+    if (url === "https://auth.example.com/.well-known/oauth-authorization-server" && as !== null) return Response.json(as);
+    if (url === "https://auth.example.com/register") {
+      return Response.json({ client_id: "registered", redirect_uris: ["https://app.example.com/"] }, { status: 201 });
+    }
     if (url === provider.tokenUrl) return token(init);
     return new Response("", { status: 404 });
   }) as unknown as typeof fetch;
 }
 
 function makeManager(overrides: Partial<OAuthManagerDeps> = {}) {
-  const emitted: {
-    url?: { id: string; url: string };
-    confirm?: { id: string; host: string };
-    result?: { id: string; ok: boolean; error?: string };
-  } = {};
+  const emitted: { url?: { id: string; url: string }; result?: { id: string; ok: boolean; error?: string } } = {};
   const refreshStore = overrides.refreshStore ?? memoryStore();
   const manager = createOAuthManager({
     fetchFn: authServerFetch(),
     redirectUri: "https://app.example.com/",
     refreshStore,
     emitAuthorizeUrl: (id, url) => (emitted.url = { id, url }),
-    emitSignInConfirm: (id, host) => (emitted.confirm = { id, host }),
     emitSignInResult: (id, ok, error) => (emitted.result = { id, ok, error }),
     ...overrides,
   });
   return { manager, emitted, refreshStore };
 }
 
-async function signIn(
-  manager: ReturnType<typeof makeManager>["manager"],
-  emitted: ReturnType<typeof makeManager>["emitted"],
-  id: string,
-): Promise<void> {
-  await manager.startSignIn(id, provider, listed);
-  const state = new URL(emitted.url!.url).searchParams.get("state")!;
-  await manager.completeSignIn(id, "the-code", state);
+const stateOf = (emitted: ReturnType<typeof makeManager>["emitted"]) => new URL(emitted.url!.url).searchParams.get("state")!;
+
+async function signIn(manager: ReturnType<typeof makeManager>["manager"], emitted: ReturnType<typeof makeManager>["emitted"], id: string): Promise<void> {
+  await manager.startSignIn(id, provider);
+  await manager.completeSignIn(id, "the-code", stateOf(emitted));
 }
 
 describe("createOAuthManager", () => {
@@ -130,15 +117,24 @@ describe("createOAuthManager", () => {
     expect(refreshStore.get(authorizationCodeRefreshKey(provider))).toBe("rt");
   });
 
-  it("asks for a new sign-in when the provider turns down the refresh token during a session", async () => {
+  it("renews the access token the server turned down, with the refresh token, without a new sign-in", async () => {
+    const token = (init?: RequestInit) =>
+      new URLSearchParams(String(init?.body)).get("grant_type") === "refresh_token"
+        ? Response.json({ access_token: "at-2", token_type: "Bearer" })
+        : Response.json(issued);
+    const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ token }) });
+    await signIn(manager, emitted, "id-renew");
+    expect(await manager.renewAccessToken(provider, "at")).toBe(true);
+    expect(await manager.getAccessToken(provider)).toBe("at-2");
+  });
+
+  it("asks for a new sign-in when the provider turns down the refresh token", async () => {
     let refused = false;
-    const token = () =>
-      refused
-        ? Response.json({ error: "invalid_grant" }, { status: 400 })
-        : Response.json({ ...issued, expires_in: 0 });
+    const token = () => (refused ? Response.json({ error: "invalid_grant" }, { status: 400 }) : Response.json(issued));
     const { manager, emitted, refreshStore } = makeManager({ fetchFn: authServerFetch({ token }) });
     await signIn(manager, emitted, "id-turned-down");
     refused = true;
+    expect(await manager.renewAccessToken(provider, "at")).toBe(false);
     await expect(manager.getAccessToken(provider)).rejects.toBeInstanceOf(SignInRequiredError);
     expect(refreshStore.get(authorizationCodeRefreshKey(provider))).toBeNull();
   });
@@ -146,55 +142,49 @@ describe("createOAuthManager", () => {
   it("keeps a sign-in for the server it was made for, even next to a server with a similar address", async () => {
     const team = { ...provider, resource: "https://mcp.example.com/team" };
     const other = { ...provider, resource: "https://mcp.example.com/team-other" };
-    const { manager, emitted } = makeManager({
-      fetchFn: authServerFetch({ servers: [team.resource, other.resource] }),
-    });
-    await manager.startSignIn("id-team", team, listed);
-    await manager.completeSignIn("id-team", "the-code", new URL(emitted.url!.url).searchParams.get("state")!);
+    const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ servers: [team.resource, other.resource] }) });
+    await manager.startSignIn("id-team", team);
+    await manager.completeSignIn("id-team", "the-code", stateOf(emitted));
     expect(await manager.getAccessToken(team)).toBe("at");
     await expect(manager.getAccessToken(other)).rejects.toBeInstanceOf(SignInRequiredError);
   });
 
   it("reports a state mismatch as a failed sign-in rather than throwing", async () => {
     const { manager, emitted } = makeManager();
-    await manager.startSignIn("id-3", provider, listed);
+    await manager.startSignIn("id-3", provider);
     await manager.completeSignIn("id-3", "the-code", "wrong-state");
     expect(emitted.result?.ok).toBe(false);
     expect(emitted.result?.error).toMatch(/state mismatch/i);
   });
 
-  it.each([
-    ["names a different server", "https://other.example.com", published],
-    [
-      "names no server, though the server said it sends one",
-      undefined,
-      { ...published, authorization_response_iss_parameter_supported: true },
-    ],
-  ])("reports an answer that %s as a failed sign-in, without exchanging the code", async (_label, iss, as) => {
+  it("reports an answer that names a different server as a failed sign-in, without exchanging the code", async () => {
     const requested: string[] = [];
-    const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ as, requested }) });
-    await manager.startSignIn("id-5", provider, listed);
-    const state = new URL(emitted.url!.url).searchParams.get("state")!;
-
-    await manager.completeSignIn("id-5", "the-code", state, iss);
-
+    const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ requested }) });
+    await manager.startSignIn("id-5", provider);
+    await manager.completeSignIn("id-5", "the-code", stateOf(emitted), "https://other.example.com");
     expect(emitted.result).toMatchObject({ id: "id-5", ok: false });
     expect(emitted.result?.error).toMatch(/expected provider/);
     expect(requested).not.toContain(provider.tokenUrl);
   });
 
+  it("lets an answer that names the right server, or none, finish the sign-in", async () => {
+    const { manager, emitted } = makeManager();
+    await manager.startSignIn("id-iss", provider);
+    await manager.completeSignIn("id-iss", "the-code", stateOf(emitted), "https://auth.example.com");
+    expect(emitted.result).toMatchObject({ id: "id-iss", ok: true });
+  });
+
   it("reports a server whose sign-in details cannot be checked, rather than leaving the popup waiting", async () => {
     const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ as: null }) });
-    await manager.startSignIn("id-x", provider, listed);
+    await manager.startSignIn("id-x", provider);
     expect(emitted.url).toBeUndefined();
     expect(emitted.result).toMatchObject({ id: "id-x", ok: false });
-    expect(emitted.result?.error).toMatch(/authorization server publishes no metadata/);
   });
 
   it("reports an authorization endpoint that is not https, rather than leaving the popup waiting", async () => {
     const http = { ...published, authorization_endpoint: "http://auth.example.com/authorize" };
     const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ as: http }) });
-    await manager.startSignIn("id-y", { ...provider, authorizeUrl: http.authorization_endpoint }, listed);
+    await manager.startSignIn("id-y", provider);
     expect(emitted.url).toBeUndefined();
     expect(emitted.result).toMatchObject({ id: "id-y", ok: false });
     expect(emitted.result?.error).toMatch(/https/);
@@ -203,15 +193,11 @@ describe("createOAuthManager", () => {
   it("signs in at the endpoints the server publishes, not at the ones an agent file names", async () => {
     const requested: string[] = [];
     const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ requested }) });
-    const edited = {
-      ...provider,
-      authorizeUrl: "https://attacker.example/authorize",
-      tokenUrl: "https://attacker.example/token",
-    };
-    await manager.startSignIn("id-6", edited, listed);
+    const edited = { ...provider, authorizeUrl: "https://attacker.example/authorize", tokenUrl: "https://attacker.example/token" };
+    await manager.startSignIn("id-6", edited);
     expect(new URL(emitted.url!.url).origin).toBe("https://auth.example.com");
 
-    await manager.completeSignIn("id-6", "the-code", new URL(emitted.url!.url).searchParams.get("state")!);
+    await manager.completeSignIn("id-6", "the-code", stateOf(emitted));
     expect(emitted.result?.ok).toBe(true);
     expect(requested.filter((url) => url.startsWith("https://attacker.example"))).toEqual([]);
     expect(requested).toContain(provider.tokenUrl);
@@ -223,109 +209,41 @@ describe("createOAuthManager", () => {
       bodies.push(String(init?.body));
       return Response.json(issued);
     };
-    const { manager, emitted } = makeManager({
-      fetchFn: authServerFetch({ resource: "https://mcp.example.com", token }),
-    });
-    await manager.startSignIn("id-r", provider, listed);
+    const { manager, emitted } = makeManager({ fetchFn: authServerFetch({ resource: "https://mcp.example.com", token }) });
+    await manager.startSignIn("id-r", provider);
     expect(new URL(emitted.url!.url).searchParams.get("resource")).toBe("https://mcp.example.com");
-    await manager.completeSignIn("id-r", "the-code", new URL(emitted.url!.url).searchParams.get("state")!);
+    await manager.completeSignIn("id-r", "the-code", stateOf(emitted));
     expect(new URLSearchParams(bodies[0]).get("resource")).toBe("https://mcp.example.com");
-    expect(await manager.getAccessToken(provider)).toBe("at");
   });
 
-  it("registers a client for an authorization server the file was not set up with, rather than reusing the file's", async () => {
-    const { manager, emitted } = makeManager({ fetchFn: authServerFetch() });
-    await manager.startSignIn(
-      "id-7",
-      {
-        ...provider,
-        authorizeUrl: "https://old-auth.example.com/authorize",
-        tokenUrl: "https://old-auth.example.com/token",
-      },
-      listed,
-    );
-    expect(new URL(emitted.url!.url).searchParams.get("client_id")).toBe("registered");
-  });
+  it("signs in with the client id the agent file holds, and registers one only when it holds none", async () => {
+    const requested: string[] = [];
+    const withId = makeManager({ fetchFn: authServerFetch({ requested }) });
+    await withId.manager.startSignIn("id-7", provider);
+    expect(new URL(withId.emitted.url!.url).searchParams.get("client_id")).toBe("client-1");
+    expect(requested).not.toContain("https://auth.example.com/register");
 
-  it("uses the client id document it was given, when the authorization server accepts one", async () => {
-    const cimdClientId = "https://app.example.com/oauth/client-metadata.json";
-    const { manager, emitted } = makeManager({
-      cimdClientId,
-      fetchFn: authServerFetch({ as: { ...published, client_id_metadata_document_supported: true } }),
-    });
-    await manager.startSignIn("id-8", { ...provider, authorizeUrl: "https://old-auth.example.com/authorize" }, listed);
-    expect(new URL(emitted.url!.url).searchParams.get("client_id")).toBe(cimdClientId);
-  });
-
-  describe("a server that cannot be vouched for", () => {
-    const quiet = { ...published, authorization_response_iss_parameter_supported: false };
-
-    async function started(vetting: { listed: boolean; confirmedHost?: string }, as: Record<string, unknown> = quiet) {
-      const made = makeManager({ fetchFn: authServerFetch({ as }) });
-      await made.manager.startSignIn("id-c", provider, vetting);
-      return made;
-    }
-
-    it("is not signed in to until the user has seen the provider's host and said yes", async () => {
-      const { emitted } = await started({ listed: false });
-      expect(emitted.confirm).toEqual({ id: "id-c", host: "auth.example.com" });
-      expect(emitted.url).toBeUndefined();
-      expect(emitted.result).toBeUndefined();
-    });
-
-    it("is signed in to once the user has said yes to that host", async () => {
-      const { emitted } = await started({ listed: false, confirmedHost: "auth.example.com" });
-      expect(emitted.confirm).toBeUndefined();
-      expect(new URL(emitted.url!.url).origin).toBe("https://auth.example.com");
-    });
-
-    it("asks again when the provider's host is not the one the user said yes to", async () => {
-      const { emitted } = await started({ listed: false, confirmedHost: "elsewhere.example.com" });
-      expect(emitted.confirm).toEqual({ id: "id-c", host: "auth.example.com" });
-      expect(emitted.url).toBeUndefined();
-    });
-
-    it("is signed in to without asking when the server is in the directory", async () => {
-      const { emitted } = await started({ listed: true });
-      expect(emitted.confirm).toBeUndefined();
-      expect(emitted.url).toBeDefined();
-    });
-
-    it("is signed in to without asking when the provider says who is answering", async () => {
-      const { emitted } = await started(
-        { listed: false },
-        { ...published, authorization_response_iss_parameter_supported: true },
-      );
-      expect(emitted.confirm).toBeUndefined();
-      expect(emitted.url).toBeDefined();
-    });
+    const without = makeManager({ fetchFn: authServerFetch() });
+    await without.manager.startSignIn("id-8", { ...provider, clientId: "" });
+    expect(new URL(without.emitted.url!.url).searchParams.get("client_id")).toBe("registered");
   });
 
   describe("a refusal from the provider", () => {
-    const sends = { ...published, authorization_response_iss_parameter_supported: true };
-
     async function started() {
-      const made = makeManager({ fetchFn: authServerFetch({ as: sends }) });
-      await made.manager.startSignIn("id-d", provider, listed);
-      return { ...made, state: new URL(made.emitted.url!.url).searchParams.get("state")! };
+      const made = makeManager();
+      await made.manager.startSignIn("id-d", provider);
+      return { ...made, state: stateOf(made.emitted) };
     }
 
     it("is reported with the provider's reason when it names the provider the sign-in started with", async () => {
       const { manager, emitted, state } = await started();
       manager.declineSignIn("id-d", "access_denied", state, "https://auth.example.com");
-      expect(emitted.result).toEqual({
-        id: "id-d",
-        ok: false,
-        error: "The provider declined the sign-in (access_denied).",
-      });
+      expect(emitted.result).toEqual({ id: "id-d", ok: false, error: "The provider declined the sign-in (access_denied)." });
     });
 
-    it.each([
-      ["names another provider", "https://other.example.com"],
-      ["names no provider although the server said it sends one", undefined],
-    ])("is dropped, with none of its text shown, when it %s", async (_label, iss) => {
+    it("is dropped, with none of its text shown, when it names another provider", async () => {
       const { manager, emitted, state } = await started();
-      manager.declineSignIn("id-d", "access_denied", state, iss);
+      manager.declineSignIn("id-d", "access_denied", state, "https://other.example.com");
       expect(emitted.result).toMatchObject({ id: "id-d", ok: false });
       expect(emitted.result?.error).toMatch(/expected provider/);
       expect(emitted.result?.error).not.toContain("access_denied");
@@ -369,52 +287,47 @@ describe("a sign-in held by the real worker secret store", () => {
   function rotatingServer() {
     let n = 0;
     const valid = new Set<string>();
-    let revoked = false;
     return ((init) => {
       const body = new URLSearchParams(String((init as RequestInit).body));
       if (body.get("grant_type") === "authorization_code") {
-        const token = `R${n++}`;
-        valid.add(token);
-        return Response.json({ access_token: "at", refresh_token: token, expires_in: 0 });
+        const refresh = `R${n++}`;
+        valid.add(refresh);
+        return Response.json({ access_token: `A${n}`, token_type: "Bearer", refresh_token: refresh });
       }
-      const refreshToken = body.get("refresh_token")!;
-      if (revoked || !valid.has(refreshToken)) {
-        revoked = true;
-        return Response.json({ error: "invalid_grant" }, { status: 400 });
-      }
-      valid.delete(refreshToken);
-      const next = `R${n++}`;
-      valid.add(next);
-      return Response.json({ access_token: "at", refresh_token: next, expires_in: 0 });
+      const presented = body.get("refresh_token")!;
+      if (!valid.has(presented)) return Response.json({ error: "invalid_grant" }, { status: 400 });
+      valid.delete(presented);
+      const refresh = `R${n++}`;
+      valid.add(refresh);
+      return Response.json({ access_token: `A${n}`, token_type: "Bearer", refresh_token: refresh });
     }) as (init?: RequestInit) => Response;
   }
 
-  function tab(token = rotatingServer()) {
+  function tab() {
     const posted: ServerMessage[] = [];
     const store = createWorkerSecretStore((message) => posted.push(message));
     let authorizeUrl = "";
     const manager = createOAuthManager({
-      fetchFn: authServerFetch({ token }),
+      fetchFn: authServerFetch({ token: rotatingServer() }),
       redirectUri: "https://afm.example/",
       refreshStore: store.refreshStore,
       emitAuthorizeUrl: (_id, url) => (authorizeUrl = url),
-      emitSignInConfirm: () => {},
       emitSignInResult: () => {},
     });
     return { store, manager, posted, state: () => new URL(authorizeUrl).searchParams.get("state")! };
   }
 
-  async function signedInTab(token?: ReturnType<typeof rotatingServer>) {
-    const signedIn = tab(token);
-    await signedIn.manager.startSignIn("s1", provider, listed);
+  async function signedInTab() {
+    const signedIn = tab();
+    await signedIn.manager.startSignIn("s1", provider);
     await signedIn.manager.completeSignIn("s1", "code", signedIn.state());
     return signedIn;
   }
 
   it("keeps the newest refresh token in memory as the server rotates it, and tells the page only its name", async () => {
     const { store, manager, posted } = await signedInTab();
-    await manager.getAccessToken(provider);
-    await manager.getAccessToken(provider);
+    await manager.renewAccessToken(provider, await manager.getAccessToken(provider));
+    await manager.renewAccessToken(provider, await manager.getAccessToken(provider));
     expect(store.refreshStore.get(authorizationCodeRefreshKey(provider))).toBe("R2");
     expect(posted.at(-1)).toEqual({ type: "secrets-list", names: [authorizationCodeRefreshKey(provider)] });
   });

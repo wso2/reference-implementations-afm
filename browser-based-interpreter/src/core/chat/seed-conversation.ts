@@ -14,29 +14,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type ChatMessage, type ToolCall } from "@afm/engine";
+import { type ModelMessage } from "@afm/runtime";
 import { type UiMessage } from "./chat-state";
 import { userContent } from "./chat-text";
 
-export function toSeededConversation(messages: UiMessage[]): ChatMessage[] {
-  const conversation: ChatMessage[] = [];
+export function toSeededConversation(messages: UiMessage[]): ModelMessage[] {
+  const conversation: ModelMessage[] = [];
   let assistantText: string | null = null;
-  let toolCalls: ToolCall[] = [];
-  let toolResults: { id: string; content: string }[] = [];
+  let calls: { id: string; name: string; args: unknown; result: string }[] = [];
 
   function flush(): void {
-    if (assistantText === null && toolCalls.length === 0) return;
-    conversation.push(
-      toolCalls.length > 0
-        ? { role: "assistant", content: assistantText ?? "", toolCalls }
-        : { role: "assistant", content: assistantText ?? "" },
-    );
-    for (const result of toolResults) {
-      conversation.push({ role: "tool", toolCallId: result.id, content: result.content });
+    if (assistantText === null && calls.length === 0) return;
+    if (calls.length === 0) {
+      conversation.push({ role: "assistant", content: assistantText ?? "" });
+    } else {
+      conversation.push({
+        role: "assistant",
+        content: [
+          ...(assistantText ? [{ type: "text" as const, text: assistantText }] : []),
+          ...calls.map(({ id, name, args }) => ({ type: "tool-call" as const, toolCallId: id, toolName: name, input: args })),
+        ],
+      });
+      conversation.push({
+        role: "tool",
+        content: calls.map(({ id, name, result }) => ({
+          type: "tool-result" as const,
+          toolCallId: id,
+          toolName: name,
+          output: { type: "text" as const, value: result },
+        })),
+      });
     }
     assistantText = null;
-    toolCalls = [];
-    toolResults = [];
+    calls = [];
   }
 
   for (const message of messages) {
@@ -47,8 +57,7 @@ export function toSeededConversation(messages: UiMessage[]): ChatMessage[] {
       flush();
       assistantText = message.text;
     } else if (message.kind === "tool") {
-      toolCalls.push({ id: message.callId, name: message.name, args: message.args });
-      toolResults.push({ id: message.callId, content: message.result ?? "" });
+      calls.push({ id: message.callId, name: message.name, args: message.args, result: message.result ?? "" });
     }
   }
   flush();

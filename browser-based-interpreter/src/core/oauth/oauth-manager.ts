@@ -17,28 +17,25 @@
 import {
   authorizationCodeProviderKey,
   createAuthorizationCodeSession,
-  discoverSignInServer,
   type AuthorizationCodeSession,
   type KeyValueStore,
   type OAuthProviderRef,
-} from "@afm/adapter-auth";
+} from "@afm/runtime";
 import { describeError } from "@afm/engine";
 import { SignInRequiredError } from "../chat/failure";
-import type { SignInVetting } from "../runtime/protocol";
 
 export interface OAuthManagerDeps {
   fetchFn: typeof fetch;
   redirectUri: string;
-  cimdClientId?: string;
   refreshStore: KeyValueStore;
   emitAuthorizeUrl: (id: string, url: string) => void;
-  emitSignInConfirm: (id: string, host: string) => void;
   emitSignInResult: (id: string, ok: boolean, error?: string) => void;
 }
 
 interface OAuthManager {
   getAccessToken(provider: OAuthProviderRef): Promise<string>;
-  startSignIn(id: string, provider: OAuthProviderRef, vetting: SignInVetting): Promise<void>;
+  renewAccessToken(provider: OAuthProviderRef, rejectedToken: string): Promise<boolean>;
+  startSignIn(id: string, provider: OAuthProviderRef): Promise<void>;
   completeSignIn(id: string, code: string, state: string, iss?: string): Promise<void>;
   declineSignIn(id: string, error: string, state: string, iss?: string): void;
   signOut(provider: OAuthProviderRef): void;
@@ -52,7 +49,7 @@ export function createOAuthManager(deps: OAuthManagerDeps): OAuthManager {
     const key = authorizationCodeProviderKey(provider);
     let session = sessions.get(key);
     if (session === undefined) {
-      session = createAuthorizationCodeSession({ ...provider, redirectUri: deps.redirectUri }, deps.refreshStore);
+      session = createAuthorizationCodeSession({ ...provider, redirectUri: deps.redirectUri }, deps.refreshStore, deps.fetchFn);
       sessions.set(key, session);
     }
     return session;
@@ -67,23 +64,17 @@ export function createOAuthManager(deps: OAuthManagerDeps): OAuthManager {
 
   return {
     async getAccessToken(provider) {
-      const session = sessionFor(provider);
-      const token = await session.getAccessToken(deps.fetchFn);
+      const token = sessionFor(provider).accessToken();
       if (token !== null) return token;
       throw new SignInRequiredError();
     },
 
-    async startSignIn(id, provider, vetting) {
+    renewAccessToken: (provider, rejectedToken) => sessionFor(provider).renew(rejectedToken),
+
+    async startSignIn(id, provider) {
       inFlight.set(id, provider);
       try {
-        const server = await discoverSignInServer(provider, deps);
-        const host = new URL(server.issuer).host;
-        if (!vetting.listed && !server.issuerSent && vetting.confirmedHost !== host) {
-          inFlight.delete(id);
-          deps.emitSignInConfirm(id, host);
-          return;
-        }
-        await sessionFor(provider).startSignIn(server, (url) => deps.emitAuthorizeUrl(id, url));
+        await sessionFor(provider).startSignIn((url) => deps.emitAuthorizeUrl(id, url));
       } catch (error) {
         inFlight.delete(id);
         deps.emitSignInResult(id, false, describeError(error));
@@ -94,7 +85,7 @@ export function createOAuthManager(deps: OAuthManagerDeps): OAuthManager {
       const provider = waitingProvider(id);
       if (provider === undefined) return;
       try {
-        await sessionFor(provider).completeSignIn(code, state, { fetchFn: deps.fetchFn, iss });
+        await sessionFor(provider).completeSignIn(code, state, iss);
         deps.emitSignInResult(id, true);
       } catch (error) {
         deps.emitSignInResult(id, false, describeError(error));

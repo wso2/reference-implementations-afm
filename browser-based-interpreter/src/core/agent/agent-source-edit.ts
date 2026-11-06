@@ -74,7 +74,15 @@ export function agentBrief(content: string): string {
   return (end === null ? content : content.slice(end)).trim();
 }
 
-function unquoteScalar(raw: string): string {
+function withoutInlineComment(raw: string): string {
+  const quoted = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')[ \t]*(?:#.*)?$/.exec(raw);
+  if (quoted !== null) return quoted[1] ?? raw;
+  const at = raw.search(/(^|[ \t])#/);
+  return at === -1 ? raw : raw.slice(0, at).trimEnd();
+}
+
+function unquoteScalar(input: string): string {
+  const raw = withoutInlineComment(input);
   if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
     return raw.slice(1, -1).replace(/''/g, "'");
   }
@@ -220,7 +228,11 @@ export function setModelApiKey(content: string, value: string): string {
           `${indent}  api_key: ${value}`,
         );
       } else {
-        lines.splice(authAt + 1, 0, `${indentOf(lines[authAt], indent)}  api_key: ${value}`);
+        const authIndent = indentOf(lines[authAt], indent);
+        const firstChild = lines.slice(authAt + 1, block.end).find((line) => line.trim() !== "");
+        const childIndent =
+          firstChild !== undefined && indentOf(firstChild).length > authIndent.length ? indentOf(firstChild) : `${authIndent}  `;
+        lines.splice(authAt + 1, 0, `${childIndent}api_key: ${value}`);
       }
       return lines;
     }

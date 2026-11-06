@@ -26,7 +26,8 @@ import {
   serverMessageFromLoopEvent,
   permissionKey,
 } from "./protocol";
-import type { AgentMetadata, LoopEvent } from "@afm/engine";
+import type { AgentMetadata } from "@afm/engine";
+import type { LoopEvent } from "@afm/runtime";
 
 describe("serverMessageFromLoopEvent", () => {
   it("passes a text-delta through", () => {
@@ -52,18 +53,6 @@ describe("serverMessageFromLoopEvent", () => {
       ok: true,
       content: "r",
     });
-  });
-
-  it("leaves a tool's images and audio in the worker, since nothing on the page shows them", () => {
-    const event: LoopEvent = {
-      type: "tool-result",
-      id: "c1",
-      name: "t",
-      ok: true,
-      content: "r",
-      media: [{ kind: "image", data: "AAAA", mediaType: "image/png" }],
-    };
-    expect(serverMessageFromLoopEvent(event)).not.toHaveProperty("media");
   });
 
   it("passes a budget-update through", () => {

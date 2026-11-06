@@ -170,10 +170,12 @@ it("requests made after worker failure settle without queuing messages or openin
   const before = worker.posted.length;
   expect(await session.probeModel(undefined)).toMatchObject({ failure: { kind: "other" } });
   expect(
-    await session.startOAuthSignIn(
-      { authorizeUrl: "https://fake.example/a", tokenUrl: "https://fake.example/t", clientId: "fake" },
-      { listed: true },
-    ),
+    await session.startOAuthSignIn({
+      authorizeUrl: "https://fake.example/a",
+      tokenUrl: "https://fake.example/t",
+      clientId: "fake",
+      resource: "https://fake.example/mcp",
+    }),
   ).toMatchObject({ status: "failed" });
   expect(worker.posted).toHaveLength(before);
   cleanup();

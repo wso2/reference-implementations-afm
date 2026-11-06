@@ -14,20 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { compositeToolPort, namespacedToolName, ToolNameError } from "@afm/adapter-tool";
+import { type AgentMetadata, describeError, loadAfm, type LoadedAfm, type SecretPort } from "@afm/engine";
 import {
-  type AgentMetadata,
-  type ChatMessage,
-  type ContentPart,
-  describeError,
-  loadAfm,
-  type LoadedAfm,
-  type ModelPort,
+  createToolbox,
+  createToolGuard,
+  type LanguageModel,
+  type ModelMessage,
+  namespacedToolName,
   type PermissionBroker,
   runAgentTurn,
-  type SecretPort,
-  type ToolPort,
-} from "@afm/engine";
+  ToolNameError,
+  type ToolGuard,
+  type ToolSource,
+  type UserContent,
+} from "@afm/runtime";
 import { collectAfmIssues } from "../agent/agent-validation";
 import { userContent } from "../chat/chat-text";
 import {
@@ -76,10 +76,12 @@ function trustedAsAllowed(metadata: AgentMetadata, confirmed: ReadonlySet<string
   return keys;
 }
 
+type Toolbox = ReturnType<typeof createToolbox>;
+
 export interface AgentSessionDeps {
-  createModel: (model: AgentMetadata["model"]) => Promise<ModelPort>;
-  createTools: (metadata: AgentMetadata) => ToolPort;
-  filesTools: ToolPort;
+  createModel: (model: AgentMetadata["model"]) => Promise<LanguageModel>;
+  createTools: (metadata: AgentMetadata, guard: ToolGuard) => ToolSource[];
+  filesTools: (guard: ToolGuard) => ToolSource;
   describeAttachedFiles: () => string;
   secrets: SecretPort;
   permission: PermissionBroker;
@@ -89,9 +91,9 @@ export interface AgentSessionDeps {
 export class AgentSession {
   private loaded: LoadedAfm | null = null;
   private allowed = new Set<string>();
-  private model: ModelPort | null = null;
-  private tools: ToolPort | null = null;
-  private history: ChatMessage[] = [];
+  private model: LanguageModel | null = null;
+  private tools: Toolbox | null = null;
+  private history: ModelMessage[] = [];
   private controller: AbortController | null = null;
   private loadCount = 0;
 
@@ -103,7 +105,7 @@ export class AgentSession {
 
   async load(
     content: string,
-    seedHistory?: ChatMessage[],
+    seedHistory?: ModelMessage[],
     allowBrowserPreview = false,
     confirmedTools?: readonly string[],
   ): Promise<void> {
@@ -135,9 +137,8 @@ export class AgentSession {
       this.step("model", connecting, "done");
 
       stage = "tools";
-      const mcpTools = this.deps.createTools(loaded.metadata);
-
-      const tools = compositeToolPort([mcpTools, this.deps.filesTools]);
+      const guard = createToolGuard(this.permission);
+      const tools = createToolbox([...this.deps.createTools(loaded.metadata, guard), this.deps.filesTools(guard)]);
       const previousTools = this.tools;
       this.loaded = {
         ...loaded,
@@ -148,7 +149,7 @@ export class AgentSession {
       this.tools = tools;
       this.history = seedHistory ?? [];
       if (previousTools !== null) {
-        void previousTools.dispose?.().catch(() => {});
+        void previousTools.close().catch(() => {});
       }
       this.deps.emit({
         type: "loaded",
@@ -172,19 +173,16 @@ export class AgentSession {
     this.model = null;
     const staleTools = this.tools;
     this.tools = null;
-    if (staleTools !== null) void staleTools.dispose?.().catch(() => {});
+    if (staleTools !== null) void staleTools.close().catch(() => {});
     this.step(stage, STAGE_LABELS[stage] ?? "Starting the agent", "failed", reason);
     this.deps.emit({ type: "agent-not-ready", reason });
   }
 
-  private async reportTools(tools: ToolPort, current: () => boolean): Promise<void> {
+  private async reportTools(tools: Toolbox, current: () => boolean): Promise<void> {
     try {
-      const descriptors = await tools.list();
+      const { info } = await tools.tools();
       if (!current()) return;
-      this.deps.emit({
-        type: "tools-listed",
-        tools: descriptors.map((d) => ({ name: d.name, description: d.description, serverId: d.serverId })),
-      });
+      this.deps.emit({ type: "tools-listed", tools: info });
     } catch (error) {
       if (error instanceof ToolNameError && current()) this.refuse("tools", error);
     }
@@ -202,7 +200,7 @@ export class AgentSession {
     await this.sendContent(null);
   }
 
-  private async sendContent(content: string | ContentPart[] | null, keep?: number): Promise<void> {
+  private async sendContent(content: UserContent | null, keep?: number): Promise<void> {
     const loaded = this.loaded;
     const model = this.model;
     const tools = this.tools;
@@ -222,15 +220,15 @@ export class AgentSession {
     this.controller = controller;
     const current = (): boolean => this.controller === controller;
     let committed = false;
-    const messages: ChatMessage[] = content === null ? [...this.history] : [...this.history, { role: "user", content }];
+    const messages: ModelMessage[] = content === null ? [...this.history] : [...this.history, { role: "user", content }];
 
     try {
+      const { tools: toolSet } = await tools.tools();
       for await (const event of runAgentTurn({
         system: `${loaded.systemPrompt}\n${this.deps.describeAttachedFiles()}\n`,
         messages,
         model,
-        tools,
-        permission: this.permission,
+        tools: toolSet,
         budget: {
           maxIterations: loaded.metadata.max_iterations,
           maxTokens: MAX_TOKENS_PER_TURN,

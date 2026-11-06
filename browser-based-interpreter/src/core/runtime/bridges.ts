@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { ToolCall } from "@afm/engine";
+import type { ToolCall } from "@afm/runtime";
 
 function createPendingBridge<K, V>() {
   const pending = new Map<K, (value: V) => void>();

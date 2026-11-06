@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { isInteractiveOAuth } from "@afm/adapter-auth";
+import { isInteractiveOAuth } from "@afm/runtime";
 import { type AgentMetadata } from "@afm/engine";
 import { type ProbeResult } from "../runtime/protocol";
 import { findProvider, shortModelLabel } from "../agent/catalogs";
