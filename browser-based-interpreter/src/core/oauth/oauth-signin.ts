@@ -14,16 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type OAuthProviderRef } from "@afm/adapter-auth";
+import { type OAuthProviderRef } from "@afm/runtime";
 import { httpsUrl } from "../links/load-paths";
-import type { ClientMessage, SignInVetting } from "../runtime/protocol";
+import type { ClientMessage } from "../runtime/protocol";
 
 type PopupResult = { code: string; state: string; iss?: string } | { error: string; state: string; iss?: string };
 
-export type SignInOutcome =
-  | { status: "signed-in" }
-  | { status: "failed"; reason?: string }
-  | { status: "confirm"; host: string };
+export type SignInOutcome = { status: "signed-in" } | { status: "failed"; reason?: string };
 
 const POPUP_NAME = "afm-oauth-signin";
 const CALLBACK_CHANNEL = "afm-oauth-callback";
@@ -101,9 +98,8 @@ interface OAuthSignInDeps {
 
 export interface OAuthSignIns {
   dispose(): void;
-  start(provider: OAuthProviderRef, vetting: SignInVetting): Promise<SignInOutcome>;
+  start(provider: OAuthProviderRef): Promise<SignInOutcome>;
   onAuthorizeUrl(id: string, url: string): void;
-  onConfirm(id: string, host: string): void;
   onDone(id: string, ok: boolean, error?: string): void;
 }
 
@@ -136,7 +132,7 @@ export function createOAuthSignIns(deps: OAuthSignInDeps): OAuthSignIns {
       }
       flows.clear();
     },
-    start(provider, vetting) {
+    start(provider) {
       if ([...flows.values()].some((flow) => !flow.popup.closed && !flow.relayed)) {
         return Promise.resolve<SignInOutcome>({
           status: "failed",
@@ -151,7 +147,7 @@ export function createOAuthSignIns(deps: OAuthSignInDeps): OAuthSignIns {
       return new Promise<SignInOutcome>((resolve) => {
         const callback = awaitCallback(() => flows.get(id)?.state);
         flows.set(id, { popup, provider, resolve, cancelCallback: callback.cancel });
-        deps.post({ type: "oauth-signin-start", id, provider, ...vetting });
+        deps.post({ type: "oauth-signin-start", id, provider });
         watchPopup(id);
 
         callback.promise.then(
@@ -187,15 +183,6 @@ export function createOAuthSignIns(deps: OAuthSignInDeps): OAuthSignIns {
       flow.state = target.searchParams.get("state") ?? undefined;
       flow.popup.location.href = target.href;
       flow.navigated = true;
-    },
-
-    onConfirm(id, host) {
-      const flow = flows.get(id);
-      flows.delete(id);
-      if (flow === undefined) return;
-      flow.cancelCallback();
-      if (!flow.popup.closed) flow.popup.close();
-      flow.resolve({ status: "confirm", host });
     },
 
     onDone(id, ok, error) {

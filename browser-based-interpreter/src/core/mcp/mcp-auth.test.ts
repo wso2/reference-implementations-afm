@@ -15,8 +15,7 @@
 // under the License.
 
 import { describe, expect, it } from "vitest";
-import { type OAuthSignIn } from "./mcp-directory";
-import { discoverMcpServerAuth, resolveDirectoryClient } from "./mcp-auth";
+import { discoverMcpServerAuth } from "./mcp-auth";
 
 const REDIRECT_URI = "http://localhost:5173/";
 const CIMD_CLIENT_ID = "https://afm.example.com/oauth/client-metadata.json";
@@ -33,6 +32,7 @@ const LINEAR_AS_METADATA = {
   issuer: "https://mcp.linear.app",
   authorization_endpoint: "https://mcp.linear.app/authorize",
   token_endpoint: "https://mcp.linear.app/token",
+  response_types_supported: ["code"],
   code_challenge_methods_supported: ["S256"],
   registration_endpoint: "https://mcp.linear.app/register",
   client_id_metadata_document_supported: true,
@@ -76,6 +76,7 @@ function exampleAuthorizationServer(extra: Record<string, unknown> = {}) {
         issuer: "https://as.example.com",
         authorization_endpoint: "https://as.example.com/authorize",
         token_endpoint: "https://as.example.com/token",
+        response_types_supported: ["code"],
         code_challenge_methods_supported: ["S256"],
         ...extra,
       },
@@ -238,6 +239,7 @@ describe("discoverMcpServerAuth", () => {
           issuer: "https://mcp.atlassian.com",
           authorization_endpoint: "https://mcp.atlassian.com/v1/authorize",
           token_endpoint: "https://mcp.atlassian.com/v1/token",
+          response_types_supported: ["code"],
           code_challenge_methods_supported: ["S256"],
           registration_endpoint: "https://mcp.atlassian.com/v1/register",
         },
@@ -277,100 +279,5 @@ describe("discoverMcpServerAuth", () => {
         redirectUri: REDIRECT_URI,
       }),
     ).rejects.toThrow(/authorization server publishes no metadata/);
-  });
-});
-
-describe("resolveDirectoryClient", () => {
-  const SIGN_IN: OAuthSignIn = {
-    type: "oauth2",
-    authorizeUrl: "https://mcp.linear.app/authorize",
-    tokenUrl: "https://mcp.linear.app/token",
-    registrationUrl: "https://mcp.linear.app/register",
-    clientIdMetadata: true,
-    scopes: ["read", "write"],
-  };
-
-  it("uses the entry's endpoints and scopes as written, and asks no server anything, when a client id document is configured", async () => {
-    const { fn, requested } = routedFetch({});
-    const result = await resolveDirectoryClient(SIGN_IN, {
-      fetchFn: fn,
-      cimdClientId: CIMD_CLIENT_ID,
-      redirectUri: REDIRECT_URI,
-    });
-    expect(result).toEqual({
-      authorizeUrl: "https://mcp.linear.app/authorize",
-      tokenUrl: "https://mcp.linear.app/token",
-      clientId: CIMD_CLIENT_ID,
-      scopes: ["read", "write"],
-    });
-    expect(requested).toEqual([]);
-  });
-
-  it("registers a client at the entry's registration address when no client id document is configured", async () => {
-    const { fn, requested } = routedFetch({
-      "https://mcp.linear.app/register": { status: 201, json: { client_id: "dcr-linear" } },
-    });
-    const result = await resolveDirectoryClient(SIGN_IN, {
-      fetchFn: fn,
-      cimdClientId: undefined,
-      redirectUri: REDIRECT_URI,
-    });
-    expect(result.clientId).toBe("dcr-linear");
-    expect(requested).toEqual(["https://mcp.linear.app/register"]);
-  });
-
-  it("registers a client when the entry offers no client id document, even if one is configured", async () => {
-    const { fn } = routedFetch({
-      "https://mcp.linear.app/register": { status: 201, json: { client_id: "dcr-linear" } },
-    });
-    const result = await resolveDirectoryClient(
-      { ...SIGN_IN, clientIdMetadata: undefined },
-      { fetchFn: fn, cimdClientId: CIMD_CLIENT_ID, redirectUri: REDIRECT_URI },
-    );
-    expect(result.clientId).toBe("dcr-linear");
-  });
-
-  it("registers the address this app redirects back to", async () => {
-    const bodies: unknown[] = [];
-    const fn = (async (_url: string, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)));
-      return { ok: true, status: 201, json: async () => ({ client_id: "dcr-linear" }) } as unknown as Response;
-    }) as unknown as typeof fetch;
-    await resolveDirectoryClient(SIGN_IN, { fetchFn: fn, cimdClientId: undefined, redirectUri: REDIRECT_URI });
-    expect(bodies).toEqual([expect.objectContaining({ redirect_uris: [REDIRECT_URI] })]);
-  });
-
-  it("leaves the client id empty, with the endpoints still filled in, when registration fails", async () => {
-    const { fn } = routedFetch({ "https://mcp.linear.app/register": { status: 403 } });
-    const result = await resolveDirectoryClient(SIGN_IN, {
-      fetchFn: fn,
-      cimdClientId: undefined,
-      redirectUri: REDIRECT_URI,
-    });
-    expect(result).toEqual({
-      authorizeUrl: "https://mcp.linear.app/authorize",
-      tokenUrl: "https://mcp.linear.app/token",
-      clientId: "",
-      scopes: ["read", "write"],
-    });
-  });
-
-  it("leaves the client id empty for an entry that offers neither way to get one", async () => {
-    const { fn, requested } = routedFetch({});
-    const result = await resolveDirectoryClient(
-      { ...SIGN_IN, registrationUrl: undefined, clientIdMetadata: undefined },
-      { fetchFn: fn, cimdClientId: CIMD_CLIENT_ID, redirectUri: REDIRECT_URI },
-    );
-    expect(result.clientId).toBe("");
-    expect(requested).toEqual([]);
-  });
-
-  it("passes no scopes through for an entry that lists none", async () => {
-    const { fn } = routedFetch({});
-    const result = await resolveDirectoryClient(
-      { ...SIGN_IN, scopes: undefined },
-      { fetchFn: fn, cimdClientId: CIMD_CLIENT_ID, redirectUri: REDIRECT_URI },
-    );
-    expect(result.scopes).toBeUndefined();
   });
 });

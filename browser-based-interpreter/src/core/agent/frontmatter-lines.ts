@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { isMap, isNode, isScalar, isSeq, LineCounter, type Node, parseDocument } from "yaml";
+
 type PathSegment = string | number;
 
 interface Row {
@@ -24,7 +26,6 @@ interface Row {
 }
 
 const DASH = /^-(?:\s+|$)/;
-const KEY = /^(?:"([^"]*)"\s*|'([^']*)'\s*|([^\s:#"'][^:#]*)):(?:\s|$)/;
 export const MAX_SETTINGS_LINES = 2000;
 export const SETTINGS_TOO_LONG = `The settings block at the top of the file is longer than ${MAX_SETTINGS_LINES.toLocaleString("en-US")} lines, so it was not read.`;
 
@@ -44,51 +45,6 @@ function rowsOf(lines: string[], from: number, to: number): Row[] {
     rows.push({ line: i + 1, indent, dash, text: text.trimEnd() });
   }
   return rows;
-}
-
-function keyOf(text: string): string | null {
-  const found = KEY.exec(text);
-  return found === null ? null : (found[1] ?? found[2] ?? found[3]?.trimEnd() ?? null);
-}
-
-function keyIndentOf(block: Row[]): number {
-  const first = block[0]!;
-  if (first.dash > 0 && first.text === "") return block[1]?.indent ?? first.indent + first.dash;
-  return first.indent + first.dash;
-}
-
-function valueBlock(block: Row[], at: number, keyIndent: number): Row[] {
-  const inner: Row[] = [];
-  for (let i = at + 1; i < block.length; i += 1) {
-    const row = block[i]!;
-    if (row.indent > keyIndent || (row.indent === keyIndent && row.dash > 0)) inner.push(row);
-    else break;
-  }
-  return inner;
-}
-
-function step(block: Row[], segment: PathSegment): { row: Row; inner: Row[] } | null {
-  if (block.length === 0) return null;
-
-  if (typeof segment === "number") {
-    const first = block[0]!;
-    if (first.dash === 0) return null;
-    const items = block.flatMap((row, at) => (row.dash > 0 && row.indent === first.indent ? [{ row, at }] : []));
-    const item = items[segment];
-    if (item === undefined) return null;
-    const next = items[segment + 1];
-    return { row: item.row, inner: block.slice(item.at, next?.at) };
-  }
-
-  const keyIndent = keyIndentOf(block);
-  for (let at = 0; at < block.length; at += 1) {
-    const row = block[at]!;
-    if (row.indent + row.dash !== keyIndent) continue;
-    if (row.dash > 0 && at !== 0) continue;
-    if (keyOf(row.text) !== segment) continue;
-    return { row, inner: valueBlock(block, at, keyIndent) };
-  }
-  return null;
 }
 
 export function pathFromText(text: string | undefined): PathSegment[] {
@@ -120,18 +76,29 @@ export function settingsRows(content: string): { line: number; text: string }[] 
   return rowsOf(block.lines, block.open + 1, block.close).map(({ line, text }) => ({ line, text }));
 }
 
+function childOf(node: unknown, segment: PathSegment): { value: unknown; at: Node } | null {
+  if (isMap(node)) {
+    const pair = node.items.find(({ key }) => isScalar(key) && String(key.value) === String(segment));
+    return pair !== undefined && isScalar(pair.key) ? { value: pair.value, at: pair.key } : null;
+  }
+  const item = isSeq(node) && typeof segment === "number" ? node.items[segment] : undefined;
+  return isNode(item) ? { value: item, at: item } : null;
+}
+
 export function lineOfPath(content: string, path: readonly PathSegment[]): number | null {
   if (path.length === 0) return null;
   const found = settingsBlock(content);
   if (found === null) return null;
 
-  let block = rowsOf(found.lines, found.open + 1, found.close);
+  const counter = new LineCounter();
+  const { contents } = parseDocument(found.lines.slice(found.open + 1, found.close).join("\n"), { lineCounter: counter });
   let line = found.open + 1;
+  let node: unknown = contents;
   for (const segment of path) {
-    const hit = step(block, segment);
-    if (hit === null) break;
-    line = hit.row.line;
-    block = hit.inner;
+    const child = childOf(node, segment);
+    if (child === null || child.at.range == null) break;
+    line = counter.linePos(child.at.range[0]).line + found.open + 1;
+    node = child.value;
   }
   return line;
 }

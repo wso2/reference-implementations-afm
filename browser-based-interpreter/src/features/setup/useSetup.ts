@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { authorizationCodeRefreshKey, oauthProviderFrom } from "@afm/adapter-auth";
+import { authorizationCodeRefreshKey, oauthProviderFrom } from "@afm/runtime";
 import { type AgentMetadata } from "@afm/engine";
 import { useState } from "react";
 import { findProvider } from "../../core/agent/catalogs";

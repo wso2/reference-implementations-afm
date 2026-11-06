@@ -14,24 +14,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { checkModelKey, createAnthropicModel, createOpenAIModel, type KeyCheck } from "@afm/adapter-model";
+import { type AgentMetadata, type SecretPort } from "@afm/engine";
 import {
-  compositeToolPort,
+  checkModelKey,
   createDynamicMcpAuthHeaderProvider,
+  createModel,
   effectiveUrl,
-  filteredToolPort,
   isDynamicAuthType,
+  type KeyCheck,
+  type LanguageModel,
   mcpAuthHeaders,
   type McpDynamicAuthDeps,
-  mcpToolPort,
-  namespacedToolPort,
-} from "@afm/adapter-tool";
-import { type AgentMetadata, type ModelPort, type SecretPort, type ToolPort } from "@afm/engine";
+  type McpServerOptions,
+  mcpServerTools,
+  type ToolGuard,
+  type ToolSource,
+} from "@afm/runtime";
 import { DEFAULT_PROVIDER } from "../agent/catalogs";
 import { secretNameOf } from "../agent/secret-reference";
 import { MissingCredentialError } from "../chat/failure";
 import { limitBodies, limitResponses, MAX_AGENT_FILE_BYTES } from "./response-limit";
-import { dropEmptyArgs } from "./tool-args";
 
 interface McpProxyConfig {
   url: string;
@@ -80,50 +82,49 @@ interface ToolSetupOptions {
 
 type McpServer = NonNullable<NonNullable<AgentMetadata["tools"]>["mcp"]>[number];
 
-export function mcpServerPort(
+export function mcpServerOptions(
   server: McpServer,
   proxy: McpProxyConfig | null,
   authDeps: McpDynamicAuthDeps = {},
   { setupTimeoutMs }: ToolSetupOptions = {},
-): ToolPort | null {
+): McpServerOptions | null {
   const { transport } = server;
   if (transport.type !== "http") return null;
   if (proxy === null) throw new McpProxyRequiredError();
 
-  const effectiveAuthDeps: McpDynamicAuthDeps = {
-    ...authDeps,
-    fetchFn: authDeps.fetchFn ?? createProxiedFetch(proxy),
-  };
   const auth = transport.authentication;
   const dynamic = auth !== undefined && isDynamicAuthType(auth);
-  const port: ToolPort = dropEmptyArgs(
-    mcpToolPort({
-      serverUrl: transport.url,
-      headers: auth !== undefined && !dynamic ? mcpAuthHeaders(auth) : undefined,
-      authHeaderProvider: dynamic
-        ? createDynamicMcpAuthHeaderProvider(auth, effectiveAuthDeps, transport.url)
-        : undefined,
-      proxyUrl: proxy.url,
-      fetchFn: proxyFetch(proxy),
-      setupTimeoutMs,
-    }),
-  );
-  return server.tool_filter === undefined ? port : filteredToolPort(port, server.tool_filter);
+  return {
+    name: server.name,
+    url: transport.url,
+    headers: auth !== undefined && !dynamic ? mcpAuthHeaders(auth) : undefined,
+    authHeaderProvider: dynamic ? createDynamicMcpAuthHeaderProvider(auth, authDeps, transport.url) : undefined,
+    proxyUrl: proxy.url,
+    fetchFn: proxyFetch(proxy),
+    filter: server.tool_filter,
+    setupTimeoutMs,
+  };
+}
+
+function mcpServerSource(
+  server: McpServer,
+  proxy: McpProxyConfig | null,
+  guard: ToolGuard,
+  authDeps: McpDynamicAuthDeps = {},
+  options: ToolSetupOptions = {},
+): ToolSource | null {
+  const built = mcpServerOptions(server, proxy, authDeps, options);
+  return built === null ? null : mcpServerTools(built, guard);
 }
 
 export function toolsFromMetadata(
   metadata: AgentMetadata,
   proxy: McpProxyConfig | null,
+  guard: ToolGuard,
   authDeps: McpDynamicAuthDeps = {},
   options: ToolSetupOptions = {},
-): ToolPort {
-  const servers = metadata.tools?.mcp ?? [];
-  return compositeToolPort(
-    servers.flatMap((server) => {
-      const port = mcpServerPort(server, proxy, authDeps, options);
-      return port === null ? [] : [namespacedToolPort(port, server.name)];
-    }),
-  );
+): ToolSource[] {
+  return (metadata.tools?.mcp ?? []).flatMap((server) => mcpServerSource(server, proxy, guard, authDeps, options) ?? []);
 }
 
 const SESSION_HEADER = "X-Choreo-Correlation-Id";
@@ -154,6 +155,8 @@ export function proxySessionFetch(proxyUrl: string, baseFetch?: typeof fetch): t
   };
 }
 
+const providerOf = (model: AgentMetadata["model"]): string => (model?.provider ?? DEFAULT_PROVIDER).toLowerCase();
+
 function apiKeyOf(model: AgentMetadata["model"]): string | null {
   const auth = model?.authentication;
   const key = auth?.api_key ?? auth?.token ?? null;
@@ -175,34 +178,14 @@ export async function modelWithResolvedKey(
   return { ...model, authentication: { ...auth, type: auth?.type ?? "api-key", [field]: resolution.value } };
 }
 
-function unsupported(provider: string): Error {
-  return new Error(`Unsupported model provider ${provider}. Use openai or anthropic.`);
-}
-
-export async function modelFromMetadata(model: AgentMetadata["model"]): Promise<ModelPort> {
-  const provider = (model?.provider ?? DEFAULT_PROVIDER).toLowerCase();
-  const name = model?.name;
+export async function modelFromMetadata(model: AgentMetadata["model"]): Promise<LanguageModel> {
   const apiKey = apiKeyOf(model);
-
-  if (apiKey === null) {
-    throw new Error("No API key was provided for the model.");
-  }
-
-  switch (provider) {
-    case "openai":
-      return createOpenAIModel({ apiKey, model: name });
-    case "anthropic":
-      return createAnthropicModel({ apiKey, model: name });
-    default:
-      throw unsupported(provider);
-  }
+  if (apiKey === null) throw new Error("No API key was provided for the model.");
+  return createModel(providerOf(model), { apiKey, model: model?.name });
 }
 
 export async function checkModelFromMetadata(model: AgentMetadata["model"]): Promise<KeyCheck> {
-  const provider = (model?.provider ?? DEFAULT_PROVIDER).toLowerCase();
   const apiKey = apiKeyOf(model);
-
   if (apiKey === null) throw new MissingCredentialError("api_key");
-  if (provider !== "openai" && provider !== "anthropic") throw unsupported(provider);
-  return checkModelKey(provider, apiKey);
+  return checkModelKey(providerOf(model), apiKey);
 }

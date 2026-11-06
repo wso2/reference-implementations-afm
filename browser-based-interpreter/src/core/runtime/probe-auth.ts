@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { secretDestination } from "@afm/engine";
+import { serverAddress } from "@afm/engine";
 import type { AgentMetadata, SecretPort } from "@afm/engine";
 import { secretNameOf } from "../agent/secret-reference";
 import { MissingCredentialError } from "../chat/failure";
@@ -23,7 +23,7 @@ export function probeToolUses(tools: AgentMetadata["tools"]): { name: string; ad
   const uses: { name: string; address?: string }[] = [];
   for (const server of tools?.mcp ?? []) {
     if (server.transport.type !== "http" || server.transport.authentication === undefined) continue;
-    const address = secretDestination(server.transport.url, server.transport.authentication);
+    const address = serverAddress(server.transport.url);
     for (const value of Object.values(server.transport.authentication)) {
       if (typeof value !== "string") continue;
       const name = secretNameOf(value);

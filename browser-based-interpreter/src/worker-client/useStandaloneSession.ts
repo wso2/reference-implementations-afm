@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { OAuthProviderRef } from "@afm/adapter-auth";
+import type { OAuthProviderRef } from "@afm/runtime";
 import type { AgentMetadata } from "@afm/engine";
 import { useReducer, useRef } from "react";
 import type { PendingPermission, UiMessage } from "../core/chat/chat-state";

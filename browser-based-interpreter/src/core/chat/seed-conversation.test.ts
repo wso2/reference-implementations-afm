@@ -50,7 +50,7 @@ describe("toSeededConversation", () => {
         role: "user",
         content: [
           { type: "text", text: "what is this?" },
-          { type: "image", data: "b64", mediaType: "image/png" },
+          { type: "image", image: "b64", mediaType: "image/png" },
         ],
       },
     ]);
@@ -61,7 +61,7 @@ describe("toSeededConversation", () => {
       toSeededConversation([
         { kind: "user", id: 1, text: "", images: [{ name: "shot.png", mediaType: "image/png", data: "b64" }] },
       ]),
-    ).toEqual([{ role: "user", content: [{ type: "image", data: "b64", mediaType: "image/png" }] }]);
+    ).toEqual([{ role: "user", content: [{ type: "image", image: "b64", mediaType: "image/png" }] }]);
   });
 
   it("reattaches tool calls to the assistant turn that made them, with their results", () => {
@@ -76,10 +76,15 @@ describe("toSeededConversation", () => {
       { role: "user", content: "weather?" },
       {
         role: "assistant",
-        content: "Let me check. ",
-        toolCalls: [{ id: "c1", name: "weather", args: { q: 1 } }],
+        content: [
+          { type: "text", text: "Let me check. " },
+          { type: "tool-call", toolCallId: "c1", toolName: "weather", input: { q: 1 } },
+        ],
       },
-      { role: "tool", toolCallId: "c1", content: "28C" },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "c1", toolName: "weather", output: { type: "text", value: "28C" } }],
+      },
       { role: "assistant", content: "It is 28C." },
     ]);
   });
@@ -93,8 +98,11 @@ describe("toSeededConversation", () => {
       ]),
     ).toEqual([
       { role: "user", content: "go" },
-      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "run", args: { q: 1 } }] },
-      { role: "tool", toolCallId: "c1", content: "done" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "run", input: { q: 1 } }] },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "c1", toolName: "run", output: { type: "text", value: "done" } }],
+      },
       { role: "assistant", content: "Finished." },
     ]);
   });
@@ -107,14 +115,18 @@ describe("toSeededConversation", () => {
       { kind: "assistant", id: 4, text: "Both done." },
     ]);
     const assistant = conversation.find((m) => m.role === "assistant");
-    expect(assistant).toMatchObject({ toolCalls: [{ id: "c1" }, { id: "c2" }] });
-    expect(conversation.filter((m) => m.role === "tool")).toHaveLength(2);
+    expect(assistant).toMatchObject({ content: [{ toolCallId: "c1" }, { toolCallId: "c2" }] });
+    expect(conversation.filter((m) => m.role === "tool").flatMap((m) => m.content)).toHaveLength(2);
   });
 
   it("never leaves a tool call without a result, even one still running when stored", () => {
     const conversation = toSeededConversation([{ kind: "user", id: 1, text: "go" }, tool(2, "c1", "slow")]);
-    const callIds = conversation.flatMap((m) => (m.role === "assistant" ? (m.toolCalls ?? []).map((c) => c.id) : []));
-    const resultIds = conversation.flatMap((m) => (m.role === "tool" ? [m.toolCallId] : []));
+    const callIds = conversation.flatMap((m) =>
+      m.role === "assistant" && Array.isArray(m.content) ? m.content.flatMap((p) => (p.type === "tool-call" ? [p.toolCallId] : [])) : [],
+    );
+    const resultIds = conversation.flatMap((m) =>
+      m.role === "tool" ? m.content.flatMap((p) => (p.type === "tool-result" ? [p.toolCallId] : [])) : [],
+    );
     expect(callIds).toEqual(resultIds);
   });
 

@@ -65,9 +65,9 @@ describe("resolveProbeAuth", () => {
   });
 
   it("resolves every referenced field, not just the first", async () => {
-    const { port } = vault({ U: "someone", P: "secret" });
-    const out = await resolveProbeAuth(server({ type: "basic", username: "${env:U}", password: "${env:P}" }), port);
-    expect(authOf(out)).toEqual({ type: "basic", username: "someone", password: "secret" });
+    const { port } = vault({ K: "secret", H: "X-Mine" });
+    const out = await resolveProbeAuth(server({ type: "api-key", api_key: "${env:K}", header_name: "${env:H}" }), port);
+    expect(authOf(out)).toEqual({ type: "api-key", api_key: "secret", header_name: "X-Mine" });
   });
 
   it("does not touch non-string fields such as scopes", async () => {
@@ -117,10 +117,10 @@ describe("probeToolUses", () => {
   });
 
   it("finds every reference across every field, not just one", () => {
-    const uses = probeToolUses(server({ type: "basic", username: "${env:U}", password: "${env:P}" }));
+    const uses = probeToolUses(server({ type: "api-key", api_key: "${env:K}", header_name: "${env:H}" }));
     expect(uses).toEqual([
-      { name: "U", address: "https://huggingface.co/mcp" },
-      { name: "P", address: "https://huggingface.co/mcp" },
+      { name: "K", address: "https://huggingface.co/mcp" },
+      { name: "H", address: "https://huggingface.co/mcp" },
     ]);
   });
 

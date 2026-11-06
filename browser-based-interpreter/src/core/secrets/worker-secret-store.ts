@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { KeyValueStore } from "@afm/adapter-auth";
-import { configSecretPort } from "@afm/adapter-secret";
+import type { KeyValueStore } from "@afm/runtime";
+import { configSecretPort } from "@afm/runtime";
 import type { SecretPort } from "@afm/engine";
 import type { ServerMessage } from "../runtime/protocol";
 

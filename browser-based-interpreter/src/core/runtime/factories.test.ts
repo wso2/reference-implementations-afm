@@ -15,6 +15,8 @@
 // under the License.
 
 import { type AgentMetadata } from "@afm/engine";
+import { createToolbox, createToolGuard, probeMcpServer } from "@afm/runtime";
+import { jsonSchema, streamText, type Tool, tool } from "ai";
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findProvider } from "../agent/catalogs";
@@ -24,10 +26,27 @@ import {
   createProxiedFetch,
   defaultMcpProxyConfig,
   McpProxyRequiredError,
+  mcpServerOptions,
   modelFromMetadata,
   modelWithResolvedKey,
-  toolsFromMetadata,
+  toolsFromMetadata as sourcesFromMetadata,
 } from "./factories";
+
+const guard = createToolGuard({ request: async () => "allow" });
+
+function toolsFromMetadata(
+  metadata: AgentMetadata,
+  proxy: Parameters<typeof sourcesFromMetadata>[1],
+  authDeps?: Parameters<typeof sourcesFromMetadata>[3],
+  options?: Parameters<typeof sourcesFromMetadata>[4],
+) {
+  return createToolbox(sourcesFromMetadata(metadata, proxy, guard, authDeps, options));
+}
+
+async function callTool(box: ReturnType<typeof toolsFromMetadata>, name: string, args: unknown) {
+  const found = (await box.tools()).tools[name] as Tool | undefined;
+  return await found?.execute?.(args, { toolCallId: "1", messages: [], abortSignal: new AbortController().signal });
+}
 
 function start401Server(): Promise<{ url: string; close: () => Promise<void> }> {
   const httpServer: Server = createServer((_req, res) => {
@@ -82,21 +101,6 @@ describe("toolsFromMetadata - oauth2 auth routing", () => {
   const withAuth = (authentication: unknown) =>
     metadataWithMcp([{ ...httpServer("a"), transport: { ...httpServer("a").transport, authentication } }] as never);
 
-  it("builds a tool port for an oauth2 client_credentials server without throwing", () => {
-    expect(() =>
-      toolsFromMetadata(
-        withAuth({
-          type: "oauth2",
-          grant_type: "client_credentials",
-          token_url: "https://t",
-          client_id: "i",
-          client_secret: "s",
-        }),
-        { url: "https://proxy.local/mcp" },
-      ),
-    ).not.toThrow();
-  });
-
   it("does not build a tool port for a jwt block - a browser does not sign tokens", () => {
     expect(() =>
       toolsFromMetadata(withAuth({ type: "jwt", issuer: "i", signing_key: "s" }), { url: "https://proxy.local/mcp" }),
@@ -129,13 +133,13 @@ describe("toolsFromMetadata - oauth2 auth routing", () => {
           client_id: "c",
         }),
         { url: "https://proxy.local/mcp" },
-        { getInteractiveToken: async () => "tok" },
+        { getInteractiveToken: async () => "tok", renewInteractiveToken: async () => false },
       ),
     ).not.toThrow();
   });
 });
 
-describe("toolsFromMetadata - recovering from a revoked authorization_code token", () => {
+describe("toolsFromMetadata - renewing a rejected authorization_code token", () => {
   let server: { url: string; close: () => Promise<void> } | null = null;
 
   afterEach(async () => {
@@ -143,7 +147,7 @@ describe("toolsFromMetadata - recovering from a revoked authorization_code token
     server = null;
   });
 
-  it("reports the rejected provider (authorize_url/token_url/client_id/resource) when the resource server returns 401 for a authorization_code-authenticated server, so the caller can invalidate exactly that cached session", async () => {
+  it("asks to renew exactly the rejected provider (authorize_url/token_url/client_id/resource) and its token when the resource server returns 401 for an authorization_code-authenticated server", async () => {
     server = await start401Server();
     const metadata = metadataWithMcp([
       {
@@ -162,53 +166,32 @@ describe("toolsFromMetadata - recovering from a revoked authorization_code token
     ]);
 
     const rejections: { authorizeUrl: string; tokenUrl: string; clientId: string; resource?: string }[] = [];
-    const tools = toolsFromMetadata(
+    const rejectedTokens: string[] = [];
+    const [source] = sourcesFromMetadata(
       metadata,
       { url: server.url },
+      guard,
       {
         getInteractiveToken: async () => "revoked-token",
-        onInteractiveAuthRejected: (provider) => rejections.push(provider),
+        renewInteractiveToken: async (provider, rejectedToken) => {
+          rejections.push(provider);
+          rejectedTokens.push(rejectedToken);
+          return false;
+        },
       },
     );
 
-    await expect(tools.list()).rejects.toBeTruthy();
-    expect(rejections).toEqual([
-      {
+    await expect(source!.tools()).rejects.toBeTruthy();
+    expect(rejections.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(rejectedTokens)).toEqual(new Set(["revoked-token"]));
+    for (const rejection of rejections) {
+      expect(rejection).toEqual({
         authorizeUrl: "https://gitlab.example.com/oauth/authorize",
         tokenUrl: "https://gitlab.example.com/oauth/token",
         clientId: "gitlab-client",
         resource: "https://a.example.com/mcp",
-      },
-    ]);
-  });
-
-  it("does NOT call onInteractiveAuthRejected for non-interactive (client_credentials) oauth2 servers", async () => {
-    server = await start401Server();
-    const metadata = metadataWithMcp([
-      {
-        ...httpServer("a"),
-        transport: {
-          ...httpServer("a").transport,
-          authentication: {
-            type: "oauth2",
-            grant_type: "client_credentials",
-            token_url: "https://t",
-            client_id: "i",
-            client_secret: "s",
-          },
-        },
-      },
-    ]);
-
-    let rejectedCount = 0;
-    const tools = toolsFromMetadata(
-      metadata,
-      { url: server.url },
-      { onInteractiveAuthRejected: () => (rejectedCount += 1) },
-    );
-
-    await expect(tools.list()).rejects.toBeTruthy();
-    expect(rejectedCount).toBe(0);
+      });
+    }
   });
 });
 
@@ -270,14 +253,14 @@ describe("the names the model is offered", () => {
     const relay = await startToolServer(["search", "get_page"]);
     const tools = toolsFromMetadata(metadataWithMcp([server("docs"), server("files")] as never), { url: relay.url });
     try {
-      expect((await tools.list()).map((tool) => [tool.name, tool.serverId])).toEqual([
+      expect((await tools.tools()).info.map((tool) => [tool.name, tool.serverId])).toEqual([
         ["docs__search", "https://docs.example.com/mcp"],
         ["docs__get_page", "https://docs.example.com/mcp"],
         ["files__search", "https://files.example.com/mcp"],
         ["files__get_page", "https://files.example.com/mcp"],
       ]);
     } finally {
-      await tools.dispose?.();
+      await tools.close();
       await relay.close();
     }
   });
@@ -286,11 +269,10 @@ describe("the names the model is offered", () => {
     const relay = await startToolServer(["search", "get_page"]);
     const tools = toolsFromMetadata(metadataWithMcp([server("docs", ["get_page"])] as never), { url: relay.url });
     try {
-      expect((await tools.list()).map((tool) => tool.name)).toEqual(["docs__get_page"]);
-      const result = await tools.execute({ id: "1", name: "docs__get_page", args: {} }, new AbortController().signal);
-      expect(result).toEqual({ ok: true, content: "ran get_page" });
+      expect((await tools.tools()).info.map((tool) => tool.name)).toEqual(["docs__get_page"]);
+      expect(await callTool(tools, "docs__get_page", {})).toEqual({ ok: true, content: "ran get_page" });
     } finally {
-      await tools.dispose?.();
+      await tools.close();
       await relay.close();
     }
   });
@@ -299,14 +281,20 @@ describe("the names the model is offered", () => {
     const relay = await startToolServer(["search"]);
     const tools = toolsFromMetadata(metadataWithMcp([server("docs")] as never), { url: relay.url });
     try {
-      await tools.list();
-      await tools.execute(
-        { id: "1", name: "docs__search", args: { query: "standup", cursor: "" } },
-        new AbortController().signal,
-      );
+      await callTool(tools, "docs__search", { query: "standup", cursor: "" });
       expect(relay.calls).toEqual([{ query: "standup" }]);
     } finally {
-      await tools.dispose?.();
+      await tools.close();
+      await relay.close();
+    }
+  });
+
+  it("is the server's own tool names, with no prefix, when a server is probed to choose its tools", async () => {
+    const relay = await startToolServer(["search", "get_page"]);
+    try {
+      const options = mcpServerOptions(server("docs") as never, { url: relay.url });
+      expect((await probeMcpServer(options!)).map((tool) => tool.name)).toEqual(["search", "get_page"]);
+    } finally {
       await relay.close();
     }
   });
@@ -317,9 +305,9 @@ describe("the names the model is offered", () => {
       url: relay.url,
     });
     try {
-      await expect(tools.list()).rejects.toThrow(/'my_docs' and 'my-docs'.*'search'.*'my-docs__search'/);
+      await expect(tools.tools()).rejects.toThrow(/'my_docs' and 'my-docs'.*'search'.*'my-docs__search'/);
     } finally {
-      await tools.dispose?.();
+      await tools.close();
       await relay.close();
     }
   });
@@ -411,7 +399,7 @@ describe("the proxy session id, through the real code paths", () => {
   const SESSION_HEADER = "X-Choreo-Correlation-Id";
   const SESSION_ID = "afm-3f2b8c1e-5a47-4d0e-9b1c-7e6a2d9f4c10";
 
-  let imports: { toolsFromMetadata: typeof toolsFromMetadata; createProxiedFetch: typeof createProxiedFetch };
+  let imports: { toolsFromMetadata: typeof sourcesFromMetadata; createProxiedFetch: typeof createProxiedFetch };
   let discoverMcpServerAuth: typeof import("../mcp/mcp-auth").discoverMcpServerAuth;
   let calls: { method: string; target: string | null; sessionId: string | null }[];
 
@@ -446,21 +434,21 @@ describe("the proxy session id, through the real code paths", () => {
     });
   }
 
-  it("goes with the OAuth discovery, client registration, token and MCP calls of one connection", async () => {
-    stubProxy((method, target, body) => {
-      const first = { [SESSION_HEADER]: SESSION_ID };
-      if (target === "https://auth.example.com/token")
-        return json({ access_token: "t", expires_in: 3600 }, { headers: first });
+  it("goes with every MCP call of one connection, once the proxy has issued it", async () => {
+    stubProxy((method, _target, body) => {
       if (method === "POST" && body.method === "initialize") {
-        return json({
-          jsonrpc: "2.0",
-          id: body.id,
-          result: {
-            protocolVersion: body.params?.protocolVersion,
-            capabilities: { tools: {} },
-            serverInfo: { name: "s", version: "0" },
+        return json(
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              protocolVersion: body.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "s", version: "0" },
+            },
           },
-        });
+          { headers: { [SESSION_HEADER]: SESSION_ID } },
+        );
       }
       if (method === "POST" && body.method === "tools/list")
         return json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
@@ -472,22 +460,17 @@ describe("the proxy session id, through the real code paths", () => {
         ...httpServer("a"),
         transport: {
           ...httpServer("a").transport,
-          authentication: {
-            type: "oauth2",
-            grant_type: "client_credentials",
-            token_url: "https://auth.example.com/token",
-            client_id: "i",
-            client_secret: "s",
-          },
+          authentication: { type: "bearer", token: "t" },
         },
       },
     ]);
 
-    await imports.toolsFromMetadata(metadata, { url: PROXY }).list();
+    await createToolbox(imports.toolsFromMetadata(metadata, { url: PROXY }, guard)).tools();
 
-    expect(calls[0]).toMatchObject({ method: "POST", target: "https://auth.example.com/token", sessionId: null });
-    expect(calls.length).toBeGreaterThanOrEqual(4);
-    expect(calls.slice(1).map((call) => call.sessionId)).toEqual(calls.slice(1).map(() => SESSION_ID));
+    const initialize = calls.findIndex((call) => call.method === "POST");
+    expect(calls[initialize]).toMatchObject({ target: "https://a.example.com/mcp", sessionId: null });
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    expect(calls.slice(initialize + 1).map((call) => call.sessionId)).toEqual(calls.slice(initialize + 1).map(() => SESSION_ID));
     expect(calls.map((call) => call.method)).toContain("GET");
     expect(calls.every((call) => call.target !== null)).toBe(true);
   });
@@ -510,6 +493,7 @@ describe("the proxy session id, through the real code paths", () => {
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
           registration_endpoint: "https://auth.example.com/register",
+          response_types_supported: ["code"],
           code_challenge_methods_supported: ["S256"],
         });
       }
@@ -527,9 +511,10 @@ describe("the proxy session id, through the real code paths", () => {
       "POST https://mcp.example.com/mcp",
       "GET https://mcp.example.com/.well-known/oauth-protected-resource",
       "GET https://auth.example.com/.well-known/oauth-authorization-server",
+      "GET https://auth.example.com/.well-known/oauth-authorization-server",
       "POST https://auth.example.com/register",
     ]);
-    expect(calls.map((call) => call.sessionId)).toEqual([null, SESSION_ID, SESSION_ID, SESSION_ID]);
+    expect(calls.map((call) => call.sessionId)).toEqual([null, SESSION_ID, SESSION_ID, SESSION_ID, SESSION_ID]);
   });
 });
 
@@ -629,11 +614,9 @@ describe("a tool server's event stream", () => {
       { url: relay.url },
     );
     try {
-      await tools.list();
-      const result = await tools.execute({ id: "1", name: "s__run", args: {} }, new AbortController().signal);
-      expect(result).toEqual({ ok: true, content: "finished" });
+      expect(await callTool(tools, "s__run", {})).toEqual({ ok: true, content: "finished" });
     } finally {
-      await tools.dispose?.();
+      await tools.close();
       await relay.close();
     }
   }, 30_000);
@@ -794,7 +777,7 @@ describe("modelFromMetadata", () => {
       name: "gpt-4o",
       authentication: { type: "api-key", api_key: "sk-1" },
     });
-    expect(typeof port.stream).toBe("function");
+    expect(port).toHaveProperty("doStream");
   });
 
   it("builds an Anthropic model port", async () => {
@@ -802,12 +785,12 @@ describe("modelFromMetadata", () => {
       provider: "anthropic",
       authentication: { type: "api-key", api_key: "sk-1" },
     });
-    expect(typeof port.stream).toBe("function");
+    expect(port).toHaveProperty("doStream");
   });
 
   it("defaults to OpenAI when no provider is given", async () => {
     const port = await modelFromMetadata({ authentication: { type: "bearer", token: "sk-1" } });
-    expect(typeof port.stream).toBe("function");
+    expect(port).toHaveProperty("doStream");
   });
 
   it("throws when no key was resolved", async () => {
@@ -833,17 +816,20 @@ describe("modelFromMetadata", () => {
 describe("every OpenAI model in the list", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  const request = {
-    system: "You are helpful.",
-    messages: [{ role: "user" as const, content: "hi" }],
-    tools: [
-      {
-        name: "search",
-        description: "Search",
-        inputSchema: { type: "object" as const, properties: { q: { type: "string" } } },
+  const consume = (model: Awaited<ReturnType<typeof modelFromMetadata>>) =>
+    streamText({
+      model,
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hi" }],
+      tools: {
+        search: tool({
+          description: "Search",
+          inputSchema: jsonSchema({ type: "object", properties: { q: { type: "string" } } }),
+        }),
       },
-    ],
-  };
+      maxRetries: 0,
+      onError: () => {},
+    }).consumeStream();
 
   it("is sent by its own name to OpenAI's Responses endpoint, streaming, with the tools", async () => {
     const openai = findProvider("openai")!;
@@ -858,7 +844,7 @@ describe("every OpenAI model in the list", () => {
         name: id,
         authentication: { type: "api-key", api_key: "sk-1" },
       });
-      for await (const event of port.stream(request, new AbortController().signal)) void event;
+      await consume(port);
       expect(seen[0]?.url).toBe("https://api.openai.com/v1/responses");
       expect(seen[0]?.body.model).toBe(id);
       expect(seen[0]?.body.stream).toBe(true);
@@ -877,7 +863,7 @@ describe("every OpenAI model in the list", () => {
       name: "gpt-6-astra",
       authentication: { type: "api-key", api_key: "sk-1" },
     });
-    for await (const event of port.stream(request, new AbortController().signal)) void event;
+    await consume(port);
     for (const setting of ["temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens"]) {
       expect(body).not.toHaveProperty(setting);
     }

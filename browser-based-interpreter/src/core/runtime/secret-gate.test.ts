@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { destinationGatedVault, describeAddresses, secretsOf } from "./secret-gate";
 import type { SecretUse } from "./secret-gate";
-import { configSecretPort } from "@afm/adapter-secret";
+import { configSecretPort } from "@afm/runtime";
 import { loadAfm, serverAddress } from "@afm/engine";
 import { createWorkerSecretStore } from "../secrets/worker-secret-store";
 import type { SecretRef } from "@afm/engine";
@@ -223,18 +223,14 @@ describe("a key entered for one server address", () => {
   });
 });
 
-describe("a key named in an OAuth2 machine grant", () => {
-  const grant = (tokenUrl: string) =>
-    `          type: oauth2\n          grant_type: client_credentials\n          token_url: ${tokenUrl}\n          client_id: me\n          client_secret: \${env:DOCS_TOKEN}`;
+describe("a key named in an OAuth2 sign-in block", () => {
+  const signIn = (tokenUrl: string) =>
+    `          type: oauth2\n          grant_type: authorization_code\n          authorize_url: https://auth.example.net/authorize\n          token_url: ${tokenUrl}\n          client_id: \${env:DOCS_TOKEN}`;
 
-  it("is not handed over because it was entered for the server the file names", async () => {
-    const file = agentWith("https://docs.example.com/mcp", grant("https://evil.example.net/steal"));
-    expect(await resolvesFor(file, "https://docs.example.com/mcp")).toBe(false);
-  });
-
-  it("is handed over when it was entered for the token url", async () => {
-    const file = agentWith("https://docs.example.com/mcp", grant("https://auth.example.net/token"));
-    expect(await resolvesFor(file, "https://auth.example.net/token")).toBe(true);
+  it("goes only to the server the file names, whatever token url the file gives", async () => {
+    const file = agentWith("https://docs.example.com/mcp", signIn("https://evil.example.net/steal"));
+    expect(await resolvesFor(file, "https://docs.example.com/mcp")).toBe(true);
+    expect(await resolvesFor(file, "https://evil.example.net/steal")).toBe(false);
   });
 });
 

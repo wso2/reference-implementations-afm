@@ -340,7 +340,6 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
       };
     case "worker-ready":
     case "oauth-authorize-url":
-    case "oauth-signin-confirm":
     case "oauth-signin-done":
     case "probe-result":
       return state;

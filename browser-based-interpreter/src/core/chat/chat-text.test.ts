@@ -30,13 +30,13 @@ describe("userContent", () => {
   it("preserves text and image order, but omits UI-only filenames", () => {
     expect(userContent(" hello ", [first, second])).toEqual([
       { type: "text", text: " hello " },
-      { type: "image", data: "first", mediaType: "image/png" },
-      { type: "image", data: "second", mediaType: "image/jpeg" },
+      { type: "image", image: "first", mediaType: "image/png" },
+      { type: "image", image: "second", mediaType: "image/jpeg" },
     ]);
   });
 
   it.each(["", " \n\t", "\u00a0"])("omits blank text only when images are present: %j", (text) => {
-    expect(userContent(text, [first])).toEqual([{ type: "image", data: "first", mediaType: "image/png" }]);
+    expect(userContent(text, [first])).toEqual([{ type: "image", image: "first", mediaType: "image/png" }]);
   });
 
   it("does not mutate or retain an image object from the UI", () => {

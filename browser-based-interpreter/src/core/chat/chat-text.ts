@@ -14,14 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type ContentPart } from "@afm/engine";
+import { type UserContent } from "@afm/runtime";
 import { type ImageAttachment } from "../runtime/protocol";
 
-export function userContent(text: string, images?: ImageAttachment[]): string | ContentPart[] {
+export function userContent(text: string, images?: ImageAttachment[]): UserContent {
   if (images === undefined || images.length === 0) return text;
   return [
     ...(text.trim() !== "" ? [{ type: "text" as const, text }] : []),
-    ...images.map((image) => ({ type: "image" as const, data: image.data, mediaType: image.mediaType })),
+    ...images.map((image) => ({ type: "image" as const, image: image.data, mediaType: image.mediaType })),
   ];
 }
 

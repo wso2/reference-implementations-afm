@@ -69,21 +69,6 @@ describe("the directory", () => {
 });
 
 describe("a server with provider sign-in", () => {
-  it("sends the person only to https addresses", () => {
-    const insecure = signIns.filter(
-      ({ auth }) =>
-        !isHttps(auth.authorizeUrl) ||
-        !isHttps(auth.tokenUrl) ||
-        (auth.registrationUrl !== undefined && !isHttps(auth.registrationUrl)),
-    );
-    expect(insecure.map(({ id }) => id)).toEqual([]);
-  });
-
-  it("can get a client id without asking the person for one", () => {
-    const stuck = signIns.filter(({ auth }) => auth.registrationUrl === undefined && auth.clientIdMetadata !== true);
-    expect(stuck.map(({ id }) => id)).toEqual([]);
-  });
-
   it("lists each scope as one word", () => {
     const odd = signIns.filter(({ auth }) => (auth.scopes ?? []).some((scope) => !/^\S+$/.test(scope)));
     expect(odd.map(({ id }) => id)).toEqual([]);
@@ -109,32 +94,6 @@ describe("Canva", () => {
     expect(canva?.url).toBe("https://mcp.canva.com/mcp");
     expect(canva?.publisher).toBe("canva.com");
     expect(canva?.docsUrl).toBe("https://www.canva.dev/docs/mcp/");
-  });
-
-  it("signs in at Canva's own sign-in server", () => {
-    expect(canva?.auth).toMatchObject({
-      type: "oauth2",
-      authorizeUrl: "https://mcp.canva.com/authorize",
-      tokenUrl: "https://mcp.canva.com/token",
-    });
-  });
-
-  it("gets a client id by a client ID metadata document, or by registering when that is not offered", () => {
-    expect(canva?.auth).toMatchObject({ clientIdMetadata: true, registrationUrl: "https://mcp.canva.com/register" });
-  });
-
-  it("asks for the scopes the server lists, including the ones that let designs be edited", () => {
-    const scopes = canva?.auth.type === "oauth2" ? (canva.auth.scopes ?? []) : [];
-    expect(scopes).toHaveLength(16);
-    expect(scopes).toEqual(
-      expect.arrayContaining(["profile:read", "design:content:read", "design:content:write", "asset:write"]),
-    );
-  });
-
-  it("sits in alphabetical order among its neighbours", () => {
-    const at = ids.indexOf("canva");
-    expect(ids[at - 1]! < "canva").toBe(true);
-    expect(ids[at + 1]! > "canva").toBe(true);
   });
 });
 

@@ -14,10 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type AuthorizationServerMetadata, discoverSignIn, resolveClientId } from "@afm/adapter-auth";
+import { discoverSignIn, resolveClientId } from "@afm/runtime";
 import { appAddress } from "../links/app-address";
 import { proxyAwareFetch } from "../runtime/factories";
-import { type OAuthSignIn } from "./mcp-directory";
 
 export interface DiscoveredMcpAuth {
   authorizeUrl: string;
@@ -40,44 +39,17 @@ function browserSetup(): ClientSetup {
   };
 }
 
-type Endpoints = Pick<
-  AuthorizationServerMetadata,
-  "authorization_endpoint" | "token_endpoint" | "registration_endpoint" | "client_id_metadata_document_supported"
->;
-
-async function discoveredAuth(
-  endpoints: Endpoints,
-  scopes: string[] | undefined,
-  { fetchFn, cimdClientId, redirectUri }: ClientSetup,
-): Promise<DiscoveredMcpAuth> {
-  return {
-    authorizeUrl: endpoints.authorization_endpoint,
-    tokenUrl: endpoints.token_endpoint,
-    scopes,
-    clientId: await resolveClientId(endpoints, cimdClientId, redirectUri, fetchFn),
-  };
-}
-
 export async function discoverMcpServerAuth(
   serverUrl: string,
   setup: ClientSetup = browserSetup(),
 ): Promise<DiscoveredMcpAuth | null> {
-  const found = await discoverSignIn(serverUrl, setup.fetchFn);
-  return found === null ? null : discoveredAuth(found.metadata, found.scopes, setup);
-}
-
-export function resolveDirectoryClient(
-  auth: OAuthSignIn,
-  setup: ClientSetup = browserSetup(),
-): Promise<DiscoveredMcpAuth> {
-  return discoveredAuth(
-    {
-      authorization_endpoint: auth.authorizeUrl,
-      token_endpoint: auth.tokenUrl,
-      registration_endpoint: auth.registrationUrl,
-      client_id_metadata_document_supported: auth.clientIdMetadata,
-    },
-    auth.scopes,
-    setup,
-  );
+  const found = await discoverSignIn(serverUrl, setup);
+  if (found === null) return null;
+  const { metadata, scopes } = found;
+  return {
+    authorizeUrl: metadata.authorization_endpoint,
+    tokenUrl: metadata.token_endpoint,
+    scopes,
+    clientId: await resolveClientId(metadata, setup.cimdClientId, setup.redirectUri, setup.fetchFn),
+  };
 }

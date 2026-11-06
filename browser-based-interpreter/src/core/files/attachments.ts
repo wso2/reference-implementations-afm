@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type FileInfo } from "@afm/adapter-tool";
+import { type FileInfo } from "@afm/runtime";
 import { describeError } from "@afm/engine";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { type ImageAttachment } from "../runtime/protocol";

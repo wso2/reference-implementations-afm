@@ -777,3 +777,50 @@ describe("reading a setting that has no value", () => {
     expect(getFrontmatterScalar("---\nname:\nmodel:\n  provider: openai\n---\n\n# Role\n", "name")).toBe("");
   });
 });
+
+describe("a value followed by a comment", () => {
+  const file =
+    "---\nname: A # the name\nmodel:\n  provider: openai  # default\n  name: \"gpt-4o\" # chosen\n  authentication:\n    type: api-key\n    api_key: ${env:OPENAI_KEY} # my key\ntools:\n  mcp:\n    - name: exa # search\n      transport:\n        type: http\n        url: https://mcp.exa.ai/mcp\n---\n\n# Role\n";
+
+  it("is read without the comment", () => {
+    expect(getFrontmatterScalar(file, "name")).toBe("A");
+    expect(getModelField(file, "provider")).toBe("openai");
+    expect(getModelField(file, "name")).toBe("gpt-4o");
+  });
+
+  it("still finds the key reference", () => {
+    expect(getModelApiKey(file)).toBe("${env:OPENAI_KEY}");
+    expect(secretNameOf(getModelApiKey(file))).toBe("OPENAI_KEY");
+  });
+
+  it("still finds a server by its name", () => {
+    expect(removeMcpServer(file, "exa")).not.toContain("exa");
+  });
+
+  it("keeps a hash that is part of the value", () => {
+    const text = "---\nname: \"a # b\" # note\nmodel:\n  provider: x#y\n---\n";
+    expect(getFrontmatterScalar(text, "name")).toBe("a # b");
+    expect(getModelField(text, "provider")).toBe("x#y");
+  });
+
+  it("is empty when only a comment follows the key", () => {
+    expect(getFrontmatterScalar("---\nname: # none\n---\n", "name")).toBe("");
+  });
+});
+
+describe("adding a key to an authentication block that is indented by four spaces", () => {
+  it("writes the key next to the lines that are already there", () => {
+    const file = "---\nmodel:\n    provider: openai\n    authentication:\n        type: api-key\n---\n";
+    const next = setModelApiKey(file, "${env:OPENAI_KEY}");
+    expect(next).toContain("        api_key: ${env:OPENAI_KEY}\n");
+    expect(splitFrontmatter(next).frontmatter).toEqual({
+      model: { provider: "openai", authentication: { type: "api-key", api_key: "${env:OPENAI_KEY}" } },
+    });
+  });
+
+  it("uses two more spaces when the block has no lines yet", () => {
+    const file = "---\nmodel:\n  provider: openai\n  authentication:\n---\n";
+    const next = setModelApiKey(file, "${env:OPENAI_KEY}");
+    expect(next).toContain("    api_key: ${env:OPENAI_KEY}\n");
+  });
+});

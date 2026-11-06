@@ -14,17 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import {
-  type AgentMetadata,
-  type ModelEvent,
-  type ModelPort,
-  type ModelRequest,
-  parseAfm,
-  validateMetadata,
-} from "@afm/engine";
+import { type AgentMetadata, parseAfm, validateMetadata } from "@afm/engine";
 import { describe, expect, it, vi } from "vitest";
 import { findProvider } from "./catalogs";
+import { modelOf, type OldEvent, type OldModel, type OldRequest } from "../runtime/test-model";
 import { buildAfmSource, generateDraft, stripCodeFence } from "./drafts";
+
+type ModelEvent = OldEvent;
+type ModelPort = OldModel;
+type ModelRequest = OldRequest;
 
 const firstModelOf = (provider: string) => findProvider(provider)!.models[0]!.id;
 
@@ -139,7 +137,7 @@ function fixture(events: ModelEvent[] = [{ type: "text-delta", text: TEXT }]) {
     yield* events;
   });
   const port: ModelPort = { stream };
-  const resolve = vi.fn(async (_model: AgentMetadata["model"]): Promise<ModelPort> => port);
+  const resolve = vi.fn(async (_model: AgentMetadata["model"]) => modelOf(port));
   return { stream, port, resolve };
 }
 
@@ -175,16 +173,16 @@ describe("generateDraft", () => {
 
   it("waits for model resolution before starting the stream", async () => {
     const test = fixture();
-    let release: (port: ModelPort) => void = () => {
+    let release: (port: ReturnType<typeof modelOf>) => void = () => {
       throw new Error("Resolver not initialized");
     };
-    const model = new Promise<ModelPort>((resolve) => {
+    const model = new Promise<ReturnType<typeof modelOf>>((resolve) => {
       release = resolve;
     });
     const result = generateDraft("request", MODEL, false, () => model);
     await Promise.resolve();
     expect(test.stream).not.toHaveBeenCalled();
-    release(test.port);
+    release(modelOf(test.port));
     await expect(result).resolves.toMatchObject({ kind: "draft" });
     expect(test.stream).toHaveBeenCalledTimes(1);
   });
@@ -315,6 +313,6 @@ describe("generateDraft", () => {
         throw failure;
       },
     };
-    await expect(generateDraft("request", MODEL, false, async () => port)).rejects.toBe(failure);
+    await expect(generateDraft("request", MODEL, false, async () => modelOf(port))).rejects.toBe(failure);
   });
 });
