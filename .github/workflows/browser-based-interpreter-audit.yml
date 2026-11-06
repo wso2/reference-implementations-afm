@@ -1,0 +1,43 @@
+name: Browser-based Interpreter Dependency Audit
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-based-interpreter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch the TypeScript interpreter from pull request 42
+        working-directory: .
+        run: |
+          if [ ! -d typescript-interpreter ]; then
+            git fetch --depth=1 https://github.com/Thareesha98/reference-implementations-afm.git typescript-interpreter
+            git checkout FETCH_HEAD -- typescript-interpreter
+          fi
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: browser-based-interpreter/package.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Audit dependencies
+        run: pnpm audit

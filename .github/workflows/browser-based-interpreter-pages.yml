@@ -1,0 +1,73 @@
+name: Browser-based Interpreter Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-based-interpreter
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch the TypeScript interpreter from pull request 42
+        working-directory: .
+        run: |
+          if [ ! -d typescript-interpreter ]; then
+            git fetch --depth=1 https://github.com/Thareesha98/reference-implementations-afm.git typescript-interpreter
+            git checkout FETCH_HEAD -- typescript-interpreter
+          fi
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: browser-based-interpreter/package.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: browser-based-interpreter/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web app
+        run: pnpm exec vite build --base=/${{ github.event.repository.name }}/
+        env:
+          VITE_MCP_PROXY_URL: ${{ vars.MCP_PROXY_URL }}
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: browser-based-interpreter/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

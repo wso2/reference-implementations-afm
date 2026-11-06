@@ -17,25 +17,34 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useAgentsLibrary, useThemeContext } from "../../app/contexts";
+import { getSection } from "../../core/agent/agent-source-edit";
+import { type PendingPermission } from "../../core/chat/chat-state";
 import {
   identityFor,
   missingAgentId,
   missingAgentNotice,
   openingOf,
+  shownIcon,
 } from "../../core/links/workspace-content";
-import { reachOf } from "../../core/setup/setup-check";
+import { quietInRaw } from "../../core/setup/readiness";
+import { reachOf, type SetupRow } from "../../core/setup/setup-check";
 import { SidePane } from "../../ui/SideWindow";
+import { StageFoot } from "../../ui/StageFoot";
+import { type EditorMode } from "../../ui/ViewControls";
 import { useMediaQuery } from "../../ui/hooks";
 import { useStandaloneSession } from "../../worker-client/useStandaloneSession";
 import { EditorPane } from "../editor/EditorPane";
+import { TrustScreen } from "../setup/TrustScreen";
 import { useSetup } from "../setup/useSetup";
 import { StartHere } from "../start/StartHere";
 import { AgentPicker } from "./AgentPicker";
+import { ChatHead, ChatPane, StatusPill } from "./ChatPane";
 import { OverPanel } from "./OverPanel";
 import { AboutButton, ShareButton, WorkspaceBar } from "./WorkspaceBar";
+import { useRunControl } from "./useRunControl";
 import { usePanelEscape, usePanelFocus } from "./usePanelKeys";
 import { useRecordedChat, useWorkspaceDocument } from "./useWorkspaceDocument";
-import { LEFT_TITLE, useAgentActivity, usePanels } from "./workspace-view";
+import { LEFT_TITLE, openOver, useAgentActivity, usePanels } from "./workspace-view";
 
 const COMPACT_QUERY = "(max-width: 640px)";
 
@@ -44,6 +53,8 @@ export function WorkspacePage() {
   const location = useLocation();
   const draftSource = (location.state as { draftSource?: string } | null)?.draftSource;
   const [serverEditing, setServerEditing] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<EditorMode>("simple");
+  const [rawRequest, setRawRequest] = useState(0);
   const theme = useThemeContext();
   const library = useAgentsLibrary();
   const compact = useMediaQuery(COMPACT_QUERY);
@@ -56,6 +67,8 @@ export function WorkspacePage() {
     left,
     setLeft,
     chatFull,
+    setChatFull,
+    reveal,
     openSide,
     toggleSide,
     leavePanel,
@@ -71,13 +84,36 @@ export function WorkspacePage() {
     },
     compact,
   );
-  const session = useStandaloneSession();
+  const remember = useRef<(request: PendingPermission) => void>(() => {});
+  const session = useStandaloneSession({
+    onRememberPermission: (request, allow) => {
+      if (allow) remember.current(request);
+    },
+  });
   const doc = useWorkspaceDocument({ clearAgent: session.clearAgent, onMissingAgent: () => setLeft("start") });
+  remember.current = (request) => doc.trustRequested(request.serverId, request.name);
   const { content, readable } = doc;
   const activity = useAgentActivity(session.state);
   const agentLabel = (readable.ok ? readable.metadata.name : undefined) ?? "Untitled agent";
+  const agentIcon = readable.ok ? shownIcon(doc.trusted, readable.metadata.icon_url) : "";
   useRecordedChat(doc.agentId, agentLabel, content, session.state);
   const setup = useSetup(session, readable.ok ? readable.metadata : null);
+  const run = useRunControl({
+    content,
+    setContent: doc.setContent,
+    readable,
+    session,
+    activity,
+    confirmedTools: doc.confirmedTools,
+    persistToLibrary: doc.persistToLibrary,
+    startSetup: setup.start,
+    openSide,
+  });
+
+  function configure(row: SetupRow) {
+    if (row.kind === "server") setServerEditing(row.name);
+    reveal(openOver(nav, row.kind === "model" ? "model" : "tools"));
+  }
 
   function resetToBlank() {
     closeSide();
@@ -132,7 +168,14 @@ export function WorkspacePage() {
       <WorkspaceBar
         agentName={agentLabel}
         saveFailed={doc.saveFailed}
-        canAct={readable.ok}
+        canAct={run.preview.ok}
+        canRun={run.canRun}
+        running={run.running}
+        onRun={run.requestRun}
+        runPrompt={run.pendingConfirmation}
+        onAcceptRunPrompt={run.acceptRunPrompt}
+        onDeclineRunPrompt={run.declineRunPrompt}
+        runTip={run.runTip}
         open={side}
         onToggle={toggleSide}
         agentsOpen={left === "agents"}
@@ -154,6 +197,26 @@ export function WorkspacePage() {
           chatFull ? "is-chat-full" : ""
         }`}
       >
+        {doc.showTrust && readable.ok && (
+          <TrustScreen
+            metadata={readable.metadata}
+            source={content}
+            savedSecrets={session.state.savedSecrets}
+            fileUrl={doc.linkedFile}
+            canRun={run.canRun}
+            onRun={(ticked) => {
+              doc.confirmTools(ticked);
+              doc.trust();
+              run.requestRun();
+            }}
+            onOpenBuilder={(ticked) => {
+              doc.confirmTools(ticked);
+              doc.trust();
+              setChatFull(false);
+              closeSide();
+            }}
+          />
+        )}
         <aside className="u-side-left" aria-hidden={leftPanel === null} ref={leftRef}>
           {leftPanel !== null && (
             <SidePane key={leftPanel} title={LEFT_TITLE[leftPanel]} onClose={closeLeft} flush={leftPanel === "agents"}>
@@ -182,7 +245,7 @@ export function WorkspacePage() {
         <div className="u-stage">
           <EditorPane
             content={content}
-            onChange={doc.setContent}
+            onChange={run.editContent}
             onRawInsert={doc.holdInserted}
             activity={activity}
             reach={reachOf(setup.rows, reachedServerIds)}
@@ -191,19 +254,32 @@ export function WorkspacePage() {
               setServerEditing(name);
               openSide("tools");
             }}
+            showRaw={rawRequest}
+            onModeChange={setEditorMode}
             openPanel={{
               model: overPanel === "model",
               server: overPanel === "tools" ? serverEditing : null,
               adding: overPanel === "tools" && serverEditing === null,
             }}
+            chip={run.chip}
             toolbarExtras={
               compact ? (
                 <>
-                  <ShareButton open={side} onToggle={toggleSide} canAct={readable.ok} />
+                  <ShareButton open={side} onToggle={toggleSide} canAct={run.preview.ok} />
                   <AboutButton open={side} onToggle={toggleSide} />
                 </>
               ) : undefined
             }
+          />
+          <StageFoot
+            state={quietInRaw(run.ready, editorMode === "raw")}
+            onFix={(fix) => {
+              if (fix === "raw") {
+                setRawRequest((n) => n + 1);
+                return;
+              }
+              openSide(fix);
+            }}
           />
         </div>
 
@@ -212,6 +288,31 @@ export function WorkspacePage() {
         <div className="u-float-scrim" onClick={side !== null ? leavePanel : closeLeft} role="presentation" />
 
         <aside className="u-side" aria-hidden={side === null} ref={sideRef}>
+          <SidePane
+            title="Chat"
+            heading={
+              chatFull && !compact ? (
+                <StatusPill status={run.chatState} />
+              ) : (
+                <ChatHead name={agentLabel} iconUrl={agentIcon} status={run.chatState} />
+              )
+            }
+            onClose={closeChat}
+            onExpand={chatFull ? undefined : () => setChatFull(true)}
+            floating={chatFull}
+            covered={overPanel !== null}
+            flush
+          >
+            <ChatPane
+              session={session}
+              serverNameByUrl={run.nameByUrl}
+              onReplaceKey={() => openSide("model")}
+              onRetry={run.openSetup}
+              description={readable.ok ? (readable.metadata.description ?? "") : ""}
+              role={getSection(content, "Role")}
+              iconUrl={agentIcon}
+            />
+          </SidePane>
 
           {overPanel !== null && (
             <OverPanel
@@ -223,8 +324,15 @@ export function WorkspacePage() {
               savedAgent={library.agents.find((agent) => agent.id === doc.agentId)}
               serverEditing={serverEditing}
               backToSetup={backToSetup}
+              trusted={doc.confirmedTools ?? null}
               onContent={doc.setContent}
               onApplyServer={doc.applyServer}
+              onTrustedChange={(keys) => {
+                doc.setTrusted(keys);
+                session.syncTrusted(keys);
+              }}
+              onConfigure={configure}
+              onRun={run.runAgent}
               onLeave={leavePanel}
             />
           )}

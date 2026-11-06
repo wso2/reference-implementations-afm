@@ -15,13 +15,15 @@
 // under the License.
 
 import { type buildableAgent } from "../../core/agent/agent-validation";
-import { MODEL_ROW, serverRowId } from "../../core/setup/setup-check";
+import { MODEL_ROW, serverRowId, type SetupRow } from "../../core/setup/setup-check";
 import { type SavedAgent } from "../../core/storage/stores";
 import { SidePane } from "../../ui/SideWindow";
 import { type useStandaloneSession } from "../../worker-client/useStandaloneSession";
 import { ModelPanel } from "../model/ModelPanel";
+import { SetupPane } from "../setup/SetupPane";
 import { type useSetup } from "../setup/useSetup";
 import { InfoPanel } from "../share/InfoPanel";
+import { SettingsPanel } from "../share/SettingsPanel";
 import { SharePanel } from "../share/SharePanel";
 import { ServerPanel } from "../tools/ServerPanel";
 import { type SidePanel, sideTitle } from "./workspace-view";
@@ -37,8 +39,12 @@ interface Props {
   savedAgent: SavedAgent | undefined;
   serverEditing: string | null;
   backToSetup: boolean;
+  trusted: string[] | null;
   onContent: (next: string) => void;
   onApplyServer: (next: string) => void;
+  onTrustedChange: (keys: string[]) => void;
+  onConfigure: (row: SetupRow) => void;
+  onRun: () => void;
   onLeave: () => void;
 }
 
@@ -55,6 +61,14 @@ export function OverPanel(props: Props) {
       flush={FLUSH.includes(panel)}
     >
       {panel === "share" && <SharePanel agentSource={content} />}
+      {panel === "settings" && (
+        <SettingsPanel
+          session={session}
+          metadata={metadata}
+          trusted={props.trusted}
+          onTrustedChange={props.onTrustedChange}
+        />
+      )}
       {panel === "info" && (
         <InfoPanel
           content={content}
@@ -62,6 +76,16 @@ export function OverPanel(props: Props) {
           saved={savedAgent}
           onApply={props.onContent}
           onClose={onLeave}
+        />
+      )}
+      {panel === "setup" && (
+        <SetupPane
+          rows={setup.rows}
+          provider={metadata?.model?.provider ?? ""}
+          ready={setup.ready}
+          onConfigure={props.onConfigure}
+          onCheckAgain={setup.recheck}
+          onRun={props.onRun}
         />
       )}
       {panel === "model" && (

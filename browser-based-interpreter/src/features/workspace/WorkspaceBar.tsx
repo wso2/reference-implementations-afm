@@ -14,8 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { useRef } from "react";
 import type { ReactNode } from "react";
 import type { SidePanel } from "./workspace-view";
+import { ConfirmNote } from "../../ui/ConfirmNote";
+import type { RunConfirmation } from "../setup/run-confirmations";
 import { Icon } from "../../ui/Icon";
 
 interface Props {
@@ -26,6 +29,13 @@ interface Props {
   onToggle: (panel: SidePanel) => void;
   agentsOpen: boolean;
   onToggleAgents: () => void;
+  canRun: boolean;
+  running: boolean;
+  onRun: () => void;
+  runPrompt?: RunConfirmation | null;
+  onAcceptRunPrompt?: () => void;
+  onDeclineRunPrompt?: () => void;
+  runTip: string;
   onToggleTheme: () => void;
   dark: boolean;
   compact?: boolean;
@@ -97,10 +107,18 @@ export function WorkspaceBar({
   onToggle,
   agentsOpen,
   onToggleAgents,
+  canRun,
+  running,
+  onRun,
+  runPrompt = null,
+  onAcceptRunPrompt = () => {},
+  onDeclineRunPrompt = () => {},
+  runTip,
   onToggleTheme,
   dark,
   compact = false,
 }: Props) {
+  const runWrap = useRef<HTMLSpanElement>(null);
   return (
     <div className="u-bar">
       <span className="u-brand">AFM</span>
@@ -115,7 +133,44 @@ export function WorkspaceBar({
       )}
 
       <span className="u-bar-right">
+        {(!running || canRun) && (
+          <>
+            <span className="u-run-wrap" ref={runWrap}>
+              <button
+                className={`u-btn primary${canRun ? "" : " is-blocked"}`}
+                onClick={() => {
+                  if (canRun) onRun();
+                }}
+                aria-disabled={canRun ? undefined : true}
+                data-tip={runTip}
+              >
+                <span className="u-play" aria-hidden="true" />
+                {running ? "Re-run" : "Run"}
+              </button>
+              {runPrompt !== null && (
+                <ConfirmNote
+                  title={runPrompt.title}
+                  text={runPrompt.text}
+                  secondary={{ label: "No", onPick: onDeclineRunPrompt }}
+                  primary={{ label: "Yes", onPick: onAcceptRunPrompt }}
+                  focus="secondary"
+                  onDismiss={onDeclineRunPrompt}
+                  wrap={runWrap}
+                  align="end"
+                />
+              )}
+            </span>
+            <span className="u-sep" aria-hidden="true" />
+          </>
+        )}
+        <BarButton label="Chat" on={open === "chat"} onClick={() => onToggle("chat")}>
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+        </BarButton>
         {!compact && <ShareButton open={open} onToggle={onToggle} canAct={canAct} />}
+        <BarButton label="Settings" on={open === "settings"} onClick={() => onToggle("settings")}>
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5v.2a2 2 0 11-4 0V21a1.7 1.7 0 00-1.1-1.6 1.7 1.7 0 00-1.9.4l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1A1.7 1.7 0 004.7 9a1.7 1.7 0 00-.4-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1h.2a2 2 0 110 4H21a1.7 1.7 0 00-1.6 1z" />
+        </BarButton>
         {!compact && <AboutButton open={open} onToggle={onToggle} />}
         {!compact && (
           <BarButton label={dark ? "Switch to light" : "Switch to dark"} onClick={onToggleTheme}>
