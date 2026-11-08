@@ -16,8 +16,8 @@
 
 
 export type { LanguageModel, ModelMessage, UserContent } from "ai";
-export { createModel, checkModelKey, completeText } from "./model";
-export type { KeyCheck, ModelOptions } from "./model";
+export { createModel } from "./model";
+export type { ModelOptions } from "./model";
 export { runAgentTurn, DEFAULT_MAX_ITERATIONS } from "./run";
 export type { AgentTurnInput, Budget, LoopEvent, ToolOutput, TurnFinishReason } from "./run";
 export { mcpTools, toolOutput, toolsFromClient } from "./mcp";

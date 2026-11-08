@@ -14,69 +14,47 @@
 // specific language governing permissions and limitations
 // under the License.
 
+
+import { type AgentMetadata, type Env, processEnv } from "@afm/engine";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { defaultSettingsMiddleware, type LanguageModel, streamText, wrapLanguageModel } from "ai";
+import type { LanguageModel } from "ai";
 
 export interface ModelOptions {
-  apiKey: string;
-  model?: string;
+  env?: Env;
   fetch?: typeof fetch;
 }
 
-export type KeyCheck = { ok: true } | { ok: false; status: number | null };
+type Model = NonNullable<AgentMetadata["model"]>;
 
-const PROVIDERS = {
-  openai: {
-    create: ({ apiKey, model = "gpt-4o", fetch }: ModelOptions): LanguageModel =>
-      wrapLanguageModel({
-        model: createOpenAI({ apiKey, fetch })(model),
-        middleware: defaultSettingsMiddleware({ settings: { providerOptions: { openai: { store: false } } } }),
-      }),
-    keyCheck: (apiKey: string) => ({
-      url: "https://api.openai.com/v1/models",
-      headers: { authorization: `Bearer ${apiKey}` },
-    }),
-  },
-  anthropic: {
-    create: ({ apiKey, model = "claude-sonnet-4-5", fetch }: ModelOptions): LanguageModel =>
-      createAnthropic({ apiKey, fetch, headers: { "anthropic-dangerous-direct-browser-access": "true" } })(model),
-    keyCheck: (apiKey: string) => ({
-      url: "https://api.anthropic.com/v1/models?limit=1",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-    }),
-  },
+const PROVIDERS: Record<string, { name: string; keyVariable: string }> = {
+  openai: { name: "gpt-4o", keyVariable: "OPENAI_API_KEY" },
+  anthropic: { name: "claude-sonnet-4-5", keyVariable: "ANTHROPIC_API_KEY" },
 };
 
-function providerNamed(name: string): (typeof PROVIDERS)[keyof typeof PROVIDERS] {
-  if (!Object.hasOwn(PROVIDERS, name)) throw new Error(`Unsupported model provider ${name}. Use openai or anthropic.`);
-  return PROVIDERS[name as keyof typeof PROVIDERS];
+function apiKeyOf({ authentication }: Model, keyVariable: string, env: Env): string {
+  if (authentication === undefined) {
+    const key = env[keyVariable];
+    if (key === undefined || key === "") throw new Error(`The model has no key: add an 'authentication' block to the model, or set ${keyVariable}.`);
+    return key;
+  }
+  const type = authentication.type.toLowerCase();
+  if (type === "bearer" || type === "api-key") {
+    const field = type === "bearer" ? "token" : "api_key";
+    const key = authentication[field];
+    if (key === undefined || key === "") throw new Error(`${type} authentication of the model requires a '${field}' field`);
+    return key;
+  }
+  if (type === "basic") throw new Error("basic authentication is not supported for model providers");
+  throw new Error(`'${authentication.type}' authentication is not yet supported by this interpreter`);
 }
 
-export const createModel = (provider: string, options: ModelOptions): LanguageModel => providerNamed(provider).create(options);
-
-const KEY_CHECK_TIMEOUT_MS = 12_000;
-const REQUEST_TIMEOUT = 408;
-
-export async function checkModelKey(provider: string, apiKey: string, fetchFn: typeof fetch = fetch): Promise<KeyCheck> {
-  const { url, headers } = providerNamed(provider).keyCheck(apiKey);
-  try {
-    const response = await fetchFn(url, { headers, signal: AbortSignal.timeout(KEY_CHECK_TIMEOUT_MS) });
-    return response.ok ? { ok: true } : { ok: false, status: response.status };
-  } catch (error) {
-    return { ok: false, status: error instanceof DOMException && error.name === "TimeoutError" ? REQUEST_TIMEOUT : null };
-  }
-}
-
-export async function completeText(model: LanguageModel, prompt: string): Promise<string> {
-  let text = "";
-  for await (const part of streamText({ model, prompt, onError: () => {} }).fullStream) {
-    if (part.type === "text-delta") text += part.text;
-    if (part.type === "error") throw part.error;
-  }
-  return text;
+export function createModel(model: Model = {}, { env = processEnv(), fetch }: ModelOptions = {}): LanguageModel {
+  const provider = (model.provider ?? "openai").toLowerCase();
+  const defaults = Object.hasOwn(PROVIDERS, provider) ? PROVIDERS[provider] : undefined;
+  if (defaults === undefined) throw new Error(`The model provider '${provider}' is not yet supported by this interpreter. Use openai or anthropic.`);
+  const apiKey = apiKeyOf(model, defaults.keyVariable, env);
+  const name = model.name ?? defaults.name;
+  if (provider === "openai") return createOpenAI({ apiKey, baseURL: model.url, fetch }).chat(name);
+  return createAnthropic({ apiKey, baseURL: model.url, fetch })(name);
 }

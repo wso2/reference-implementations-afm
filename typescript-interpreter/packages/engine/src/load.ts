@@ -17,7 +17,7 @@
 
 import { parseAfm } from "./parse";
 import { type AgentMetadata, validateMetadata } from "./schema";
-import { checkHttpVariables, type Env, resolveText, resolveValues } from "./variables";
+import { checkHttpVariables, type Env, processEnv, resolveText, resolveValues } from "./variables";
 
 export interface LoadedAfm {
   metadata: AgentMetadata;
@@ -28,8 +28,6 @@ export interface LoadedAfm {
 }
 
 const SPEC_VERSION = "0.4.0";
-
-const processEnv = (): Env => (globalThis as { process?: { env: Env } }).process?.env ?? {};
 
 export function buildSystemPrompt(role: string, instructions: string): string {
   return `# Role\n\n${role}\n\n# Instructions\n\n${instructions}`;

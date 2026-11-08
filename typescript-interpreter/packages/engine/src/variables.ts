@@ -20,6 +20,8 @@ import type { ParsedAfm } from "./parse";
 
 export type Env = Record<string, string | undefined>;
 
+export const processEnv = (): Env => (globalThis as { process?: { env: Env } }).process?.env ?? {};
+
 const VARIABLE = /\$\{([^}]+)\}/g;
 const HTTP_ALLOWED_INTERFACES = ["webhook", "platformchat"];
 

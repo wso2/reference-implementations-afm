@@ -14,121 +14,98 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { MockLanguageModelV3 } from "ai/test";
-import { simulateReadableStream, streamText } from "ai";
+
+import { generateText } from "ai";
 import { describe, expect, it } from "vitest";
-import { checkModelKey, completeText, createModel } from "./model";
+import { createModel, type ModelOptions } from "./model";
 
-describe("checkModelKey", () => {
-  const answering = (status: number) => (async () => new Response("{}", { status })) as typeof fetch;
+type Seen = { url: string; headers: Headers; body: { model?: string } };
 
-  it("accepts a key the provider lists models for", async () => {
-    expect(await checkModelKey("openai", "sk-ok", answering(200))).toEqual({ ok: true });
+async function request(model: Parameters<typeof createModel>[0], options: ModelOptions = {}): Promise<Seen> {
+  const seen: Seen[] = [];
+  const fetch = (async (input: string | URL, init?: RequestInit) => {
+    seen.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body ?? "{}")) });
+    return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+  }) as typeof globalThis.fetch;
+  await generateText({ model: createModel(model, { ...options, fetch }), prompt: "hi", maxRetries: 0 }).catch(() => undefined);
+  return seen[0]!;
+}
+
+const keyed = (provider: string, extra: object = {}) => ({ provider, authentication: { type: "api-key", api_key: "k-1" }, ...extra });
+
+describe("createModel", () => {
+  it("calls OpenAI Chat Completions with the key and the default model", async () => {
+    const seen = await request(keyed("openai"));
+    expect(seen.url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(seen.headers.get("authorization")).toBe("Bearer k-1");
+    expect(seen.body.model).toBe("gpt-4o");
   });
 
-  it("sends the key the way each provider expects it", async () => {
-    const seen: { url: string; headers: Record<string, string> }[] = [];
-    const record = (async (url: string, init?: RequestInit) => {
-      seen.push({ url, headers: init?.headers as Record<string, string> });
-      return new Response("{}");
-    }) as unknown as typeof fetch;
-    await checkModelKey("openai", "sk-1", record);
-    await checkModelKey("anthropic", "ak-1", record);
-    expect(seen[0]).toEqual({ url: "https://api.openai.com/v1/models", headers: { authorization: "Bearer sk-1" } });
-    expect(seen[1]?.url).toBe("https://api.anthropic.com/v1/models?limit=1");
-    expect(seen[1]?.headers["x-api-key"]).toBe("ak-1");
-    expect(seen[1]?.headers["anthropic-dangerous-direct-browser-access"]).toBe("true");
+  it("calls Anthropic with the key in x-api-key, the default model, and no browser header", async () => {
+    const seen = await request(keyed("anthropic"));
+    expect(seen.url).toBe("https://api.anthropic.com/v1/messages");
+    expect(seen.headers.get("x-api-key")).toBe("k-1");
+    expect(seen.headers.has("anthropic-dangerous-direct-browser-access")).toBe(false);
+    expect(seen.body.model).toBe("claude-sonnet-4-5");
   });
 
-  it("reports the status of a refusal", async () => {
-    expect(await checkModelKey("anthropic", "bad", answering(401))).toEqual({ ok: false, status: 401 });
+  it("uses OpenAI when no provider is named, and reads the provider without regard to case", async () => {
+    expect((await request({ authentication: { type: "api-key", api_key: "k" } })).url).toContain("api.openai.com");
+    expect((await request(keyed("Anthropic"))).url).toContain("api.anthropic.com");
   });
 
-  it("reports a request that never arrived as no status", async () => {
-    const offline = (async () => {
-      throw new TypeError("Failed to fetch");
-    }) as unknown as typeof fetch;
-    expect(await checkModelKey("openai", "sk", offline)).toEqual({ ok: false, status: null });
+  it("uses the model name from the file", async () => {
+    expect((await request(keyed("openai", { name: "gpt-4o-mini" }))).body.model).toBe("gpt-4o-mini");
   });
 
-  it("reports a provider that never answers as a timeout", async () => {
-    const timedOut = (async () => {
-      throw new DOMException("The operation timed out.", "TimeoutError");
-    }) as unknown as typeof fetch;
-    expect(await checkModelKey("openai", "sk", timedOut)).toEqual({ ok: false, status: 408 });
-  });
-});
-
-describe("the models", () => {
-  it("asks OpenAI not to keep the conversation, at the fixed OpenAI address", async () => {
-    let seen: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
-    const spy = (async (url: string, init?: RequestInit) => {
-      seen = { url, headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> };
-      return new Response("{}", { status: 400 });
-    }) as unknown as typeof fetch;
-    const model = createModel("openai", { apiKey: "sk-test", fetch: spy });
-    await streamText({ model, prompt: "hi", maxRetries: 0, onError: () => {} }).consumeStream();
-    expect(seen?.url).toMatch(/^https:\/\/api\.openai\.com\//);
-    expect(seen?.body.store).toBe(false);
-    expect(seen?.body.model).toBe("gpt-4o");
-    expect(seen?.headers.get("authorization")).toBe("Bearer sk-test");
+  it("treats the url as the base address of the provider's API", async () => {
+    const seen = await request(keyed("openai", { name: "llama3", url: "http://localhost:11434/v1" }));
+    expect(seen.url).toBe("http://localhost:11434/v1/chat/completions");
+    expect((await request(keyed("anthropic", { url: "https://proxy.example.com/v1" }))).url).toBe("https://proxy.example.com/v1/messages");
   });
 
-  it("opens Anthropic for the browser, at the fixed Anthropic address", async () => {
-    let seen: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
-    const spy = (async (url: string, init?: RequestInit) => {
-      seen = { url, headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> };
-      return new Response("{}", { status: 400 });
-    }) as unknown as typeof fetch;
-    const model = createModel("anthropic", { apiKey: "ak-test", model: "claude-test", fetch: spy });
-    await streamText({ model, prompt: "hi", maxRetries: 0, onError: () => {} }).consumeStream();
-    expect(seen?.url).toMatch(/^https:\/\/api\.anthropic\.com\//);
-    expect(seen?.headers.get("anthropic-dangerous-direct-browser-access")).toBe("true");
-    expect(seen?.headers.get("x-api-key")).toBe("ak-test");
-    expect(seen?.body.model).toBe("claude-test");
-  });
-});
-
-describe("an unknown provider", () => {
-  it.each(["gemini", "constructor", "__proto__", ""])("is refused for %j, naming the ones that work", async (provider) => {
-    expect(() => createModel(provider, { apiKey: "k" })).toThrow(/Unsupported model provider .*Use openai or anthropic/);
-    await expect(checkModelKey(provider, "k", (async () => new Response("{}")) as typeof fetch)).rejects.toThrow(/Unsupported model provider/);
-  });
-});
-
-describe("completeText", () => {
-  const streaming = (...parts: Record<string, unknown>[]) =>
-    new MockLanguageModelV3({ doStream: async () => ({ stream: simulateReadableStream({ chunks: parts }) }) as never });
-  const finish = { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } };
-
-  it("joins the text the model wrote and ignores everything else", async () => {
-    const model = streaming(
-      { type: "text-start", id: "a" },
-      { type: "text-delta", id: "a", delta: "a dra" },
-      { type: "tool-call", toolCallId: "x", toolName: "nope", input: "{}" },
-      { type: "text-delta", id: "a", delta: "ft" },
-      { type: "text-end", id: "a" },
-      finish,
-    );
-    expect(await completeText(model, "write one")).toBe("a draft");
-    expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain("write one");
+  it("sends a bearer token as the key", async () => {
+    expect((await request({ provider: "openai", authentication: { type: "bearer", token: "t-1" } })).headers.get("authorization")).toBe("Bearer t-1");
   });
 
-  it("throws the error that broke the stream, without a partial answer", async () => {
-    const failure = new Error("stream failed");
-    const model = new MockLanguageModelV3({
-      doStream: async () =>
-        ({
-          stream: new ReadableStream({
-            start(controller) {
-              controller.enqueue({ type: "text-start", id: "a" });
-              controller.enqueue({ type: "text-delta", id: "a", delta: "partial" });
-              controller.enqueue({ type: "error", error: failure });
-              controller.close();
-            },
-          }),
-        }) as never,
-    });
-    await expect(completeText(model, "write one")).rejects.toBe(failure);
+  it("takes the key from the environment when the model has no authentication", async () => {
+    expect((await request({ provider: "openai" }, { env: { OPENAI_API_KEY: "from-env" } })).headers.get("authorization")).toBe("Bearer from-env");
+    expect((await request({ provider: "anthropic" }, { env: { ANTHROPIC_API_KEY: "from-env" } })).headers.get("x-api-key")).toBe("from-env");
+  });
+
+  it("reads the process environment by default", async () => {
+    const { env } = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process;
+    env["OPENAI_API_KEY"] = "from-process";
+    try {
+      expect((await request({ provider: "openai" })).headers.get("authorization")).toBe("Bearer from-process");
+    } finally {
+      delete env["OPENAI_API_KEY"];
+    }
+  });
+
+  it.each([
+    ["no key anywhere", { provider: "openai" }, /set OPENAI_API_KEY/],
+    ["an empty environment key", { provider: "anthropic" }, /set ANTHROPIC_API_KEY/],
+    ["a bearer token that is missing", { provider: "openai", authentication: { type: "bearer" } }, /requires a 'token' field/],
+    ["an api key that is missing", { provider: "openai", authentication: { type: "api-key" } }, /requires a 'api_key' field/],
+    ["basic authentication", { provider: "openai", authentication: { type: "basic", username: "u", password: "p" } }, /not supported for model providers/],
+    ["jwt authentication", { provider: "openai", authentication: { type: "jwt" } }, /'jwt' authentication is not yet supported by this interpreter/],
+    ["another provider", { provider: "gemini", authentication: { type: "api-key", api_key: "k" } }, /'gemini' is not yet supported by this interpreter/],
+    ["a provider that is a property of every object", { provider: "constructor" }, /not yet supported by this interpreter/],
+  ])("refuses %s, saying what to do", (_label, model, message) => {
+    expect(() => createModel(model, { env: {} })).toThrow(message);
+  });
+
+  it("never puts the key in an error message", () => {
+    const message = (() => {
+      try {
+        createModel({ provider: "gemini", authentication: { type: "api-key", api_key: "SECRET-KEY" } });
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return "";
+    })();
+    expect(message).not.toBe("");
+    expect(message).not.toContain("SECRET-KEY");
   });
 });

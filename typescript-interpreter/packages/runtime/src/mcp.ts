@@ -38,7 +38,7 @@ export interface McpConnection {
 type Definition = ListToolsResult["tools"][number];
 type Result = { content?: unknown; structuredContent?: unknown; isError?: unknown };
 
-const TIMEOUT_MS = 30_000;
+export const CONNECT_TIMEOUT_MS = 30_000;
 const MAX_PAGES = 50;
 const LOOPBACK = /^(localhost|\[::1\]|127(\.\d{1,3}){3})$/;
 const SESSION_ENDED = "The server's session had ended (HTTP 404). The call was not repeated; the next call starts a new session.";
@@ -58,7 +58,7 @@ async function listDefinitions(client: MCPClient): Promise<Definition[]> {
   const seen = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const result = await client.listTools({ params: cursor === undefined ? undefined : { cursor }, options: { timeout: TIMEOUT_MS } });
+    const result = await client.listTools({ params: cursor === undefined ? undefined : { cursor }, options: { timeout: CONNECT_TIMEOUT_MS } });
     definitions.push(...result.tools);
     cursor = result.nextCursor;
     if (cursor === undefined || cursor === "") return definitions;
@@ -145,7 +145,7 @@ export async function mcpTools(server: HttpMcpServer, { fetch }: McpOptions = {}
   const connect = () =>
     createMCPClient({
       transport: { type: "http", url, headers, fetch, redirect: "error" },
-      initializationOptions: { timeout: TIMEOUT_MS },
+      initializationOptions: { timeout: CONNECT_TIMEOUT_MS },
       maxRetries: 0,
       clientName: "afm",
     });
