@@ -102,6 +102,8 @@ const clientAuthentication = z
   .looseObject({
     type: z.string().min(1),
     token: z.string().optional(),
+    username: z.string().optional(),
+    password: z.string().optional(),
     api_key: z.string().optional(),
     header_name: z.string().optional(),
     issuer: z.string().optional(),

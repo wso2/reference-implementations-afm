@@ -14,17 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export type {
-  SecretPort,
-  SecretRef,
-  SecretResolution,
-} from "./types";
+
+export type { SecretPort, SecretRef, SecretResolution } from "./types";
 export { parseAfm, splitFrontmatter, frontmatterEndOffset } from "./parse";
 export type { ParsedAfm, FrontmatterSplit } from "./parse";
 export { validateMetadata, agentMetadataSchema } from "./schema";
 export type { AgentMetadata, ClientAuthentication, JsonSchemaData } from "./schema";
-export { resolveVariables, scanSecretUsage, referencedSecretNames, serverAddress, isInsecureAddress, isLoopbackAddress } from "./variables";
-export type { SecretUsage, SecretScope } from "./variables";
-export { planForBrowser, loadAfm, buildSystemPrompt } from "./load";
-export type { Plan, PlanIssue, PlanSeverity, LoadedAfm, LoadOptions } from "./load";
+export { resolveVariables } from "./variables";
+export { loadAfm, buildSystemPrompt } from "./load";
+export type { LoadedAfm } from "./load";
 export { AfmParseError, AfmValidationError, VariableResolutionError, describeError } from "./errors";

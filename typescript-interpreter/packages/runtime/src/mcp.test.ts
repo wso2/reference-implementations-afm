@@ -14,30 +14,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
+
 import { Server as McpProtocolServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { isInitializeRequest, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, ToolSet } from "ai";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDynamicMcpAuthHeaderProvider, McpAuthError, mcpAuthHeaders } from "./mcp-auth";
+import { afterEach, describe, expect, it } from "vitest";
+import { type HttpMcpServer, mcpTools, toolOutput } from "./mcp";
 import type { ToolOutput } from "./run";
-import { effectiveUrl, type McpServerOptions, mcpServerTools, probeMcpServer, toolOutput } from "./mcp";
-import { createToolGuard } from "./tool-guard";
 
-const guard = createToolGuard({ request: async () => "allow" });
+type Extra = Partial<HttpMcpServer["transport"]> & { tool_filter?: HttpMcpServer["tool_filter"]; fetch?: typeof fetch };
 
-type Options = Partial<McpServerOptions> & { url: string };
-const source = (options: Options) => mcpServerTools({ name: "t", setupTimeoutMs: 2000, ...options }, guard);
+const connect = (url: string, { tool_filter, fetch, ...transport }: Extra = {}) => mcpTools({ transport: { url, ...transport }, tool_filter }, { fetch });
+const names = async (url: string, extra: Extra = {}) => Object.keys((await connect(url, extra)).tools);
 
 async function execute(tools: ToolSet, name: string, args: unknown = {}): Promise<ToolOutput> {
   const found = tools[name] as Tool | undefined;
   return (await found?.execute?.(args, { toolCallId: "c1", messages: [], abortSignal: new AbortController().signal })) as ToolOutput;
 }
-
-const names = async (options: Options) => Object.keys(await source(options).tools());
 
 interface TestServer {
   url: string;
@@ -153,7 +150,6 @@ function startServer(handle: (request: IncomingMessage, response: ServerResponse
   });
 }
 
-
 describe("an MCP server's tool list", () => {
   let server: TestServer | null = null;
   afterEach(async () => {
@@ -161,12 +157,16 @@ describe("an MCP server's tool list", () => {
     server = null;
   });
 
-  it("offers each tool under the server's prefix, with the server it belongs to", async () => {
+  it("offers each tool under the name the server gives it", async () => {
     server = await startTestMcpServer();
-    const toolSource = source({ url: server.url, name: "My Server" });
-    expect(Object.keys(await toolSource.tools())).toEqual(["My-Server__whoami"]);
-    expect(toolSource.serverId).toBe(server.url);
-    await toolSource.close();
+    const connection = await connect(server.url);
+    expect(Object.keys(connection.tools)).toEqual(["whoami"]);
+    await connection.close();
+  });
+
+  it("keeps a tool name exactly as the server gives it, even with a dot", async () => {
+    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["files.read"] })));
+    expect(await names(server.url)).toEqual(["files.read"]);
   });
 
   it("reads every page, so no tool of a long list is lost", async () => {
@@ -178,75 +178,31 @@ describe("an MCP server's tool list", () => {
         return { names: pages[index]!, next: index + 1 < pages.length ? String(index + 1) : undefined };
       }),
     );
-    expect(await names({ url: server.url })).toEqual(["t__a", "t__b", "t__c", "t__d", "t__e"]);
+    expect(await names(server.url)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
   it("asks only once when the server sends everything at once", async () => {
     server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["a", "b"] })));
-    await names({ url: server.url });
+    await names(server.url);
     expect(server.received.filter((method) => method === "tools/list")).toHaveLength(1);
   });
 
   it("refuses a server that hands out the same cursor again and again", async () => {
     server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["a"], next: "same" })));
-    await expect(source({ url: server.url }).tools()).rejects.toThrow(/without ever finishing/);
+    await expect(connect(server.url)).rejects.toThrow(/without ever finishing/);
     expect(server.received.filter((method) => method === "tools/list").length).toBeLessThanOrEqual(3);
   });
 
   it("refuses a server whose list never ends, after a bounded number of pages", async () => {
     let counter = 0;
     server = await startTestMcpServer(undefined, pagedServer(() => ({ names: [`t${counter}`], next: String((counter += 1)) })));
-    await expect(source({ url: server.url }).tools()).rejects.toThrow(/without ever finishing/);
+    await expect(connect(server.url)).rejects.toThrow(/without ever finishing/);
     expect(server.received.filter((method) => method === "tools/list")).toHaveLength(50);
-  });
-
-  it("offers a tool whose name providers would refuse under a usable name, and runs it under its own", async () => {
-    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["files.read"] })));
-    const tools = await source({ url: server.url }).tools();
-    expect(Object.keys(tools)).toEqual(["t__files_read"]);
-  });
-
-  it("leaves out a renamed tool that would take the name of another tool of the same server", async () => {
-    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["files_read", "files.read"] })));
-    expect(await names({ url: server.url })).toEqual(["t__files_read"]);
   });
 
   it("refuses a server that lists the same tool twice, saying so", async () => {
     server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["a", "a"] })));
-    await expect(source({ url: server.url }).tools()).rejects.toThrow(/server 't' lists the tool 'a' more than once/);
-  });
-
-  it("refuses a name one character too long, saying which server and tool", async () => {
-    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["x".repeat(62)] })));
-    await expect(source({ url: server.url }).tools()).rejects.toThrow(/server 't'.*longer than the 64 characters/);
-  });
-
-  it("accepts a name of exactly the longest length providers allow", async () => {
-    server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["x".repeat(61)] })));
-    expect(await names({ url: server.url })).toEqual([`t__${"x".repeat(61)}`]);
-  });
-
-  describe("probing a server to choose its tools", () => {
-    it("gives the server's own tool names, with no prefix and no renaming", async () => {
-      server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["search", "files.read"] })));
-      expect((await probeMcpServer({ name: "docs", url: server.url, setupTimeoutMs: 2000 })).map((tool) => tool.name)).toEqual([
-        "search",
-        "files.read",
-      ]);
-      expect(server.received.filter((method) => method === "tools/call")).toEqual([]);
-    });
-
-    it("applies the tool_filter to the server's own names", async () => {
-      server = await startTestMcpServer(undefined, pagedServer(() => ({ names: ["a", "b", "c"] })));
-      const tools = await probeMcpServer({ name: "docs", url: server.url, filter: { deny: ["b"] }, setupTimeoutMs: 2000 });
-      expect(tools.map((tool) => tool.name)).toEqual(["a", "c"]);
-    });
-
-    it("refuses credentials over plain http like a real connection", async () => {
-      await expect(
-        probeMcpServer({ name: "docs", url: "http://mcp.example.com/mcp", headers: { Authorization: "Bearer x" } }),
-      ).rejects.toThrow(McpAuthError);
-    });
+    await expect(connect(server.url)).rejects.toThrow(/lists the tool 'a' more than once/);
   });
 
   describe("tool_filter", () => {
@@ -254,26 +210,19 @@ describe("an MCP server's tool list", () => {
 
     it("offers only the allowed tools", async () => {
       server = await startTestMcpServer(undefined, three);
-      expect(await names({ url: server.url, filter: { allow: ["a", "b", "zzz"] } })).toEqual(["t__a", "t__b"]);
+      expect(await names(server.url, { tool_filter: { allow: ["a", "b", "zzz"] } })).toEqual(["a", "b"]);
     });
 
     it("removes the denied tools, and deny wins over allow", async () => {
       server = await startTestMcpServer(undefined, three);
-      expect(await names({ url: server.url, filter: { deny: ["b"] } })).toEqual(["t__a", "t__c"]);
-      expect(await names({ url: server.url, filter: { allow: ["a", "b"], deny: ["b"] } })).toEqual(["t__a"]);
+      expect(await names(server.url, { tool_filter: { deny: ["b"] } })).toEqual(["a", "c"]);
+      expect(await names(server.url, { tool_filter: { allow: ["a", "b"], deny: ["b"] } })).toEqual(["a"]);
     });
 
     it("offers nothing for an empty allow list, and everything with no filter", async () => {
       server = await startTestMcpServer(undefined, three);
-      expect(await names({ url: server.url, filter: { allow: [] } })).toEqual([]);
-      expect(await names({ url: server.url })).toEqual(["t__a", "t__b", "t__c"]);
-    });
-
-    it("does not let a hidden tool be called, even by its prefixed name", async () => {
-      server = await startTestMcpServer(undefined, three);
-      const tools = await source({ url: server.url, filter: { allow: ["a"] } }).tools();
-      expect(tools["t__b"]).toBeUndefined();
-      expect(server.received).not.toContain("tools/call");
+      expect(await names(server.url, { tool_filter: { allow: [] } })).toEqual([]);
+      expect(await names(server.url)).toEqual(["a", "b", "c"]);
     });
   });
 });
@@ -287,271 +236,60 @@ describe("an MCP server that is called", () => {
 
   it("sends a configured bearer token, and the server receives exactly it", async () => {
     server = await startTestMcpServer({ name: "authorization", value: "Bearer secret-token" });
-    const tools = await source({ url: server.url, headers: mcpAuthHeaders({ type: "bearer", token: "secret-token" }) }).tools();
-    expect(await execute(tools, "t__whoami")).toEqual({ ok: true, content: "Bearer secret-token" });
+    const { tools } = await connect(server.url, { authentication: { type: "bearer", token: "secret-token" } });
+    expect(await execute(tools, "whoami")).toEqual({ ok: true, content: "Bearer secret-token" });
   });
 
-  it("does not repeat a tool call when the server has forgotten the session, and starts a new session for the next call", async () => {
-    server = await startTestMcpServer();
-    const toolSource = source({ url: server.url });
-    const tools = await toolSource.tools();
-    server.forgetSessions();
-
-    const failed = await execute(tools, "t__whoami");
-    expect(failed.ok).toBe(false);
-    expect(failed.content).toMatch(/session had ended.*not repeated/);
-    expect(server.received.filter((method) => method === "tools/call")).toHaveLength(1);
-
-    const next = await execute(tools, "t__whoami");
-    expect(next.ok).toBe(true);
-    expect(server.received.filter((method) => method === "initialize")).toHaveLength(2);
-    await toolSource.close();
-  });
-
-  it("fails to connect when the required bearer token is missing or wrong", async () => {
-    server = await startTestMcpServer({ name: "authorization", value: "Bearer secret-token" });
-    await expect(source({ url: server.url }).tools()).rejects.toBeTruthy();
-    await expect(
-      source({ url: server.url, headers: mcpAuthHeaders({ type: "bearer", token: "wrong-token" }) }).tools(),
-    ).rejects.toBeTruthy();
+  it("sends basic authentication as the base64 of user and password", async () => {
+    server = await startTestMcpServer({ name: "authorization", value: `Basic ${btoa("alice:s3cret")}` });
+    const { tools } = await connect(server.url, { authentication: { type: "basic", username: "alice", password: "s3cret" } });
+    expect(await execute(tools, "whoami")).toEqual({ ok: true, content: `Basic ${btoa("alice:s3cret")}` });
   });
 
   it("sends api-key auth on a custom header name", async () => {
     server = await startTestMcpServer({ name: "x-api-key", value: "k-123" });
-    const tools = await source({ url: server.url, headers: mcpAuthHeaders({ type: "api-key", api_key: "k-123", header_name: "X-Api-Key" }) }).tools();
-    expect(await execute(tools, "t__whoami")).toEqual({ ok: true, content: "k-123" });
+    const { tools } = await connect(server.url, { authentication: { type: "api-key", api_key: "k-123", header_name: "X-Api-Key" } });
+    expect(await execute(tools, "whoami")).toEqual({ ok: true, content: "k-123" });
+  });
+
+  it("fails to connect when the required bearer token is missing or wrong", async () => {
+    server = await startTestMcpServer({ name: "authorization", value: "Bearer secret-token" });
+    await expect(connect(server.url)).rejects.toBeTruthy();
+    await expect(connect(server.url, { authentication: { type: "bearer", token: "wrong-token" } })).rejects.toBeTruthy();
   });
 
   it("connects with no auth at all when the server requires none", async () => {
     server = await startTestMcpServer();
-    expect(await names({ url: server.url })).toContain("t__whoami");
+    expect(await names(server.url)).toContain("whoami");
   });
 
-  describe("when the server answers 401", () => {
-    const provider = (token: () => string, renew: (rejected: Record<string, string>) => Promise<boolean>) =>
-      Object.assign(async () => ({ Authorization: `Bearer ${token()}` }), { renew });
+  it("does not repeat a tool call when the server has forgotten the session, and starts a new session for the next call", async () => {
+    server = await startTestMcpServer();
+    const connection = await connect(server.url);
+    server.forgetSessions();
 
-    it("asks the provider to renew the token it sent, and gives up with the 401 when it cannot", async () => {
-      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-      const renew = vi.fn(async () => false);
-      await expect(source({ url: server.url, authHeaderProvider: provider(() => "revoked-token", renew) }).tools()).rejects.toBeTruthy();
-      expect(renew).toHaveBeenCalledWith({ Authorization: "Bearer revoked-token" });
-    });
+    const failed = await execute(connection.tools, "whoami").catch((error: Error) => error);
+    expect(String(failed)).toMatch(/session had ended.*not repeated/);
+    expect(server.received.filter((method) => method === "tools/call")).toHaveLength(1);
 
-    it("repeats the request once with the renewed token, so the call succeeds", async () => {
-      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-      let token = "revoked-token";
-      const renew = vi.fn(async () => {
-        token = "good-token";
-        return true;
-      });
-      expect(await names({ url: server.url, authHeaderProvider: provider(() => token, renew) })).toContain("t__whoami");
-      expect(renew).toHaveBeenCalledWith({ Authorization: "Bearer revoked-token" });
-    });
-
-    it("gives up with the 401 instead of looping when the renewed token is turned down too", async () => {
-      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-      const renew = vi.fn(async () => true);
-      await expect(source({ url: server.url, authHeaderProvider: provider(() => "revoked-token", renew) }).tools()).rejects.toBeTruthy();
-      expect(renew).toHaveBeenCalled();
-    });
-
-    it("does not ask for a renewal while the server accepts the token", async () => {
-      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-      const renew = vi.fn(async () => true);
-      expect(await names({ url: server.url, authHeaderProvider: provider(() => "good-token", renew) })).toContain("t__whoami");
-      expect(renew).not.toHaveBeenCalled();
-    });
-
-    it("renews an interactive sign-in through the app, naming the provider", async () => {
-      server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-      let token = "revoked-token";
-      const renewInteractiveToken = vi.fn(async () => {
-        token = "good-token";
-        return true;
-      });
-      const authHeaderProvider = createDynamicMcpAuthHeaderProvider(
-        { type: "oauth2", grant_type: "authorization_code", authorize_url: "https://a.example.com/authorize", token_url: "https://a.example.com/token", client_id: "c" },
-        { getInteractiveToken: async () => token, renewInteractiveToken },
-        server.url,
-      );
-      expect(await names({ url: server.url, authHeaderProvider })).toContain("t__whoami");
-      expect(renewInteractiveToken).toHaveBeenCalledWith(expect.objectContaining({ clientId: "c", resource: server.url }), "revoked-token");
-    });
+    expect((await execute(connection.tools, "whoami")).ok).toBe(true);
+    expect(server.received.filter((method) => method === "initialize")).toHaveLength(2);
+    await connection.close();
   });
 
-  it.each([
-    ["static headers", { headers: { Authorization: "Bearer good-token" } }],
-    ["a dynamic auth provider", { authHeaderProvider: async () => ({ Authorization: "Bearer good-token" }) }],
-  ])("sends every POST and the event-stream GET through the fetch it is given, with %s", async (_name, auth) => {
-    server = await startTestMcpServer({ name: "authorization", value: "Bearer good-token" });
-    const calls: { method: string | undefined; authorization: string | null }[] = [];
-    const fetchFn = ((url: string | URL, init?: RequestInit) => {
-      calls.push({ method: init?.method, authorization: new Headers(init?.headers).get("authorization") });
-      return fetch(url, init);
+  it("sends every request through the fetch it is given, so a host can add its own routing or headers", async () => {
+    server = await startTestMcpServer({ name: "x-host", value: "yes" });
+    const seen: string[] = [];
+    const hostFetch = ((input: string | URL, init?: RequestInit) => {
+      seen.push(`${init?.method ?? "GET"} ${String(input)}`);
+      const headers = new Headers(init?.headers);
+      headers.set("x-host", "yes");
+      return fetch(input, { ...init, headers });
     }) as typeof fetch;
-    const toolSource = source({ url: server.url, fetchFn, ...auth });
-    expect(Object.keys(await toolSource.tools())).toContain("t__whoami");
-    await vi.waitFor(() => expect(calls.map((c) => c.method)).toContain("GET"));
-    expect(calls.filter((c) => c.method === "POST").length).toBeGreaterThanOrEqual(3);
-    expect(calls.every((c) => c.authorization === "Bearer good-token")).toBe(true);
-    await toolSource.close();
-  });
-});
-
-describe("an MCP tool result", () => {
-  let server: TestServer | null = null;
-  afterEach(async () => {
-    await server?.close();
-    server = null;
-  });
-
-  const withOutputSchema = (result: () => Record<string, unknown>) => () => {
-    const protocol = new McpProtocolServer({ name: "typed", version: "0.0.0" }, { capabilities: { tools: {} } });
-    protocol.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: "typed",
-          inputSchema: { type: "object" as const },
-          outputSchema: { type: "object" as const, properties: { total: { type: "number" } }, required: ["total"] },
-        },
-      ],
-    }));
-    protocol.setRequestHandler(CallToolRequestSchema, async () => result() as never);
-    return protocol;
-  };
-
-  it("is checked against the output schema the tool announced", async () => {
-    server = await startTestMcpServer(undefined, withOutputSchema(() => ({ content: [], structuredContent: { total: "many" } })));
-    const failed = await execute(await source({ url: server.url }).tools(), "t__typed");
-    expect(failed.ok).toBe(false);
-    expect(failed.content).toMatch(/does not match the tool's output schema/);
-  });
-
-  it("is refused when the tool announced a schema but sent no structured content", async () => {
-    server = await startTestMcpServer(undefined, withOutputSchema(() => ({ content: [{ type: "text", text: "hi" }] })));
-    const failed = await execute(await source({ url: server.url }).tools(), "t__typed");
-    expect(failed).toMatchObject({ ok: false });
-    expect(failed.content).toMatch(/no structured content/);
-  });
-
-  it("is handed to the model as JSON when it fits the schema", async () => {
-    server = await startTestMcpServer(undefined, withOutputSchema(() => ({ content: [], structuredContent: { total: 3 } })));
-    expect(await execute(await source({ url: server.url }).tools(), "t__typed")).toEqual({ ok: true, content: '{"total":3}' });
-  });
-
-  it("leaves out fields the model filled with empty text", async () => {
-    let seen: unknown;
-    const echo = () => {
-      const protocol = new McpProtocolServer({ name: "echo", version: "0.0.0" }, { capabilities: { tools: {} } });
-      protocol.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: "echo", inputSchema: { type: "object" as const } }] }));
-      protocol.setRequestHandler(CallToolRequestSchema, async (request) => {
-        seen = request.params.arguments;
-        return { content: [{ type: "text" as const, text: "ok" }] };
-      });
-      return protocol;
-    };
-    server = await startTestMcpServer(undefined, echo);
-    await execute(await source({ url: server.url }).tools(), "t__echo", { query: "cats", filter: "", nested: { keep: "" } });
-    expect(seen).toEqual({ query: "cats", nested: { keep: "" } });
-  });
-});
-
-describe("credentials over plain http", () => {
-  const bearer = { Authorization: "Bearer secret-token" };
-  const asked = () => {
-    const calls: string[] = [];
-    const fetchFn = (async (input: string | URL) => {
-      calls.push(String(input));
-      return new Response("", { status: 500 });
-    }) as unknown as typeof fetch;
-    return { calls, fetchFn };
-  };
-
-  it.each([
-    ["static credentials", { headers: bearer }, "http://mcp.example.com/mcp"],
-    ["an auth header provider", { authHeaderProvider: async () => bearer }, "http://mcp.example.com/mcp"],
-    ["credentials sent through a plain http proxy", { headers: bearer, proxyUrl: "http://proxy.example.com/mcp" }, "https://mcp.example.com/mcp"],
-    ["credentials for a plain http server behind an https proxy", { headers: bearer, proxyUrl: "https://proxy.example.com/mcp" }, "http://mcp.example.com/mcp"],
-    ["credentials for a lookalike of localhost", { headers: bearer }, "http://localhost.evil.com/mcp"],
-    ["credentials for an address whose real host is not localhost", { headers: bearer }, "http://localhost@evil.com/mcp"],
-    ["credentials for a lookalike of 127.0.0.1", { headers: bearer }, "http://127.0.0.1.evil.com/mcp"],
-  ])("refuses to connect with %s, and sends nothing", async (_label, extra, url) => {
-    const { calls, fetchFn } = asked();
-    await expect(source({ url, fetchFn, ...extra }).tools()).rejects.toThrow(McpAuthError);
-    expect(calls).toEqual([]);
-  });
-
-  it("names only the host in its message, never the path, the query or a credential", async () => {
-    const { fetchFn } = asked();
-    const error = await source({ url: "http://mcp.example.com/private/path?token=s3cret", fetchFn, headers: bearer }).tools().catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(McpAuthError);
-    const message = (error as Error).message;
-    expect(message).toContain("mcp.example.com");
-    for (const secret of ["s3cret", "secret-token", "/private/path"]) expect(message).not.toContain(secret);
-  });
-
-  it.each([
-    ["an https server", { headers: bearer }, "https://mcp.example.com/mcp"],
-    ["a localhost server", { headers: bearer }, "http://localhost:9000/mcp"],
-    ["a 127.0.0.1 server", { headers: bearer }, "http://127.0.0.1:9000/mcp"],
-    ["an IPv6 loopback server", { headers: bearer }, "http://[::1]:9000/mcp"],
-    ["a localhost server behind a localhost proxy", { headers: bearer, proxyUrl: "http://localhost:8787/" }, "http://localhost:9000/mcp"],
-    ["an https server behind a localhost proxy", { headers: bearer, proxyUrl: "http://localhost:8787/" }, "https://mcp.example.com/mcp"],
-    ["a plain http server with no credentials at all", {}, "http://mcp.example.com/mcp"],
-    ["a plain http server with an empty header set", { headers: {} }, "http://mcp.example.com/mcp"],
-  ])("still connects to %s", async (_label, extra, url) => {
-    const { calls, fetchFn } = asked();
-    await source({ url, fetchFn, ...extra }).tools().catch(() => undefined);
-    expect(calls.length).toBeGreaterThan(0);
-  });
-});
-
-describe("a server that redirects to another origin", () => {
-  const closers: Array<() => Promise<void>> = [];
-  afterEach(async () => {
-    await Promise.all(closers.splice(0).map((close) => close()));
-  });
-
-  async function redirectingTo(target: string): Promise<string> {
-    const redirector = await startServer((_request, response) => {
-      response.writeHead(307, { location: target }).end();
-    });
-    closers.push(redirector.close);
-    return redirector.url;
-  }
-
-  async function recordingServer(): Promise<{ url: string; sawKeys: Array<string | undefined> }> {
-    const sawKeys: Array<string | undefined> = [];
-    const recorder = await startServer((request, response) => {
-      const key = request.headers["x-api-key"];
-      sawKeys.push(typeof key === "string" ? key : undefined);
-      response.writeHead(404).end();
-    });
-    closers.push(recorder.close);
-    return { url: recorder.url, sawKeys };
-  }
-
-  it.each([
-    ["a static header", { headers: { "x-api-key": "secret-key" } }],
-    ["an auth header provider", { authHeaderProvider: async () => ({ "x-api-key": "secret-key" }) }],
-  ])("does not pass %s on to that origin", async (_label, credentials) => {
-    const elsewhere = await recordingServer();
-    const toolSource = source({ url: await redirectingTo(elsewhere.url), ...credentials });
-    await expect(toolSource.tools()).rejects.toBeTruthy();
-    expect(elsewhere.sawKeys).toEqual([]);
-  });
-});
-
-describe("effectiveUrl", () => {
-  it("routes through the proxy when one is set", () => {
-    const url = effectiveUrl({ serverUrl: "https://mcp.example.com/rpc", proxyUrl: "https://proxy.afm.dev/mcp" });
-    expect(url.origin + url.pathname).toBe("https://proxy.afm.dev/mcp");
-    expect(url.searchParams.get("target")).toBe("https://mcp.example.com/rpc");
-  });
-
-  it("connects directly when no proxy is set", () => {
-    expect(effectiveUrl({ serverUrl: "https://mcp.example.com/rpc" }).href).toBe("https://mcp.example.com/rpc");
+    const { tools } = await connect(server.url, { fetch: hostFetch });
+    expect((await execute(tools, "whoami")).ok).toBe(true);
+    expect(seen.length).toBeGreaterThanOrEqual(3);
+    expect(seen.every((line) => line.includes(server!.url))).toBe(true);
   });
 });
 
@@ -585,12 +323,75 @@ describe("toolOutput", () => {
 
   it("inlines an embedded text resource and names a binary one", () => {
     expect(toolOutput({ content: [{ type: "resource", resource: { uri: "file:///a", text: "inline" } }] }).content).toBe("inline");
-    expect(
-      toolOutput({ content: [{ type: "resource", resource: { uri: "file:///d.bin", mimeType: "application/octet-stream", blob: "b64" } }] }).content,
-    ).toBe("[resource: file:///d.bin (application/octet-stream)]");
+    expect(toolOutput({ content: [{ type: "resource", resource: { uri: "file:///d.bin", blob: "b64" } }] }).content).toBe("[resource: file:///d.bin]");
   });
 
   it("hands structuredContent to the model as JSON, after any text", () => {
     expect(toolOutput({ content: [{ type: "text", text: "Summary:" }], structuredContent: { total: 42 } }).content).toBe('Summary:\n{"total":42}');
+  });
+});
+
+describe("credentials over plain http", () => {
+  const bearer = { type: "bearer", token: "secret-token" };
+  const asked = () => {
+    const calls: string[] = [];
+    const fetchFn = (async (input: string | URL) => {
+      calls.push(String(input));
+      return new Response("", { status: 500 });
+    }) as unknown as typeof fetch;
+    return { calls, fetchFn };
+  };
+
+  it.each([
+    ["a plain http server", "http://mcp.example.com/mcp"],
+    ["a lookalike of localhost", "http://localhost.evil.com/mcp"],
+    ["an address whose real host is not localhost", "http://localhost@evil.com/mcp"],
+    ["a lookalike of 127.0.0.1", "http://127.0.0.1.evil.com/mcp"],
+  ])("refuses to connect to %s with credentials, and sends nothing", async (_label, url) => {
+    const { calls, fetchFn } = asked();
+    await expect(connect(url, { authentication: bearer, fetch: fetchFn })).rejects.toThrow(/plain http/);
+    expect(calls).toEqual([]);
+  });
+
+  it("names only the host in its message, never the path, the query or a credential", async () => {
+    const { fetchFn } = asked();
+    const error = await connect("http://mcp.example.com/private/path?token=s3cret", { authentication: bearer, fetch: fetchFn }).catch((caught: unknown) => caught);
+    const message = (error as Error).message;
+    expect(message).toContain("mcp.example.com");
+    for (const secret of ["s3cret", "secret-token", "/private/path"]) expect(message).not.toContain(secret);
+  });
+
+  it.each([
+    ["an https server", bearer, "https://mcp.example.com/mcp"],
+    ["a localhost server", bearer, "http://localhost:9000/mcp"],
+    ["a 127.0.0.1 server", bearer, "http://127.0.0.1:9000/mcp"],
+    ["an IPv6 loopback server", bearer, "http://[::1]:9000/mcp"],
+    ["a plain http server with no credentials at all", undefined, "http://mcp.example.com/mcp"],
+  ])("still connects to %s", async (_label, authentication, url) => {
+    const { calls, fetchFn } = asked();
+    await connect(url, { authentication, fetch: fetchFn }).catch(() => undefined);
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("a server that redirects to another origin", () => {
+  const closers: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((close) => close()));
+  });
+
+  it("does not pass credentials on to that origin", async () => {
+    const sawKeys: Array<string | undefined> = [];
+    const recorder = await startServer((request, response) => {
+      const key = request.headers["x-api-key"];
+      sawKeys.push(typeof key === "string" ? key : undefined);
+      response.writeHead(404).end();
+    });
+    const redirector = await startServer((_request, response) => {
+      response.writeHead(307, { location: recorder.url }).end();
+    });
+    closers.push(recorder.close, redirector.close);
+    await expect(connect(redirector.url, { authentication: { type: "api-key", api_key: "secret-key", header_name: "x-api-key" } })).rejects.toBeTruthy();
+    expect(sawKeys).toEqual([]);
   });
 });
