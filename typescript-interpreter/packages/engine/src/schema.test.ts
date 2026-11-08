@@ -215,7 +215,7 @@ describe("validateMetadata: interfaces", () => {
       );
     });
 
-    it("accepts a webhook interface (valid file even if the browser can't run it)", () => {
+    it("accepts a webhook interface", () => {
       const md = validateMetadata({
         interfaces: [
           { type: "webhook", subscription: { protocol: "websub" } },
@@ -303,7 +303,7 @@ describe("validateMetadata: interfaces", () => {
       expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input, output: true } }] })).not.toThrow();
     });
 
-    it("does not check a declared schema beyond its shape, since the browser never validates data against it", () => {
+    it("does not check a declared schema beyond its shape, since nothing here validates data against it", () => {
       for (const input of [{ type: "bogus" }, { $schema: "http://json-schema.org/draft-04/schema#", type: "string" }, { properties: [] }, {}]) {
         expect(() => validateMetadata({ interfaces: [{ type: "webchat", signature: { input } }] })).not.toThrow();
       }

@@ -13,6 +13,7 @@
     "check": "pnpm run typecheck && pnpm test"
   },
   "devDependencies": {
+    "@types/node": "^26.0.1",
     "esbuild": "^0.28.2",
     "typescript": "^5.7.2",
     "vite": "8.1.6",

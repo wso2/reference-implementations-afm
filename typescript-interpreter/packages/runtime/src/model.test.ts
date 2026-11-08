@@ -41,11 +41,11 @@ describe("createModel", () => {
     expect(seen.body.model).toBe("gpt-4o");
   });
 
-  it("calls Anthropic with the key in x-api-key, the default model, and no browser header", async () => {
+  it("calls Anthropic with the key in x-api-key, the default model, and no extra header", async () => {
     const seen = await request(keyed("anthropic"));
     expect(seen.url).toBe("https://api.anthropic.com/v1/messages");
     expect(seen.headers.get("x-api-key")).toBe("k-1");
-    expect(seen.headers.has("anthropic-dangerous-direct-browser-access")).toBe(false);
+    expect([...seen.headers.keys()].filter((name) => name.includes("dangerous"))).toEqual([]);
     expect(seen.body.model).toBe("claude-sonnet-4-5");
   });
 

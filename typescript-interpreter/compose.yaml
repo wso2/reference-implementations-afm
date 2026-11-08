@@ -1,7 +1,0 @@
-services:
-  check:
-    build:
-      context: .
-      target: dev
-    command: pnpm run check
-    network_mode: none

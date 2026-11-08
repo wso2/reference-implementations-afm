@@ -1,24 +1,19 @@
-FROM node:24-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS build
 
 RUN npm install --global pnpm@11.9.0
 
 ENV CI=true
-
-RUN mkdir /app && chown node:node /app
-USER node
 WORKDIR /app
 
-COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm fetch
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json build.mjs ./
+COPY packages ./packages
+RUN pnpm install --frozen-lockfile
+RUN pnpm run build
 
-FROM deps AS dev
+FROM node:24-bookworm-slim
 
-COPY --chown=node:node . .
-RUN pnpm install --frozen-lockfile --offline
+COPY --from=build /app/dist/main.js /app/main.js
 
-CMD ["pnpm", "run", "check"]
-
-FROM dev AS check
-
-RUN --network=none pnpm run typecheck
-RUN --network=none pnpm test
+USER node
+WORKDIR /agent
+ENTRYPOINT ["node", "/app/main.js"]
