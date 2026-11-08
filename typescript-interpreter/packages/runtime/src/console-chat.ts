@@ -33,11 +33,18 @@ export function checkConsoleChat({ interfaces }: AgentMetadata): void {
   }
 }
 
+const STOPPED: Record<string, string> = {
+  "max-iterations": "the agent reached its max_iterations limit",
+  length: "the reply reached the model's length limit",
+  "content-filter": "the model's content filter stopped the reply",
+};
+
 async function answer(agent: Agent, history: ModelMessage[], text: string, output: Writable): Promise<ModelMessage[]> {
   let messages = [...history, { role: "user" as const, content: text }];
   for await (const event of runAgentTurn({ ...agent, messages })) {
     if (event.type === "text-delta") output.write(event.text);
     if (event.type === "turn-complete") messages = event.messages;
+    if (event.type === "finish" && event.reason !== "stop") output.write(`\n[Stopped: ${STOPPED[event.reason] ?? `the model finished with '${event.reason}'`}]`);
   }
   return messages;
 }

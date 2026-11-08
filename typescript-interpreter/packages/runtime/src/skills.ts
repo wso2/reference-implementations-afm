@@ -17,8 +17,8 @@
 
 import { splitFrontmatter } from "@afm/engine";
 import type { ToolSet } from "ai";
-import { access, readdir, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { textTool } from "./run";
 
@@ -39,15 +39,29 @@ const exists = (path: string): Promise<boolean> =>
     () => false,
   );
 
-const subfolders = async (path: string): Promise<string[]> =>
-  (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+const isDirectory = (path: string): Promise<boolean> =>
+  stat(path).then(
+    (found) => found.isDirectory(),
+    () => false,
+  );
+
+const isFile = (path: string): Promise<boolean> =>
+  stat(path).then(
+    (found) => found.isFile(),
+    () => false,
+  );
+
+async function namesIn(folder: string, check: (path: string) => Promise<boolean>): Promise<string[]> {
+  const names = (await readdir(folder)).sort();
+  const keep = await Promise.all(names.map((name) => check(join(folder, name))));
+  return names.filter((_, index) => keep[index]);
+}
 
 async function resourcesOf(folder: string): Promise<string[]> {
   const found: string[] = [];
   for (const name of RESOURCE_FOLDERS) {
-    if (!(await exists(join(folder, name)))) continue;
-    const entries = (await readdir(join(folder, name), { withFileTypes: true })).filter((entry) => entry.isFile());
-    found.push(...entries.map((entry) => `${name}/${entry.name}`).sort());
+    if (!(await isDirectory(join(folder, name)))) continue;
+    found.push(...(await namesIn(join(folder, name), isFile)).map((file) => `${name}/${file}`));
   }
   return found;
 }
@@ -64,7 +78,7 @@ async function readSkill(folder: string): Promise<Skill> {
 async function foldersOf(path: string): Promise<string[]> {
   if (await exists(join(path, SKILL_FILE))) return [path];
   if (!(await exists(path))) return [];
-  const names = await subfolders(path);
+  const names = await namesIn(path, isDirectory);
   const withSkill = await Promise.all(names.map(async (name) => ((await exists(join(path, name, SKILL_FILE))) ? join(path, name) : undefined)));
   return withSkill.filter((folder) => folder !== undefined);
 }
@@ -120,7 +134,7 @@ async function readResource(skill: Skill, path: string): Promise<string> {
   if (parts.includes("..")) throw new Error("Path traversal is not allowed in resource paths");
   if (!skill.resources.includes(path)) throw new Error(`Resource '${path}' not found in skill '${skill.name}'. Available: ${skill.resources.join(", ")}`);
   const outside = relative(await realpath(skill.folder), await realpath(join(skill.folder, path)));
-  if (outside.startsWith("..") || isAbsolute(outside)) throw new Error("Path traversal is not allowed in resource paths");
+  if (outside === ".." || outside.startsWith(`..${sep}`) || isAbsolute(outside)) throw new Error("Path traversal is not allowed in resource paths");
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(await readFile(join(skill.folder, path)));
   } catch {

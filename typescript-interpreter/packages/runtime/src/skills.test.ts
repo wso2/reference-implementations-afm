@@ -56,6 +56,14 @@ describe("finding skills", () => {
     expect(loaded?.catalog).toContain("<description>pdf-tools helps</description>");
   });
 
+  it("finds a skill folder that is a link", async () => {
+    await skill("elsewhere/real", "real");
+    await mkdir(join(root, "all"), { recursive: true });
+    await symlink(join(root, "elsewhere/real"), join(root, "all/linked-skill"));
+    const loaded = await loadSkills([{ path: "all" }], root);
+    expect(loaded?.catalog).toContain("<name>real</name>");
+  });
+
   it("reads every skill folder of a parent folder, in name order", async () => {
     await skill("all/b-skill", "b");
     await skill("all/a-skill", "a");
@@ -157,5 +165,19 @@ describe("the read_skill_resource tool", () => {
     const { tools } = (await loadSkills([{ path: "linked" }], root))!;
     expect(await run(tools as Record<string, Tool>, "activate_skill", { name: "linked" })).toContain("references/secret.txt");
     await expect(run(tools as Record<string, Tool>, "read_skill_resource", { skill_name: "linked", resource_path: "references/secret.txt" })).rejects.toThrow(/Path traversal is not allowed/);
+  });
+
+  it("reads a file whose name starts with two dots, since that is not the parent folder", async () => {
+    await skill("dots", "dots", "dots helps", "Use dots.", { "references/..notes.md": "dotted" });
+    const { tools } = (await loadSkills([{ path: "dots" }], root))!;
+    expect(await run(tools as Record<string, Tool>, "read_skill_resource", { skill_name: "dots", resource_path: "references/..notes.md" })).toBe("dotted");
+  });
+
+  it("reads a listed file that is a link to a file inside the skill folder", async () => {
+    await skill("inside", "inside", "inside helps", "Use inside.", { "assets/real.txt": "the real text" });
+    await mkdir(join(root, "inside/references"), { recursive: true });
+    await symlink(join(root, "inside/assets/real.txt"), join(root, "inside/references/alias.txt"));
+    const { tools } = (await loadSkills([{ path: "inside" }], root))!;
+    expect(await run(tools as Record<string, Tool>, "read_skill_resource", { skill_name: "inside", resource_path: "references/alias.txt" })).toBe("the real text");
   });
 });

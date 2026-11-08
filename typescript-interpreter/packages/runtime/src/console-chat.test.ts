@@ -16,9 +16,10 @@
 
 
 import { PassThrough } from "node:stream";
-import { simulateReadableStream } from "ai";
+import { simulateReadableStream, tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import type { Agent } from "./agent";
 import { checkConsoleChat, consoleChat } from "./console-chat";
 
@@ -70,7 +71,52 @@ async function chat(agent: Agent, lines: string): Promise<string> {
   return text;
 }
 
+function agentFinishing(unified: string, tools = {}): Agent {
+  const model = new MockLanguageModelV3({
+    doStream: async () => {
+      const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+      const chunks = [
+        { type: "text-start", id: "t" },
+        { type: "text-delta", id: "t", delta: "Partial" },
+        { type: "text-end", id: "t" },
+        { type: "finish", finishReason: { unified, raw: unified }, usage },
+      ];
+      return { stream: simulateReadableStream({ chunks }) } as never;
+    },
+  });
+  return { system: "s", model, tools, close: async () => undefined };
+}
+
 describe("consoleChat", () => {
+  it.each([
+    ["length", "the reply reached the model's length limit"],
+    ["content-filter", "the model's content filter stopped the reply"],
+    ["other", "the model finished with 'other'"],
+  ])("says why a reply stopped early: %s", async (reason, text) => {
+    expect(await chat(agentFinishing(reason), "hello\nexit\n")).toBe(`> Partial\n[Stopped: ${text}]\n> `);
+  });
+
+  it("says when the agent stopped at the max_iterations limit, still asking for another tool", async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+        const chunks = [
+          { type: "tool-call", toolCallId: "c", toolName: "echo", input: "{}" },
+          { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage },
+        ];
+        return { stream: simulateReadableStream({ chunks }) } as never;
+      },
+    });
+    const echo = tool({ inputSchema: z.object({}), execute: async () => ({ ok: true, content: "echoed" }), toModelOutput: () => ({ type: "text", value: "echoed" }) });
+    const agent: Agent = { system: "s", model, tools: { echo }, maxIterations: 2, close: async () => undefined };
+    expect(await chat(agent, "hello\nexit\n")).toBe("> \n[Stopped: the agent reached its max_iterations limit]\n> ");
+  });
+
+  it("says nothing extra when the reply finished normally", async () => {
+    expect(await chat(agentFinishing("stop"), "hello\nexit\n")).toBe("> Partial\n> ");
+  });
+
+
   it("prints each answer after a prompt, and ends on exit or quit", async () => {
     expect(await chat(agentSaying("Hi", "Again").agent, "hello\nexit\nignored\n")).toBe("> Hi\n> ");
     expect(await chat(agentSaying("Hi").agent, "hello\nquit\n")).toBe("> Hi\n> ");

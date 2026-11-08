@@ -5,7 +5,4 @@ dist/
 
 .env
 .env.*
-!.env.example
 *.local
-
-docs/

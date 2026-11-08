@@ -277,6 +277,35 @@ describe("an MCP server that is called", () => {
     await connection.close();
   });
 
+  it("tries again to reconnect when the first try after a forgotten session failed, and closes without an error", async () => {
+    server = await startTestMcpServer();
+    let down = false;
+    const flaky = ((input: string | URL, init?: RequestInit) =>
+      down && String(init?.body).includes('"method":"initialize"') ? Promise.reject(new TypeError("fetch failed")) : fetch(input, init)) as typeof fetch;
+    const connection = await connect(server.url, { fetch: flaky });
+    server.forgetSessions();
+    await execute(connection.tools, "whoami").catch(() => undefined);
+
+    down = true;
+    await expect(execute(connection.tools, "whoami")).rejects.toBeTruthy();
+    down = false;
+    expect((await execute(connection.tools, "whoami")).ok).toBe(true);
+    await expect(connection.close()).resolves.toBeUndefined();
+  });
+
+  it("closes without an error when the last reconnect failed", async () => {
+    server = await startTestMcpServer();
+    let down = false;
+    const flaky = ((input: string | URL, init?: RequestInit) =>
+      down && String(init?.body).includes('"method":"initialize"') ? Promise.reject(new TypeError("fetch failed")) : fetch(input, init)) as typeof fetch;
+    const connection = await connect(server.url, { fetch: flaky });
+    server.forgetSessions();
+    await execute(connection.tools, "whoami").catch(() => undefined);
+    down = true;
+    await execute(connection.tools, "whoami").catch(() => undefined);
+    await expect(connection.close()).resolves.toBeUndefined();
+  });
+
   it("sends every request through the fetch it is given, so a host can add its own routing or headers", async () => {
     server = await startTestMcpServer({ name: "x-host", value: "yes" });
     const seen: string[] = [];
@@ -393,5 +422,17 @@ describe("a server that redirects to another origin", () => {
     closers.push(recorder.close, redirector.close);
     await expect(connect(redirector.url, { authentication: { type: "api-key", api_key: "secret-key", header_name: "x-api-key" } })).rejects.toBeTruthy();
     expect(sawKeys).toEqual([]);
+  });
+
+  it("is refused even when the redirect stays on the same server, and the new address is never asked", async () => {
+    const asked: Array<string | undefined> = [];
+    const redirector = await startServer((request, response) => {
+      asked.push(request.url);
+      response.writeHead(307, { location: "/elsewhere" }).end();
+    });
+    closers.push(redirector.close);
+    await expect(connect(redirector.url)).rejects.toBeTruthy();
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked).not.toContain("/elsewhere");
   });
 });

@@ -2,7 +2,7 @@
   "name": "@afm/runtime",
   "version": "0.0.0",
   "private": true,
-  "description": "Runs AFM agents on the Vercel AI SDK: model, tools, file tools and sign-in.",
+  "description": "Runs AFM agents: the model, tool servers and the agent loop.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",

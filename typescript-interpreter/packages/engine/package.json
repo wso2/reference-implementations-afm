@@ -2,7 +2,7 @@
   "name": "@afm/engine",
   "version": "0.0.0",
   "private": true,
-  "description": "Parses, validates, plans and runs AFM agents.",
+  "description": "Reads AFM agent files: parsing, validation and variables.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",

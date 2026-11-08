@@ -15,15 +15,13 @@
 // under the License.
 
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import friendlyAssistant from "../fixtures/agents/friendly_assistant.afm.md?raw";
-import hrAgent from "../fixtures/agents/hr_agent.afm.md?raw";
-import mathTutor from "../fixtures/agents/math_tutor.afm.md?raw";
-import pullRequestAnalyzer from "../fixtures/agents/pull_request_analyzer.afm.md?raw";
-import slackAssistant from "../fixtures/agents/slack_assistant.afm.md?raw";
-import supportAgent from "../fixtures/agents/support_agent.afm.md?raw";
 import { AfmParseError, AfmValidationError, VariableResolutionError } from "./errors";
-import { buildSystemPrompt, loadAfm } from "./load";
+import { buildSystemPrompt, loadAfm, loadParsed } from "./load";
+import { parseAfm } from "./parse";
+
+const agentFile = (name: string): string => readFileSync(new URL(`../fixtures/agents/${name}`, import.meta.url), "utf-8");
 
 const KEY = { OPENAI_API_KEY: "sk-123" };
 
@@ -56,6 +54,13 @@ describe("loadAfm", () => {
     expect(loaded.systemPrompt).toContain("# Role");
     expect(loaded.systemPrompt).toContain("Be brief.");
     expect(loaded.warnings).toEqual([]);
+  });
+
+  it("loads a file that was parsed earlier, so a host can change the header first", () => {
+    const parsed = parseAfm(FULL);
+    const loaded = loadParsed({ ...parsed, frontmatter: { ...parsed.frontmatter, name: "Changed" } }, { env: KEY });
+    expect(loaded.metadata.name).toBe("Changed");
+    expect(loaded.metadata.model?.authentication?.api_key).toBe("sk-123");
   });
 
   it("reads the header when blank lines come before the opening fence", () => {
@@ -113,7 +118,7 @@ describe("loadAfm", () => {
     expect(loadAfm(FULL.replace("name: Demo", 'spec_version: "0.4.0"\nname: Demo'), { env: KEY }).warnings).toEqual([]);
   });
 
-  it("accepts a number that comes from a variable, as the other runtimes do", () => {
+  it("accepts a number that comes from a variable", () => {
     const file = FULL.replace("max_iterations: 4", "max_iterations: ${env:STEPS}");
     expect(loadAfm(file, { env: { ...KEY, STEPS: "7" } }).metadata.max_iterations).toBe(7);
   });
@@ -235,7 +240,7 @@ describe("a key's value in an error message", () => {
 });
 
 describe("buildSystemPrompt", () => {
-  it("formats Role and Instructions like the reference runtimes", () => {
+  it("formats Role and Instructions as two headed sections", () => {
     expect(buildSystemPrompt("You are X.", "Do Y.")).toBe("# Role\n\nYou are X.\n\n# Instructions\n\nDo Y.");
   });
 });
@@ -247,12 +252,12 @@ const ENV = new Proxy({} as Record<string, string>, {
 });
 
 const EXAMPLES = [
-  { file: "friendly_assistant.afm.md", name: "Friendly Assistant", source: friendlyAssistant },
-  { file: "hr_agent.afm.md", name: "CWave HR Assistant", source: hrAgent },
-  { file: "math_tutor.afm.md", name: "Math Tutor", source: mathTutor },
-  { file: "pull_request_analyzer.afm.md", name: "GitHub PR Code-Documentation Drift Checker", source: pullRequestAnalyzer },
-  { file: "slack_assistant.afm.md", name: "Slack Assistant", source: slackAssistant },
-  { file: "support_agent.afm.md", name: "SupportAgent", source: supportAgent },
+  { file: "friendly_assistant.afm.md", name: "Friendly Assistant", source: agentFile("friendly_assistant.afm.md") },
+  { file: "hr_agent.afm.md", name: "CWave HR Assistant", source: agentFile("hr_agent.afm.md") },
+  { file: "math_tutor.afm.md", name: "Math Tutor", source: agentFile("math_tutor.afm.md") },
+  { file: "pull_request_analyzer.afm.md", name: "GitHub PR Code-Documentation Drift Checker", source: agentFile("pull_request_analyzer.afm.md") },
+  { file: "slack_assistant.afm.md", name: "Slack Assistant", source: agentFile("slack_assistant.afm.md") },
+  { file: "support_agent.afm.md", name: "SupportAgent", source: agentFile("support_agent.afm.md") },
 ];
 
 describe("the example agents from the AFM specification", () => {

@@ -15,7 +15,7 @@
 // under the License.
 
 
-import { parseAfm } from "./parse";
+import { parseAfm, type ParsedAfm } from "./parse";
 import { type AgentMetadata, validateMetadata } from "./schema";
 import { checkHttpVariables, type Env, processEnv, resolveText, resolveValues } from "./variables";
 
@@ -33,12 +33,15 @@ export function buildSystemPrompt(role: string, instructions: string): string {
   return `# Role\n\n${role}\n\n# Instructions\n\n${instructions}`;
 }
 
-export function loadAfm(content: string, { env = processEnv() }: { env?: Env } = {}): LoadedAfm {
-  const parsed = parseAfm(content);
+export function loadParsed(parsed: ParsedAfm, { env = processEnv() }: { env?: Env } = {}): LoadedAfm {
   checkHttpVariables(parsed);
   const metadata = validateMetadata(resolveValues(parsed.frontmatter, env) as Record<string, unknown>);
   const role = resolveText(parsed.role, env);
   const instructions = resolveText(parsed.instructions, env);
   const warnings = metadata.spec_version === undefined || metadata.spec_version === SPEC_VERSION ? [] : [`The file's spec_version is not ${SPEC_VERSION}, which this interpreter was written for.`];
   return { metadata, role, instructions, systemPrompt: buildSystemPrompt(role, instructions), warnings };
+}
+
+export function loadAfm(content: string, options: { env?: Env } = {}): LoadedAfm {
+  return loadParsed(parseAfm(content), options);
 }

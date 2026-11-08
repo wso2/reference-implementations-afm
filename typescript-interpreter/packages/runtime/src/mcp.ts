@@ -94,8 +94,17 @@ function isAllowed(name: string, filter: HttpMcpServer["tool_filter"]): boolean 
 }
 
 export async function toolsFromClient(connect: () => Promise<MCPClient>, filter?: HttpMcpServer["tool_filter"]): Promise<McpConnection> {
-  let session: Promise<MCPClient> | undefined = connect();
-  const open = () => (session ??= connect());
+  let session: Promise<MCPClient> | undefined;
+  const open = (): Promise<MCPClient> => {
+    if (session === undefined) {
+      const attempt: Promise<MCPClient> = connect().catch((error: unknown) => {
+        if (session === attempt) session = undefined;
+        throw error;
+      });
+      session = attempt;
+    }
+    return session;
+  };
   const first = await open();
   let definitions: Definition[];
   try {
@@ -132,7 +141,8 @@ export async function toolsFromClient(connect: () => Promise<MCPClient>, filter?
   const close = async () => {
     const current = session;
     session = undefined;
-    await (await current)?.close().catch(() => undefined);
+    const client = await current?.catch(() => undefined);
+    await client?.close().catch(() => undefined);
   };
   return { tools, close };
 }

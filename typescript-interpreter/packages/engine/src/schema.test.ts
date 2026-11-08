@@ -190,7 +190,7 @@ describe("validateMetadata: authentication", () => {
 
     it("rejects a field the grant does not support", () => {
       expect(() => validateMetadata(authOf({ ...credentials, assertion_signing: { issuer: "i", audience: "a", signing_key: "k" } }))).toThrow(/does not support 'assertion_signing'/);
-      expect(() => validateMetadata(authOf({ ...credentials, authorize_url: "https://a" }))).toThrow(/does not support 'authorize_url'/);
+      expect(() => validateMetadata(authOf({ ...credentials, redirect_uri: "https://a" }))).toThrow(/does not support 'redirect_uri'/);
     });
 
     it("allows no client authentication only for the jwt-bearer grant", () => {
@@ -315,7 +315,7 @@ describe("validateMetadata: interfaces", () => {
       }
     });
 
-    it("reads a signature without compiling any code, as a page that blocks eval requires", () => {
+    it("reads a signature without compiling any code", () => {
       const original = globalThis.Function;
       globalThis.Function = function blocked() {
         throw new EvalError("Code generation from strings is blocked.");
@@ -352,7 +352,7 @@ describe("validateMetadata: tools", () => {
 
     it("accepts stdio transport with a command", () => {
       const md = validateMetadata({
-        tools: { mcp: [{ name: "s", transport: { type: "stdio", command: "python" } }] },
+        tools: { mcp: [{ name: "s", transport: { type: "stdio", command: "node" } }] },
       });
       expect(md.tools?.mcp?.[0]?.transport.type).toBe("stdio");
     });

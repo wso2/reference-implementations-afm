@@ -53,15 +53,16 @@ export async function createAgent(loaded: LoadedAfm, baseDir: string, env?: Env)
   const errors: string[] = [];
   try {
     for (const server of servers) {
+      let connection: McpConnection;
       try {
-        const connection = await (server.transport.type === "stdio" ? stdioTools({ ...server, transport: server.transport }) : mcpTools({ ...server, transport: server.transport }));
-        connections.push(connection);
-        add(`tool server ${server.name}`, connection.tools);
+        connection = await (server.transport.type === "stdio" ? stdioTools({ ...server, transport: server.transport }) : mcpTools({ ...server, transport: server.transport }));
       } catch (error) {
-        if (error instanceof Error && error.message.startsWith("The tool '")) throw error;
         errors.push(`${server.name}: ${(error as Error).message}`);
         console.warn(`Skipping the tool server '${server.name}': ${(error as Error).message}`);
+        continue;
       }
+      connections.push(connection);
+      add(`tool server ${server.name}`, connection.tools);
     }
     if (servers.length > 0 && connections.length === 0) throw new Error(`Failed to connect to any tool server: ${errors.join("; ")}`);
 

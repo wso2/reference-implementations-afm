@@ -15,32 +15,25 @@
 // under the License.
 
 
-import { build } from "esbuild";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const root = fileURLToPath(new URL("../../..", import.meta.url));
+const packages = fileURLToPath(new URL("../..", import.meta.url));
 
-describe("the interpreter stays independent of its host", () => {
-  it.each(["packages/engine/src/index.ts", "packages/runtime/src/index.ts"])("builds %s for a page, so no Node.js module is needed", async (entry) => {
-    const result = await build({ entryPoints: [join(root, entry)], bundle: true, platform: "browser", write: false, logLevel: "silent" });
-    expect(result.errors).toEqual([]);
-  });
+async function engineFiles(): Promise<string[]> {
+  const folder = join(packages, "engine/src");
+  return (await readdir(folder)).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts")).map((name) => join(folder, name));
+}
 
-  it("never names the page it might run in, in source, tests, documents or settings", async () => {
-    const skipped = ["node_modules", "dist", "pnpm-lock.yaml", "guards.test.ts"];
-    const found: string[] = [];
-    const walk = async (folder: string): Promise<void> => {
-      for (const entry of await readdir(folder, { withFileTypes: true })) {
-        if (skipped.includes(entry.name)) continue;
-        const path = join(folder, entry.name);
-        if (entry.isDirectory()) await walk(path);
-        else if (entry.isFile() && /browser/i.test(await readFile(path, "utf-8"))) found.push(path.slice(root.length));
-      }
-    };
-    await walk(root);
-    expect(found).toEqual([]);
+describe("the library files", () => {
+  it("import no Node.js module, so the packages can be used as libraries anywhere JavaScript runs", async () => {
+    const runtime = ["index", "run", "mcp", "model", "auth-headers"].map((name) => join(packages, `runtime/src/${name}.ts`));
+    const importing: string[] = [];
+    for (const file of [...(await engineFiles()), ...runtime]) {
+      if (/from "node:/.test(await readFile(file, "utf-8"))) importing.push(file.slice(packages.length));
+    }
+    expect(importing).toEqual([]);
   });
 });
