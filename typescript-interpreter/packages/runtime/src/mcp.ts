@@ -17,9 +17,9 @@
 
 import type { ClientAuthentication } from "@afm/engine";
 import { createMCPClient, type ListToolsResult, type MCPClient } from "@ai-sdk/mcp";
-import { jsonSchema, tool, type ToolCallOptions, type ToolSet } from "ai";
+import { jsonSchema, type ToolCallOptions, type ToolSet } from "ai";
 import { authHeaders } from "./auth-headers";
-import type { ToolOutput } from "./run";
+import { type ToolOutput, textTool } from "./run";
 
 export interface HttpMcpServer {
   transport: { url: string; authentication?: ClientAuthentication };
@@ -122,11 +122,10 @@ export async function toolsFromClient(connect: () => Promise<MCPClient>, filter?
   const tools: ToolSet = {};
   for (const definition of definitions) {
     if (Object.hasOwn(tools, definition.name)) throw new Error(`The server lists the tool '${definition.name}' more than once.`);
-    tools[definition.name] = tool({
+    tools[definition.name] = textTool({
       description: definition.description,
       inputSchema: jsonSchema(definition.inputSchema as Parameters<typeof jsonSchema>[0]),
       execute: (args, options) => run(definition.name, args, options),
-      toModelOutput: ({ output }) => ({ type: "text", value: output.content }),
     });
   }
 

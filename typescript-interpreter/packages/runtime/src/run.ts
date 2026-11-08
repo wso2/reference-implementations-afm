@@ -16,7 +16,17 @@
 
 
 import { describeError } from "@afm/engine";
-import { type FinishReason, type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from "ai";
+import {
+  type FinishReason,
+  type FlexibleSchema,
+  type LanguageModel,
+  type ModelMessage,
+  stepCountIs,
+  streamText,
+  tool,
+  type ToolCallOptions,
+  type ToolSet,
+} from "ai";
 
 export const DEFAULT_MAX_ITERATIONS = 10;
 
@@ -25,6 +35,14 @@ const MAX_RETRIES = 4;
 export interface ToolOutput {
   ok: boolean;
   content: string;
+}
+
+export function textTool<INPUT>(options: {
+  description?: string;
+  inputSchema: FlexibleSchema<INPUT>;
+  execute: (input: INPUT, options: ToolCallOptions) => Promise<ToolOutput>;
+}) {
+  return tool({ ...options, toModelOutput: ({ output }) => ({ type: "text", value: output.content }) });
 }
 
 export interface AgentTurnInput {
