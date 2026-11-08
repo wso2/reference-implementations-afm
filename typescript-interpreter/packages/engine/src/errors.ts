@@ -14,8 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { asRecord, stringField, type UnknownRecord } from "./types";
-
 export class AfmParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -45,7 +43,18 @@ export class VariableResolutionError extends Error {
 
 const MAX_UNWRAP_DEPTH = 4;
 
-function describeRaw(error: unknown): string {
+function describe(error: unknown, depth: number): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error && error.message !== "") return error.message;
+  if (typeof error !== "object" || error === null) return String(error);
+
+  const { message, error: nested, code, type } = error as Record<string, unknown>;
+  if (typeof message === "string" && message !== "") return message;
+  if (nested !== undefined && nested !== error && depth < MAX_UNWRAP_DEPTH) {
+    const inner = describe(nested, depth + 1);
+    if (inner !== "" && inner !== "[object Object]") return inner;
+  }
+  if (typeof code === "string" && code !== "") return typeof type === "string" && type !== "" && type !== "error" ? `${code} (${type})` : code;
   try {
     const json = JSON.stringify(error);
     if (json !== undefined && json !== "{}") return json;
@@ -53,33 +62,6 @@ function describeRaw(error: unknown): string {
     return String(error);
   }
   return String(error);
-}
-
-function describeNested(record: UnknownRecord, error: unknown, depth: number): string | undefined {
-  const nested = record["error"];
-  if (depth >= MAX_UNWRAP_DEPTH || nested === undefined || nested === error) return undefined;
-  const described = describe(nested, depth + 1);
-  return described !== "" && described !== "[object Object]" ? described : undefined;
-}
-
-function describeCode(record: UnknownRecord): string | undefined {
-  const code = stringField(record, "code");
-  const kind = stringField(record, "type");
-  if (code === "") return undefined;
-  return kind !== "" && kind !== "error" ? `${code} (${kind})` : code;
-}
-
-function describe(error: unknown, depth: number): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error && error.message !== "") return error.message;
-
-  const record = asRecord(error);
-  if (record === null) return String(error);
-
-  const message = stringField(record, "message");
-  if (message !== "") return message;
-
-  return describeNested(record, error, depth) ?? describeCode(record) ?? describeRaw(error);
 }
 
 export function describeError(error: unknown): string {

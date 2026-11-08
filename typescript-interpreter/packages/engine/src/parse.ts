@@ -14,15 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+
 import { parse as parseYaml, YAMLParseError } from "yaml";
 import { AfmParseError } from "./errors";
 
 const DELIMITER = "---";
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING = /^ {0,3}#\s+(\S.*)$/;
-const SECTIONS = ["role", "instructions"] as const;
-
-type Section = (typeof SECTIONS)[number];
+const SECTIONS = ["role", "instructions"];
 
 export interface FrontmatterSplit {
   frontmatter: Record<string, unknown> | null;
@@ -64,16 +63,6 @@ function scanFrontmatter(content: string): FrontmatterScan {
   return { kind: "unclosed" };
 }
 
-function refersToItself(value: unknown, active = new Set<object>(), checked = new Set<object>()): boolean {
-  if (typeof value !== "object" || value === null || checked.has(value)) return false;
-  if (active.has(value)) return true;
-  active.add(value);
-  const found = Object.values(value).some((child) => refersToItself(child, active, checked));
-  active.delete(value);
-  checked.add(value);
-  return found;
-}
-
 function parseMapping(yamlText: string): Record<string, unknown> {
   if (yamlText.trim() === "") return {};
 
@@ -87,7 +76,11 @@ function parseMapping(yamlText: string): Record<string, unknown> {
 
   if (parsed === null || parsed === undefined) return {};
   if (typeof parsed !== "object" || Array.isArray(parsed)) throw new AfmParseError("Frontmatter must be a YAML mapping");
-  if (refersToItself(parsed)) throw new AfmParseError("Frontmatter must not refer back to itself");
+  try {
+    JSON.stringify(parsed);
+  } catch {
+    throw new AfmParseError("Frontmatter must not refer back to itself");
+  }
   return parsed as Record<string, unknown>;
 }
 
@@ -103,45 +96,28 @@ export function splitFrontmatter(content: string): FrontmatterSplit {
   return { frontmatter: parseMapping(content.slice(scan.yamlStart, scan.end)), body: content.slice(scan.bodyStart) };
 }
 
-interface Fence {
-  marker: string;
-  length: number;
-}
-
-function updateFence(fence: Fence | null, line: string): Fence | null {
-  const marker = FENCE.exec(line)?.[1];
-  if (marker === undefined) return fence;
-  if (fence === null) return { marker: marker[0]!, length: marker.length };
-  const closes =
-    marker[0] === fence.marker &&
-    marker.length >= fence.length &&
-    /^\s*$/.test(line.slice(line.indexOf(marker) + marker.length));
-  return closes ? null : fence;
-}
-
-function sectionOf(heading: string): Section | null {
-  const name = heading.toLowerCase();
-  return SECTIONS.find((section) => section === name) ?? null;
-}
-
-function extractRoleAndInstructions(body: string): Pick<ParsedAfm, "role" | "instructions"> {
-  const sections: Record<Section, string[]> = { role: [], instructions: [] };
-  let current: Section | null = null;
-  let fence: Fence | null = null;
+function extractRoleAndInstructions(body: string): { role: string; instructions: string } {
+  const sections: Record<string, string[]> = { role: [], instructions: [] };
+  let current: string | null = null;
+  let fence: string | null = null;
 
   for (const line of body.split(/\r?\n/)) {
-    const isFenceLine = FENCE.test(line);
-    fence = updateFence(fence, line);
-    const heading = isFenceLine || fence !== null ? undefined : HEADING.exec(line)?.[1]?.trimEnd();
-    if (heading !== undefined) {
-      current = sectionOf(heading);
-      continue;
+    const marker = FENCE.exec(line)?.[1];
+    if (marker !== undefined) {
+      if (fence === null) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null;
+    } else if (fence === null) {
+      const heading = HEADING.exec(line)?.[1]?.trimEnd().toLowerCase();
+      if (heading !== undefined) {
+        current = SECTIONS.includes(heading) ? heading : null;
+        continue;
+      }
     }
-    if (current !== null) sections[current].push(line);
+    if (current !== null) sections[current]!.push(line);
   }
 
-  const role = sections.role.join("\n").trim();
-  const instructions = sections.instructions.join("\n").trim();
+  const role = sections.role!.join("\n").trim();
+  const instructions = sections.instructions!.join("\n").trim();
   if (role === "") throw new AfmParseError("Missing required '# Role' section");
   if (instructions === "") throw new AfmParseError("Missing required '# Instructions' section");
   return { role, instructions };
@@ -149,6 +125,5 @@ function extractRoleAndInstructions(body: string): Pick<ParsedAfm, "role" | "ins
 
 export function parseAfm(content: string): ParsedAfm {
   const { frontmatter, body } = splitFrontmatter(content);
-  const { role, instructions } = extractRoleAndInstructions(body);
-  return { frontmatter: frontmatter ?? {}, role, instructions };
+  return { frontmatter: frontmatter ?? {}, ...extractRoleAndInstructions(body) };
 }

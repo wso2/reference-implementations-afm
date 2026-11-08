@@ -49,53 +49,64 @@ function fieldList(fields: string[]): string {
   return `${fields.map((field) => `'${field}'`).join(", ")} ${fields.length === 1 ? "field" : "fields"}`;
 }
 
-const JWT_ALGORITHMS = new Set(["RS256", "RS384", "RS512", "HS256", "HS384", "HS512"]);
-
 interface FieldSpec {
   required: readonly string[];
   optional: readonly string[];
 }
 
-const AUTH_FIELDS: Record<string, FieldSpec> = {
-  bearer: { required: ["token"], optional: [] },
-  "api-key": { required: ["api_key"], optional: ["header_name"] },
-  jwt: {
-    required: ["issuer", "signing_key"],
-    optional: ["audience", "algorithm", "key_id", "subject", "custom_claims", "expiry_seconds"],
-  },
+const JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+const SIGNING: FieldSpec = {
+  required: ["issuer", "audience", "signing_key"],
+  optional: ["algorithm", "key_id", "subject", "custom_claims", "expiry_seconds"],
 };
+const TOKEN_REQUEST = ["client_id", "client_secret", "scopes", "token_endpoint_auth_method", "resource", "extra_params"];
 
-const RECOGNIZED_AUTH_TYPES: readonly string[] = [...Object.keys(AUTH_FIELDS), "oauth2"];
+const AUTH_FIELDS = new Map<string, FieldSpec>([
+  ["bearer", { required: ["token"], optional: [] }],
+  ["basic", { required: ["username", "password"], optional: [] }],
+  ["api-key", { required: ["api_key"], optional: ["header_name"] }],
+  ["jwt", SIGNING],
+]);
 
-const AUTHORIZATION_CODE: FieldSpec = { required: ["authorize_url", "token_url", "client_id"], optional: ["scopes"] };
+const GRANT_FIELDS = new Map<string, FieldSpec>([
+  ["client_credentials", { required: ["grant_type", "token_url"], optional: TOKEN_REQUEST }],
+  [JWT_BEARER, { required: ["grant_type", "token_url", "assertion_signing"], optional: TOKEN_REQUEST }],
+]);
 
-function checkFields(label: string, spec: FieldSpec, provided: Set<string>, ctx: z.RefinementCtx): void {
-  const missing = spec.required.filter((field) => !provided.has(field));
+const isEmpty = (value: unknown): boolean => value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
+
+function checkFields(label: string, spec: FieldSpec, block: Record<string, unknown>, ctx: z.RefinementCtx): void {
+  const given = Object.keys(block).filter((key) => key !== "type");
+  const nulls = given.filter((key) => block[key] === null);
+  const missing = spec.required.filter((key) => isEmpty(block[key]));
+  const unknown = given.filter((key) => !spec.required.includes(key) && !spec.optional.includes(key));
+  if (nulls.length > 0) reportIssue(ctx, `${label} must not set ${fieldList(nulls)} to null`);
   if (missing.length > 0) reportIssue(ctx, `${label} requires ${fieldList(missing)}`);
-
-  const allowed = new Set<string>([...spec.required, ...spec.optional]);
-  const unknown = [...provided].filter((field) => !allowed.has(field));
   if (unknown.length > 0) reportIssue(ctx, `${label} does not support ${fieldList(unknown)}`);
 }
 
-function validateJwtAlgorithm(algorithm: string, ctx: z.RefinementCtx): void {
-  if (algorithm.toLowerCase() === "none") {
-    reportIssue(ctx, "jwt 'algorithm' 'none' is not allowed; it produces an unsigned token");
+function checkOAuth2(block: Record<string, unknown>, ctx: z.RefinementCtx): void {
+  const grant = typeof block.grant_type === "string" ? block.grant_type.toLowerCase() : "";
+  const spec = GRANT_FIELDS.get(grant);
+  if (spec === undefined) {
+    reportIssue(ctx, `type 'oauth2' requires a 'grant_type' of client_credentials or ${JWT_BEARER}`);
     return;
   }
-  if (!JWT_ALGORITHMS.has(algorithm)) {
-    reportIssue(ctx, `jwt 'algorithm' is not supported. Supported algorithms: ${[...JWT_ALGORITHMS].sort().join(", ")}`);
-  }
-}
+  checkFields(`oauth2 grant_type '${grant}'`, spec, block, ctx);
 
-function validateOAuth2Fields(auth: { grant_type?: string }, provided: Set<string>, ctx: z.RefinementCtx): void {
-  if (auth.grant_type === undefined) {
-    reportIssue(ctx, "type 'oauth2' requires 'grant_type' field");
-  } else if (auth.grant_type.toLowerCase() !== "authorization_code") {
-    reportIssue(ctx, "oauth2 'grant_type' is not supported. Supported grant types: authorization_code");
-  } else {
-    checkFields("oauth2 grant_type 'authorization_code'", AUTHORIZATION_CODE, new Set([...provided].filter((field) => field !== "grant_type")), ctx);
+  const clientAuthenticates = block.token_endpoint_auth_method !== "none";
+  if (clientAuthenticates && (isEmpty(block.client_id) || isEmpty(block.client_secret))) {
+    reportIssue(ctx, "oauth2 requires 'client_id' and 'client_secret' unless 'token_endpoint_auth_method' is 'none'");
   }
+  if (!clientAuthenticates && grant === "client_credentials") {
+    reportIssue(ctx, "oauth2 'token_endpoint_auth_method' 'none' is only for the jwt-bearer grant");
+  }
+  if (!clientAuthenticates && block.client_secret !== undefined) {
+    reportIssue(ctx, "oauth2 must not set 'client_secret' with 'token_endpoint_auth_method' 'none'");
+  }
+  const signing = block.assertion_signing;
+  if (typeof signing === "object" && signing !== null) checkFields("oauth2 'assertion_signing'", SIGNING, signing as Record<string, unknown>, ctx);
+  else if (signing !== undefined) reportIssue(ctx, "oauth2 'assertion_signing' must be an object");
 }
 
 const clientAuthentication = z
@@ -106,36 +117,19 @@ const clientAuthentication = z
     password: z.string().optional(),
     api_key: z.string().optional(),
     header_name: z.string().optional(),
-    issuer: z.string().optional(),
-    audience: z.union([z.string(), z.array(z.string())]).optional(),
-    signing_key: z.string().optional(),
-    algorithm: z.string().optional(),
-    key_id: z.string().optional(),
-    subject: z.string().optional(),
-    custom_claims: z.record(z.string(), z.unknown()).optional(),
-    expiry_seconds: z.preprocess(numberFromText, z.number().int().optional()),
-    grant_type: z.string().optional(),
-    authorize_url: httpUrl("authentication.authorize_url").optional(),
-    token_url: httpUrl("authentication.token_url").optional(),
-    client_id: z.string().optional(),
-    scopes: z.array(z.string()).optional(),
   })
   .superRefine((auth, ctx) => {
     const type = auth.type.toLowerCase();
-    if (!RECOGNIZED_AUTH_TYPES.includes(type)) return;
-
-    const provided = new Set(Object.keys(auth).filter((key) => key !== "type"));
-
     if (type === "oauth2") {
-      validateOAuth2Fields(auth, provided, ctx);
+      checkOAuth2(auth, ctx);
       return;
     }
-
-    checkFields(`type '${type}'`, AUTH_FIELDS[type]!, provided, ctx);
-
-    if (type === "jwt" && auth.algorithm !== undefined) {
-      validateJwtAlgorithm(auth.algorithm, ctx);
+    const spec = AUTH_FIELDS.get(type);
+    if (spec === undefined) {
+      reportIssue(ctx, "authentication type is not recognized; use bearer, basic, api-key, jwt or oauth2");
+      return;
     }
+    checkFields(`type '${type}'`, spec, auth, ctx);
   });
 
 export type ClientAuthentication = z.infer<typeof clientAuthentication>;

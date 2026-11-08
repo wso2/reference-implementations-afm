@@ -14,91 +14,122 @@
 // specific language governing permissions and limitations
 // under the License.
 
+
 import { describe, expect, it } from "vitest";
-import { VariableResolutionError } from "./errors";
-import { fakeSecrets } from "./test-support";
-import type { SecretPort } from "./types";
-import { resolveVariables } from "./variables";
+import { AfmValidationError, VariableResolutionError } from "./errors";
+import { checkHttpVariables, resolveText, resolveValues } from "./variables";
 
-describe("resolveVariables", () => {
-  it("fills ${env:NAME} from the SecretPort", async () => {
-    const out = await resolveVariables({ token: "${env:API_KEY}" }, fakeSecrets({ API_KEY: "sk-123" }));
-    expect(out).toEqual({ token: "sk-123" });
+const parsed = (frontmatter: Record<string, unknown>, role = "r", instructions = "i") => ({ frontmatter, role, instructions });
+
+describe("resolveText", () => {
+  it("fills ${env:NAME} from the environment", () => {
+    expect(resolveText("Bearer ${env:TOKEN}", { TOKEN: "abc" })).toBe("Bearer abc");
   });
 
-  it("treats a no-prefix ${NAME} as env", async () => {
-    const out = await resolveVariables({ x: "x ${FOO} y" }, fakeSecrets({ FOO: "bar" }));
-    expect(out).toEqual({ x: "x bar y" });
+  it("treats a no-prefix ${NAME} as env", () => {
+    expect(resolveText("${TOKEN}", { TOKEN: "abc" })).toBe("abc");
   });
 
-  it("resolves multiple references in one value", async () => {
-    const out = await resolveVariables({ k: "${env:A}-${env:B}" }, fakeSecrets({ A: "1", B: "2" }));
-    expect(out).toEqual({ k: "1-2" });
+  it("resolves several references in one value", () => {
+    expect(resolveText("${env:A}-${env:B}", { A: "1", B: "2" })).toBe("1-2");
   });
 
-  it("resolves inside nested maps and lists", async () => {
-    const out = await resolveVariables(
-      { model: { authentication: { api_key: "${env:KEY}" } }, tools: [{ url: "https://x/${env:KEY}" }, "${env:KEY}"] },
-      fakeSecrets({ KEY: "k" }),
-    );
-    expect(out).toEqual({
-      model: { authentication: { api_key: "k" } },
-      tools: [{ url: "https://x/k" }, "k"],
+  it("leaves ${http:...} untouched", () => {
+    expect(resolveText("${http:payload.id} ${env:A}", { A: "x" })).toBe("${http:payload.id} x");
+  });
+
+  it("does not expand a value that itself looks like a reference", () => {
+    expect(resolveText("${env:A}", { A: "${env:B}", B: "nope" })).toBe("${env:B}");
+  });
+
+  it("puts the value in as it is, even when it holds replacement patterns", () => {
+    expect(resolveText("${env:A}", { A: "$& $1 $$" })).toBe("$& $1 $$");
+  });
+
+  it("leaves text without variables unchanged", () => {
+    expect(resolveText("nothing here", {})).toBe("nothing here");
+  });
+
+  it.each(["file", "secret", "other"])("throws on the unknown prefix %s:", (prefix) => {
+    expect(() => resolveText(`\${${prefix}:X}`, { X: "1" })).toThrow(VariableResolutionError);
+    expect(() => resolveText(`\${${prefix}:X}`, { X: "1" })).toThrow(/Only 'env:' and 'http:' are supported/);
+  });
+
+  it("throws when a value is missing, naming the variable", () => {
+    expect(() => resolveText("${env:MISSING}", {})).toThrow(/'MISSING' is not set/);
+  });
+
+  it("treats an empty value as missing", () => {
+    expect(() => resolveText("${env:EMPTY}", { EMPTY: "" })).toThrow(VariableResolutionError);
+  });
+
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])("does not find %s on the object itself", (name) => {
+    expect(() => resolveText(`\${env:${name}}`, {})).toThrow(/is not set/);
+  });
+
+  it("never puts a value in the error message", () => {
+    const message = (() => {
+      try {
+        resolveText("${env:A} ${file:B}", { A: "SECRET-VALUE" });
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return "";
+    })();
+    expect(message).not.toContain("SECRET-VALUE");
+  });
+});
+
+describe("resolveValues", () => {
+  it("resolves inside nested maps and lists", () => {
+    const out = resolveValues({ a: ["${env:X}", { b: "${env:Y}" }], c: 1, d: true, e: null }, { X: "1", Y: "2" });
+    expect(out).toEqual({ a: ["1", { b: "2" }], c: 1, d: true, e: null });
+  });
+
+  it("does not change its input", () => {
+    const input = { a: "${env:X}" };
+    resolveValues(input, { X: "1" });
+    expect(input).toEqual({ a: "${env:X}" });
+  });
+});
+
+describe("checkHttpVariables", () => {
+  it("allows ${http:...} in the prompt of a webhook and of a platform chat", () => {
+    expect(() =>
+      checkHttpVariables(
+        parsed({
+          interfaces: [
+            { type: "webhook", prompt: "${http:payload.a} ${http:header.X-Event}" },
+            { type: "platformchat", platform: "slack", mode: "notification", prompt: "${http:payload.b}" },
+          ],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("accepts a file with no ${http:...} at all", () => {
+    expect(() => checkHttpVariables(parsed({ name: "x", interfaces: [{ type: "consolechat" }] }))).not.toThrow();
+  });
+
+  it("rejects it in Role and Instructions, saying where", () => {
+    expect(() => checkHttpVariables(parsed({}, "a ${http:payload.x}", "b ${http:payload.y}"))).toThrow(/found in: role, instructions/);
+  });
+
+  it("rejects it in other fields, with the path of each", () => {
+    const file = parsed({
+      name: "${http:payload.n}",
+      model: { url: "https://x/${http:payload.m}" },
+      tools: { mcp: [{ name: "s", transport: { type: "http", url: "https://s/mcp", authentication: { type: "bearer", token: "${http:header.Authorization}" } } }] },
     });
+    expect(() => checkHttpVariables(file)).toThrow(AfmValidationError);
+    expect(() => checkHttpVariables(file)).toThrow(/found in: name, model\.url, tools\.mcp\[0\]\.transport\.authentication\.token/);
   });
 
-  it("leaves values that are not text alone", async () => {
-    const value = { count: 4, enabled: true, nothing: null };
-    expect(await resolveVariables(value, fakeSecrets({}))).toEqual(value);
+  it("rejects it in a prompt that belongs to an interface that does not take one", () => {
+    expect(() => checkHttpVariables(parsed({ interfaces: [{ type: "consolechat", prompt: "${http:payload.x}" }] }))).toThrow(/interfaces\[0\]\.prompt/);
   });
 
-  it("leaves ${http:...} untouched", async () => {
-    const out = await resolveVariables({ p: "${http:payload.id}" }, fakeSecrets({}));
-    expect(out).toEqual({ p: "${http:payload.id}" });
-  });
-
-  it("does not expand a value that itself looks like a reference", async () => {
-    const out = await resolveVariables({ k: "${env:A}" }, fakeSecrets({ A: "${env:B}", B: "nope" }));
-    expect(out).toEqual({ k: "${env:B}" });
-  });
-
-  it("asks for values one at a time, in file order", async () => {
-    const asked: string[] = [];
-    const secrets: SecretPort = {
-      async resolve(ref) {
-        asked.push(`${ref.name}:start`);
-        await Promise.resolve();
-        asked.push(`${ref.name}:end`);
-        return { status: "resolved", value: ref.name };
-      },
-    };
-    await resolveVariables({ first: "${A}", nested: { second: "${B}" }, list: ["${C}"] }, secrets);
-    expect(asked).toEqual(["A:start", "A:end", "B:start", "B:end", "C:start", "C:end"]);
-  });
-
-  it("throws on an unknown prefix", async () => {
-    await expect(resolveVariables({ k: "${vault:X}" }, fakeSecrets({ X: "v" }))).rejects.toThrow(
-      VariableResolutionError,
-    );
-    await expect(resolveVariables({ k: "${vault:X}" }, fakeSecrets({}))).rejects.toThrow(
-      /Unsupported variable prefix/,
-    );
-  });
-
-  it("throws when a value is missing", async () => {
-    await expect(resolveVariables({ k: "${env:MISSING}" }, fakeSecrets({}))).rejects.toThrow(
-      VariableResolutionError,
-    );
-  });
-
-  it("treats an empty value as unresolved", async () => {
-    await expect(resolveVariables({ k: "${env:EMPTY}" }, fakeSecrets({ EMPTY: "" }))).rejects.toThrow(
-      VariableResolutionError,
-    );
-  });
-
-  it("leaves text without variables unchanged", async () => {
-    const out = await resolveVariables({ k: "nothing here" }, fakeSecrets({}));
-    expect(out).toEqual({ k: "nothing here" });
+  it("rejects it in a webhook field other than the prompt", () => {
+    expect(() => checkHttpVariables(parsed({ interfaces: [{ type: "webhook", exposure: { http: { path: "/${http:payload.p}" } } }] }))).toThrow(/interfaces\[0\]\.exposure\.http\.path/);
   });
 });

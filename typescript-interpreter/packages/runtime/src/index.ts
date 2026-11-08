@@ -23,4 +23,3 @@ export type { AgentTurnInput, Budget, LoopEvent, ToolOutput, TurnFinishReason } 
 export { mcpTools, toolOutput, toolsFromClient } from "./mcp";
 export type { HttpMcpServer, McpConnection, McpOptions } from "./mcp";
 export { authHeaders } from "./auth-headers";
-export { configSecretPort } from "./secret";

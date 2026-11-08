@@ -15,12 +15,12 @@
 // under the License.
 
 
-export type { SecretPort, SecretRef, SecretResolution } from "./types";
 export { parseAfm, splitFrontmatter, frontmatterEndOffset } from "./parse";
 export type { ParsedAfm, FrontmatterSplit } from "./parse";
 export { validateMetadata, agentMetadataSchema } from "./schema";
 export type { AgentMetadata, ClientAuthentication, JsonSchemaData } from "./schema";
-export { resolveVariables } from "./variables";
+export { checkHttpVariables, resolveText, resolveValues } from "./variables";
+export type { Env } from "./variables";
 export { loadAfm, buildSystemPrompt } from "./load";
 export type { LoadedAfm } from "./load";
 export { AfmParseError, AfmValidationError, VariableResolutionError, describeError } from "./errors";

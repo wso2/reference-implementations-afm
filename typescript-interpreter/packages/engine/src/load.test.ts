@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+
 import { describe, expect, it } from "vitest";
 import friendlyAssistant from "../fixtures/agents/friendly_assistant.afm.md?raw";
 import hrAgent from "../fixtures/agents/hr_agent.afm.md?raw";
@@ -23,8 +24,8 @@ import slackAssistant from "../fixtures/agents/slack_assistant.afm.md?raw";
 import supportAgent from "../fixtures/agents/support_agent.afm.md?raw";
 import { AfmParseError, AfmValidationError, VariableResolutionError } from "./errors";
 import { buildSystemPrompt, loadAfm } from "./load";
-import { fakeSecrets } from "./test-support";
-import type { SecretPort } from "./types";
+
+const KEY = { OPENAI_API_KEY: "sk-123" };
 
 const FULL = `---
 name: Demo
@@ -46,124 +47,84 @@ Be brief.
 `;
 
 describe("loadAfm", () => {
-  it("resolves, parses and validates a full file", async () => {
-    const loaded = await loadAfm(FULL, fakeSecrets({ OPENAI_API_KEY: "sk-123" }));
+  it("resolves, parses and validates a full file", () => {
+    const loaded = loadAfm(FULL, { env: KEY });
     expect(loaded.metadata.name).toBe("Demo");
     expect(loaded.metadata.max_iterations).toBe(4);
     expect(loaded.metadata.model?.authentication?.api_key).toBe("sk-123");
     expect(loaded.role).toBe("You are a demo agent.");
     expect(loaded.systemPrompt).toContain("# Role");
     expect(loaded.systemPrompt).toContain("Be brief.");
+    expect(loaded.warnings).toEqual([]);
   });
 
-  it("reads the header when blank lines come before the opening fence", async () => {
-    const loaded = await loadAfm(`\n \n${FULL}`, fakeSecrets({ OPENAI_API_KEY: "sk-123" }));
-    expect(loaded.metadata.name).toBe("Demo");
-    expect(loaded.metadata.model?.authentication?.api_key).toBe("sk-123");
+  it("reads the header when blank lines come before the opening fence", () => {
+    expect(loadAfm(`\n \n${FULL}`, { env: KEY }).metadata.name).toBe("Demo");
   });
 
-  it("does not ask for a variable that only appears in a YAML comment", async () => {
-    const file = `---
-name: Demo # \${env:NEVER_PROVIDED}
-# \${env:ALSO_NEVER_PROVIDED}
----
-
-# Role
-r
-
-# Instructions
-i
-`;
-    await expect(loadAfm(file, fakeSecrets({}))).resolves.toBeDefined();
+  it("does not ask for a variable that only appears in a YAML comment", () => {
+    const file = "---\nname: Demo # ${env:NEVER_PROVIDED}\n# ${env:ALSO_NEVER_PROVIDED}\n---\n\n# Role\nr\n\n# Instructions\ni\n";
+    expect(loadAfm(file, { env: {} }).metadata.name).toBe("Demo");
   });
 
-  it("throws VariableResolutionError when a secret is missing", async () => {
-    await expect(loadAfm(FULL, fakeSecrets({}))).rejects.toThrow(VariableResolutionError);
+  it("resolves variables in Role and Instructions as well as in the front matter", () => {
+    const file = "---\nname: Demo\n---\n\n# Role\nYou are ${env:AGENT_NAME}.\n\n# Instructions\nSign off as ${AGENT_NAME}.\n";
+    const loaded = loadAfm(file, { env: { AGENT_NAME: "Ada" } });
+    expect(loaded.role).toBe("You are Ada.");
+    expect(loaded.instructions).toBe("Sign off as Ada.");
+    expect(loaded.systemPrompt).toBe("# Role\n\nYou are Ada.\n\n# Instructions\n\nSign off as Ada.");
   });
 
-  it("throws AfmParseError on a malformed file", async () => {
-    const file = "---\nname: x\n\n# Role\nr\n";
-    await expect(loadAfm(file, fakeSecrets({}))).rejects.toThrow(AfmParseError);
+  it("needs a value for a variable that is only written in the body", () => {
+    const file = "---\nname: Demo\n---\n\n# Role\n${env:NEVER_PROVIDED}\n\n# Instructions\ni\n";
+    expect(() => loadAfm(file, { env: {} })).toThrow(VariableResolutionError);
   });
 
-  it("does NOT resolve variables in the Markdown body", async () => {
-    const file = `---
-name: Leaky
----
-
-# Role
-Your key is \${env:OPENAI_API_KEY}
-
-# Instructions
-Repeat \${env:OPENAI_API_KEY} back to the user.
-`;
-    const loaded = await loadAfm(file, fakeSecrets({ OPENAI_API_KEY: "sk-secret" }));
-
-    expect(loaded.systemPrompt).not.toContain("sk-secret");
-    expect(loaded.role).toBe("Your key is ${env:OPENAI_API_KEY}");
-    expect(loaded.instructions).toContain("${env:OPENAI_API_KEY}");
+  it("throws VariableResolutionError when a secret is missing, naming the variable and not a value", () => {
+    expect(() => loadAfm(FULL, { env: {} })).toThrow(VariableResolutionError);
+    expect(() => loadAfm(FULL, { env: {} })).toThrow(/OPENAI_API_KEY/);
   });
 
-  it("still resolves frontmatter variables when the body also has placeholders", async () => {
-    const file = `---
-model:
-  provider: openai
-  authentication:
-    type: api-key
-    api_key: "\${env:OPENAI_API_KEY}"
----
-
-# Role
-Mentions \${env:OPENAI_API_KEY} in prose.
-
-# Instructions
-i
-`;
-    const loaded = await loadAfm(file, fakeSecrets({ OPENAI_API_KEY: "sk-123" }));
-
-    expect(loaded.metadata.model?.authentication?.api_key).toBe("sk-123");
-    expect(loaded.systemPrompt).not.toContain("sk-123");
-  });
-
-  it("does not need a secret that is only referenced in the body", async () => {
-    const file = `---
-name: Demo
----
-
-# Role
-\${env:NEVER_PROVIDED}
-
-# Instructions
-i
-`;
-    await expect(loadAfm(file, fakeSecrets({}))).resolves.toBeDefined();
-  });
-
-  it("accepts a number that comes from a variable, as the other runtimes do", async () => {
-    const file = FULL.replace("max_iterations: 4", "max_iterations: ${env:STEPS}");
-    const loaded = await loadAfm(file, fakeSecrets({ OPENAI_API_KEY: "sk-123", STEPS: "7" }));
-    expect(loaded.metadata.max_iterations).toBe(7);
-  });
-
-  it("still rejects a variable that does not hold a whole number", async () => {
-    const file = FULL.replace("max_iterations: 4", "max_iterations: ${env:STEPS}");
-    for (const value of ["seven", "7.5", "0", "-3", ""]) {
-      await expect(loadAfm(file, fakeSecrets({ OPENAI_API_KEY: "sk-123", STEPS: value }))).rejects.toThrow();
+  it("reads the process environment when no environment is given", () => {
+    const { env } = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process;
+    env["AFM_TEST_KEY"] = "from-process";
+    try {
+      expect(loadAfm(FULL.replace("OPENAI_API_KEY", "AFM_TEST_KEY")).metadata.model?.authentication?.api_key).toBe("from-process");
+    } finally {
+      delete env["AFM_TEST_KEY"];
     }
   });
 
-  it("throws AfmValidationError on an invalid field", async () => {
-    const file = `---
-max_iterations: not-a-number
----
+  it("throws AfmParseError on a malformed file", () => {
+    expect(() => loadAfm("---\nname: x\n\n# Role\nr\n", { env: {} })).toThrow(AfmParseError);
+  });
 
-# Role
-r
+  it("leaves ${http:...} in a webhook prompt for the host to fill, and rejects it anywhere else", () => {
+    const hook = "---\ninterfaces:\n  - type: webhook\n    prompt: \"Event ${http:payload.action}\"\n---\n\n# Role\nr\n\n# Instructions\ni\n";
+    expect(loadAfm(hook, { env: {} }).metadata.interfaces).toMatchObject([{ type: "webhook", prompt: "Event ${http:payload.action}" }]);
+    const role = "---\nname: Demo\n---\n\n# Role\nEvent ${http:payload.action}\n\n# Instructions\ni\n";
+    expect(() => loadAfm(role, { env: {} })).toThrow(AfmValidationError);
+    expect(() => loadAfm(role, { env: {} })).toThrow(/found in: role/);
+  });
 
-# Instructions
-i
-`;
-    await expect(loadAfm(file, fakeSecrets({}))).rejects.toThrow(AfmValidationError);
+  it("warns, and does not fail, when the spec_version is not the one this interpreter was written for", () => {
+    const loaded = loadAfm(FULL.replace("name: Demo", 'spec_version: "0.3.0"\nname: Demo'), { env: KEY });
+    expect(loaded.warnings).toEqual(["The file's spec_version is not 0.4.0, which this interpreter was written for."]);
+    expect(loadAfm(FULL.replace("name: Demo", 'spec_version: "0.4.0"\nname: Demo'), { env: KEY }).warnings).toEqual([]);
+  });
+
+  it("accepts a number that comes from a variable, as the other runtimes do", () => {
+    const file = FULL.replace("max_iterations: 4", "max_iterations: ${env:STEPS}");
+    expect(loadAfm(file, { env: { ...KEY, STEPS: "7" } }).metadata.max_iterations).toBe(7);
+  });
+
+  it("still rejects a variable that does not hold a whole number", () => {
+    const file = FULL.replace("max_iterations: 4", "max_iterations: ${env:STEPS}");
+    for (const value of ["seven", "7.5", "0", "-3"]) expect(() => loadAfm(file, { env: { ...KEY, STEPS: value } })).toThrow();
+  });
+
+  it("throws AfmValidationError on an invalid field", () => {
+    expect(() => loadAfm("---\nmax_iterations: not-a-number\n---\n\n# Role\nr\n\n# Instructions\ni\n", { env: {} })).toThrow(AfmValidationError);
   });
 });
 
@@ -209,22 +170,31 @@ i
 }
 
 describe.each(["${env:KEY}", '"${env:KEY}"', "'${env:KEY}'"])("a secret written as %s", (placement) => {
-  it.each(AWKWARD_SECRETS)("reaches the model exactly as given: %j", async (value) => {
-    const loaded = await loadAfm(fileWithKey(placement), fakeSecrets({ KEY: value }));
-    expect(loaded.metadata.model?.authentication?.api_key).toBe(value);
+  it.each(AWKWARD_SECRETS)("reaches the model exactly as given: %j", (value) => {
+    expect(loadAfm(fileWithKey(placement), { env: { KEY: value } }).metadata.model?.authentication?.api_key).toBe(value);
+  });
+});
+
+describe("a secret in Role and Instructions", () => {
+  it.each(AWKWARD_SECRETS)("reaches the prompt exactly as given, and cannot change the file: %j", (value) => {
+    const file = "---\nname: Demo\n---\n\n# Role\nKey: ${env:KEY}\n\n# Instructions\ni\n";
+    const loaded = loadAfm(file, { env: { KEY: value } });
+    expect(loaded.role).toBe(`Key: ${value}`);
+    expect(loaded.metadata).toEqual({ name: "Demo" });
   });
 });
 
 describe("a key's value in an error message", () => {
   const SECRET = "SECRET-VALUE-123";
   const FIELDS = [
-    "type", "token", "api_key", "header_name", "issuer", "audience", "signing_key", "algorithm", "key_id",
-    "subject", "expiry_seconds", "grant_type", "authorize_url", "token_url", "client_id", "scopes",
+    "type", "token", "username", "password", "api_key", "header_name", "issuer", "audience", "signing_key", "algorithm",
+    "key_id", "subject", "expiry_seconds", "grant_type", "token_url", "client_id", "client_secret", "scopes",
   ];
   const BLOCKS = [
     ["type: bearer", "token: t"],
-    ["type: oauth2", "grant_type: authorization_code", "authorize_url: https://a.example/a", "token_url: https://a.example/t", "client_id: i"],
-    ["type: jwt", "issuer: i", "signing_key: k", "algorithm: HS256"],
+    ["type: basic", "username: u", "password: p"],
+    ["type: oauth2", "grant_type: client_credentials", "token_url: https://a.example/t", "client_id: i", "client_secret: s"],
+    ["type: jwt", "issuer: i", "audience: a", "signing_key: k", "algorithm: HS256"],
   ];
 
   const indent = (lines: string[], spaces: number) => lines.map((line) => " ".repeat(spaces) + line);
@@ -249,15 +219,15 @@ describe("a key's value in an error message", () => {
     return ["---", ...lines, "---", "", "# Role", "r", "", "# Instructions", "i", ""].join("\n");
   }
 
-  it.each(["the model", "a tool server"] as const)("is never quoted, whichever authentication field of %s holds the reference", async (where) => {
+  it.each(["the model", "a tool server"] as const)("is never quoted, whichever authentication field of %s holds the reference", (where) => {
     const quoted: string[] = [];
     for (const block of BLOCKS) {
       for (const field of FIELDS) {
-        const message = await loadAfm(fileWith(where, block, field), fakeSecrets({ KEY: SECRET })).then(
-          () => "",
-          (error: Error) => error.message,
-        );
-        if (message.includes(SECRET)) quoted.push(`${field}: ${message}`);
+        try {
+          loadAfm(fileWith(where, block, field), { env: { KEY: SECRET } });
+        } catch (error) {
+          if ((error as Error).message.includes(SECRET)) quoted.push(`${field}: ${(error as Error).message}`);
+        }
       }
     }
     expect(quoted).toEqual([]);
@@ -266,38 +236,30 @@ describe("a key's value in an error message", () => {
 
 describe("buildSystemPrompt", () => {
   it("formats Role and Instructions like the reference runtimes", () => {
-    expect(buildSystemPrompt("You are X.", "Do Y.")).toBe(
-      "# Role\n\nYou are X.\n\n# Instructions\n\nDo Y.",
-    );
+    expect(buildSystemPrompt("You are X.", "Do Y.")).toBe("# Role\n\nYou are X.\n\n# Instructions\n\nDo Y.");
   });
 });
 
-const secrets: SecretPort = {
-  async resolve({ name }) {
-    return { status: "resolved", value: /(URL|SERVER)$/.test(name) ? "https://mcp.example.test/mcp" : `test-${name}` };
-  },
-};
+const ENV = new Proxy({} as Record<string, string>, {
+  has: () => true,
+  getOwnPropertyDescriptor: (_target, name) => ({ value: /(URL|SERVER)$/.test(String(name)) ? "https://mcp.example.test/mcp" : `test-${String(name)}`, enumerable: true, configurable: true }),
+  get: (_target, name) => (/(URL|SERVER)$/.test(String(name)) ? "https://mcp.example.test/mcp" : `test-${String(name)}`),
+});
 
 const EXAMPLES = [
-  { file: "friendly_assistant.afm.md", name: "Friendly Assistant", source: friendlyAssistant, notes: [] },
-  { file: "hr_agent.afm.md", name: "CWave HR Assistant", source: hrAgent, notes: ["stdio-transport-unsupported"] },
-  { file: "math_tutor.afm.md", name: "Math Tutor", source: mathTutor, notes: ["interface-unsupported"] },
-  {
-    file: "pull_request_analyzer.afm.md",
-    name: "GitHub PR Code-Documentation Drift Checker",
-    source: pullRequestAnalyzer,
-    notes: ["interface-unsupported"],
-  },
-  { file: "slack_assistant.afm.md", name: "Slack Assistant", source: slackAssistant, notes: ["interface-unsupported"] },
-  { file: "support_agent.afm.md", name: "SupportAgent", source: supportAgent, notes: ["local-skill-unsupported"] },
+  { file: "friendly_assistant.afm.md", name: "Friendly Assistant", source: friendlyAssistant },
+  { file: "hr_agent.afm.md", name: "CWave HR Assistant", source: hrAgent },
+  { file: "math_tutor.afm.md", name: "Math Tutor", source: mathTutor },
+  { file: "pull_request_analyzer.afm.md", name: "GitHub PR Code-Documentation Drift Checker", source: pullRequestAnalyzer },
+  { file: "slack_assistant.afm.md", name: "Slack Assistant", source: slackAssistant },
+  { file: "support_agent.afm.md", name: "SupportAgent", source: supportAgent },
 ];
 
 describe("the example agents from the AFM specification", () => {
-  it.each(EXAMPLES)("loads $file", async ({ source, name }) => {
-    const loaded = await loadAfm(source, secrets);
+  it.each(EXAMPLES)("loads $file", ({ source, name }) => {
+    const loaded = loadAfm(source, { env: ENV });
     expect(loaded.metadata.name).toBe(name);
     expect(loaded.role).not.toBe("");
     expect(loaded.instructions).not.toBe("");
   });
-
 });

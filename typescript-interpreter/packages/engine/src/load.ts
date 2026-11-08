@@ -17,27 +17,30 @@
 
 import { parseAfm } from "./parse";
 import { type AgentMetadata, validateMetadata } from "./schema";
-import type { SecretPort } from "./types";
-import { resolveVariables } from "./variables";
+import { checkHttpVariables, type Env, resolveText, resolveValues } from "./variables";
 
 export interface LoadedAfm {
   metadata: AgentMetadata;
   role: string;
   instructions: string;
   systemPrompt: string;
+  warnings: string[];
 }
+
+const SPEC_VERSION = "0.4.0";
+
+const processEnv = (): Env => (globalThis as { process?: { env: Env } }).process?.env ?? {};
 
 export function buildSystemPrompt(role: string, instructions: string): string {
   return `# Role\n\n${role}\n\n# Instructions\n\n${instructions}`;
 }
 
-export async function loadAfm(content: string, secrets: SecretPort): Promise<LoadedAfm> {
+export function loadAfm(content: string, { env = processEnv() }: { env?: Env } = {}): LoadedAfm {
   const parsed = parseAfm(content);
-  const metadata = validateMetadata(await resolveVariables(parsed.frontmatter, secrets));
-  return {
-    metadata,
-    role: parsed.role,
-    instructions: parsed.instructions,
-    systemPrompt: buildSystemPrompt(parsed.role, parsed.instructions),
-  };
+  checkHttpVariables(parsed);
+  const metadata = validateMetadata(resolveValues(parsed.frontmatter, env) as Record<string, unknown>);
+  const role = resolveText(parsed.role, env);
+  const instructions = resolveText(parsed.instructions, env);
+  const warnings = metadata.spec_version === undefined || metadata.spec_version === SPEC_VERSION ? [] : [`The file's spec_version is not ${SPEC_VERSION}, which this interpreter was written for.`];
+  return { metadata, role, instructions, systemPrompt: buildSystemPrompt(role, instructions), warnings };
 }

@@ -14,76 +14,57 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { VariableResolutionError } from "./errors";
-import type { SecretPort } from "./types";
+
+import { AfmValidationError, VariableResolutionError } from "./errors";
+import type { ParsedAfm } from "./parse";
+
+export type Env = Record<string, string | undefined>;
 
 const VARIABLE = /\$\{([^}]+)\}/g;
+const HTTP_ALLOWED_INTERFACES = ["webhook", "platformchat"];
 
-function splitReference(expression: string): { prefix: string; name: string } {
-  const colon = expression.indexOf(":");
-  return colon === -1
-    ? { prefix: "", name: expression }
-    : { prefix: expression.slice(0, colon), name: expression.slice(colon + 1) };
-}
-
-export function resolveVariables(
-  frontmatter: Record<string, unknown>,
-  secrets: SecretPort,
-): Promise<Record<string, unknown>> {
-  return resolveValue(frontmatter, secrets) as Promise<Record<string, unknown>>;
-}
-
-async function resolveValue(value: unknown, secrets: SecretPort): Promise<unknown> {
-  if (typeof value === "string") {
-    return resolveText(value, secrets);
-  }
-  if (Array.isArray(value)) {
-    const resolved: unknown[] = [];
-    for (const item of value) {
-      resolved.push(await resolveValue(item, secrets));
+export function resolveText(text: string, env: Env): string {
+  return text.replace(VARIABLE, (reference, expression: string) => {
+    const colon = expression.indexOf(":");
+    const prefix = colon === -1 ? "" : expression.slice(0, colon);
+    const name = colon === -1 ? expression : expression.slice(colon + 1);
+    if (prefix === "http") return reference;
+    if (prefix !== "" && prefix !== "env") {
+      throw new VariableResolutionError(reference, `Unsupported variable prefix '${prefix}:'. Only 'env:' and 'http:' are supported.`);
     }
-    return resolved;
-  }
+    const value = Object.hasOwn(env, name) ? env[name] : undefined;
+    if (value === undefined || value === "") throw new VariableResolutionError(reference, `'${name}' is not set`);
+    return value;
+  });
+}
+
+export function resolveValues(value: unknown, env: Env): unknown {
+  if (typeof value === "string") return resolveText(value, env);
+  if (Array.isArray(value)) return value.map((item) => resolveValues(item, env));
   if (typeof value === "object" && value !== null) {
-    const entries: [string, unknown][] = [];
-    for (const [key, item] of Object.entries(value)) {
-      entries.push([key, await resolveValue(item, secrets)]);
-    }
-    return Object.fromEntries(entries);
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolveValues(item, env)]));
   }
   return value;
 }
 
-async function resolveText(text: string, secrets: SecretPort): Promise<string> {
-  let resolved = "";
-  let cursor = 0;
-  for (const match of text.matchAll(VARIABLE)) {
-    const value = await resolveReference(match[0], match[1]!, secrets);
-    resolved += text.slice(cursor, match.index) + value;
-    cursor = match.index + match[0].length;
+function httpPlaces(value: unknown, path: string): string[] {
+  if (typeof value === "string") return value.includes("${http:") ? [path] : [];
+  if (Array.isArray(value)) return value.flatMap((item, index) => httpPlaces(item, `${path}[${index}]`));
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).flatMap(([key, item]) => httpPlaces(item, path === "" ? key : `${path}.${key}`));
   }
-  return resolved + text.slice(cursor);
+  return [];
 }
 
-async function resolveReference(
-  reference: string,
-  expression: string,
-  secrets: SecretPort,
-): Promise<string> {
-  const { prefix, name } = splitReference(expression);
+const allowsHttp = (item: unknown): boolean =>
+  typeof item === "object" && item !== null && HTTP_ALLOWED_INTERFACES.includes((item as { type?: string }).type ?? "");
 
-  if (prefix === "http") {
-    return reference;
+export function checkHttpVariables({ frontmatter, role, instructions }: ParsedAfm): void {
+  const interfaces = Array.isArray(frontmatter.interfaces) ? frontmatter.interfaces : [];
+  const checked = { ...frontmatter, interfaces: interfaces.map((item) => (allowsHttp(item) ? { ...item, prompt: undefined } : item)) };
+  const found = [role.includes("${http:") ? "role" : "", instructions.includes("${http:") ? "instructions" : "", ...httpPlaces(checked, "")];
+  const places = found.filter((place) => place !== "");
+  if (places.length > 0) {
+    throw new AfmValidationError(`http: variables are only supported in webhook and platform chat prompts, found in: ${places.join(", ")}`, "");
   }
-  if (prefix === "" || prefix === "env") {
-    const resolution = await secrets.resolve({ prefix, name, raw: reference });
-    if (resolution.status === "resolved") {
-      return resolution.value;
-    }
-    throw new VariableResolutionError(reference, resolution.reason);
-  }
-  throw new VariableResolutionError(
-    reference,
-    `Unsupported variable prefix '${prefix}:'. Only 'env:' and 'http:' are supported.`,
-  );
 }

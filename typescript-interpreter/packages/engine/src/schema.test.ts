@@ -100,155 +100,109 @@ describe("validateMetadata", () => {
 });
 
 describe("validateMetadata: authentication", () => {
-  describe("authentication required fields", () => {
-    it("rejects bearer without a token", () => {
-      expect(() =>
-        validateMetadata({ model: { authentication: { type: "bearer" } } }),
-      ).toThrow(/bearer/);
+  const authOf = (authentication: Record<string, unknown>) => ({ model: { authentication } });
+  const accepted = (authentication: Record<string, unknown>) => validateMetadata(authOf(authentication)).model?.authentication;
+
+  it("accepts a complete bearer, basic and api-key block", () => {
+    expect(accepted({ type: "bearer", token: "t" })?.type).toBe("bearer");
+    expect(accepted({ type: "basic", username: "u", password: "p" })?.type).toBe("basic");
+    expect(accepted({ type: "api-key", api_key: "k", header_name: "X-Key" })?.type).toBe("api-key");
+  });
+
+  it("reads the type without regard to case", () => {
+    expect(accepted({ type: "BEARER", token: "t" })?.type).toBe("BEARER");
+  });
+
+  it("counts a value that is still a variable as present", () => {
+    expect(() => validateMetadata(authOf({ type: "bearer", token: "${env:TOKEN}" }))).not.toThrow();
+  });
+
+  it.each([
+    ["bearer without a token", { type: "bearer" }, /type 'bearer' requires 'token'/],
+    ["bearer with an empty token", { type: "bearer", token: "" }, /requires 'token'/],
+    ["basic without a password", { type: "basic", username: "u" }, /requires 'password'/],
+    ["an api key without the key", { type: "api-key", header_name: "X" }, /requires 'api_key'/],
+    ["a field bearer does not support", { type: "bearer", token: "t", api_key: "x" }, /does not support 'api_key'/],
+    ["a typed field set to null", { type: "bearer", token: "t", header_name: null }, /received null/],
+    ["another field set to null", { type: "jwt", issuer: "i", audience: "a", signing_key: "k", key_id: null }, /must not set 'key_id' field to null/],
+    ["a type nobody defined", { type: "carrier-pigeon", address: "coop" }, /authentication type is not recognized/],
+    ["an extension type", { type: "x-aws-sigv4", region: "us-east-1" }, /not recognized/],
+    ["no type at all", {}, /./],
+  ])("rejects %s", (_label, authentication, message) => {
+    expect(() => validateMetadata(authOf(authentication))).toThrow(message);
+  });
+
+  it.each([["constructor"], ["__proto__"], ["toString"]])("rejects the type %s as not recognized, not with a crash", (type) => {
+    const check = () => validateMetadata(authOf({ type }));
+    expect(check).toThrow(AfmValidationError);
+    expect(check).toThrow(/not recognized/);
+  });
+
+  describe("jwt", () => {
+    const jwt = { type: "jwt", issuer: "i", audience: "a", signing_key: "${env:KEY}" };
+
+    it("accepts the required fields and the optional ones", () => {
+      expect(accepted(jwt)?.type).toBe("jwt");
+      expect(accepted({ ...jwt, audience: ["a", "b"], algorithm: "HS256", key_id: "k", subject: "s", custom_claims: { team: "x" }, expiry_seconds: 60 })?.type).toBe("jwt");
     });
 
-    it("accepts an implementation-specific authentication type", () => {
-      const md = validateMetadata({ model: { authentication: { type: "carrier-pigeon", address: "coop" } } });
-      expect(md.model?.authentication?.type).toBe("carrier-pigeon");
+    it("requires issuer, audience and signing_key", () => {
+      expect(() => validateMetadata(authOf({ type: "jwt" }))).toThrow(/requires 'issuer', 'audience', 'signing_key'/);
     });
 
-    it("accepts an x-* extension type with arbitrary fields, unvalidated", () => {
-      const md = validateMetadata({
-        model: { authentication: { type: "x-aws-sigv4", region: "us-east-1", service: "bedrock" } },
-      });
-      expect(md.model?.authentication?.type).toBe("x-aws-sigv4");
+    it("rejects a field jwt does not support", () => {
+      expect(() => validateMetadata(authOf({ ...jwt, token: "t" }))).toThrow(/does not support 'token'/);
+    });
+  });
+
+  describe("oauth2", () => {
+    const credentials = { type: "oauth2", grant_type: "client_credentials", token_url: "https://auth.example.com/token", client_id: "i", client_secret: "s" };
+    const jwtBearer = {
+      type: "oauth2",
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      token_url: "https://auth.example.com/token",
+      client_id: "i",
+      client_secret: "s",
+      assertion_signing: { issuer: "i", audience: "a", signing_key: "k" },
+    };
+
+    it("accepts the client credentials grant and the jwt-bearer grant", () => {
+      expect(accepted(credentials)?.type).toBe("oauth2");
+      expect(accepted({ ...credentials, scopes: ["read"], token_endpoint_auth_method: "client_secret_post", resource: "https://r", extra_params: { a: "b" } })?.type).toBe("oauth2");
+      expect(accepted(jwtBearer)?.type).toBe("oauth2");
+      expect(accepted({ ...jwtBearer, client_id: undefined, client_secret: undefined, token_endpoint_auth_method: "none" })?.type).toBe("oauth2");
     });
 
-    it("rejects a field bearer doesn't support", () => {
-      expect(() =>
-        validateMetadata({ model: { authentication: { type: "bearer", token: "t", api_key: "x" } } }),
-      ).toThrow(/does not support/);
+    it("requires a grant_type", () => {
+      expect(() => validateMetadata(authOf({ type: "oauth2" }))).toThrow(/requires a 'grant_type'/);
     });
 
-    describe("jwt", () => {
-      it("requires issuer and signing_key", () => {
-        expect(() => validateMetadata({ model: { authentication: { type: "jwt" } } })).toThrow(
-          /requires 'issuer', 'signing_key'/,
-        );
-      });
-
-      it("accepts a minimal valid jwt block (audience/algorithm optional)", () => {
-        const md = validateMetadata({
-          model: { authentication: { type: "jwt", issuer: "afm-agent", signing_key: "${env:JWT_PRIVATE_KEY}" } },
-        });
-        expect(md.model?.authentication?.type).toBe("jwt");
-      });
-
-      it("rejects algorithm 'none'", () => {
-        expect(() =>
-          validateMetadata({
-            model: { authentication: { type: "jwt", issuer: "i", signing_key: "k", algorithm: "none" } },
-          }),
-        ).toThrow(/'algorithm' 'none' is not allowed/);
-      });
-
-      it("rejects an unsupported algorithm", () => {
-        expect(() =>
-          validateMetadata({
-            model: { authentication: { type: "jwt", issuer: "i", signing_key: "k", algorithm: "ES256" } },
-          }),
-        ).toThrow(/jwt 'algorithm' is not supported/);
-      });
+    it.each(["authorization_code", "password", "refresh_token", "implicit", "constructor", "__proto__"])("refuses the %s grant", (grant) => {
+      const check = () => validateMetadata(authOf({ type: "oauth2", grant_type: grant }));
+      expect(check).toThrow(AfmValidationError);
+      expect(check).toThrow(/requires a 'grant_type' of client_credentials or/);
     });
 
-    describe("oauth2", () => {
-      it("requires grant_type", () => {
-        expect(() => validateMetadata({ model: { authentication: { type: "oauth2" } } })).toThrow(
-          /requires 'grant_type'/,
-        );
-      });
+    it("requires the token address and the client credentials", () => {
+      expect(() => validateMetadata(authOf({ type: "oauth2", grant_type: "client_credentials" }))).toThrow(/requires 'token_url'/);
+      expect(() => validateMetadata(authOf({ ...credentials, client_secret: undefined }))).toThrow(/requires 'client_id' and 'client_secret'/);
+    });
 
-      it("rejects an unsupported grant_type", () => {
-        expect(() =>
-          validateMetadata({ model: { authentication: { type: "oauth2", grant_type: "implicit" } } }),
-        ).toThrow(/oauth2 'grant_type' is not supported/);
-      });
+    it("rejects a field the grant does not support", () => {
+      expect(() => validateMetadata(authOf({ ...credentials, assertion_signing: { issuer: "i", audience: "a", signing_key: "k" } }))).toThrow(/does not support 'assertion_signing'/);
+      expect(() => validateMetadata(authOf({ ...credentials, authorize_url: "https://a" }))).toThrow(/does not support 'authorize_url'/);
+    });
 
-      it("requires the authorization_code fields", () => {
-        expect(() =>
-          validateMetadata({ model: { authentication: { type: "oauth2", grant_type: "authorization_code" } } }),
-        ).toThrow(/requires 'authorize_url', 'token_url', 'client_id'/);
-      });
+    it("allows no client authentication only for the jwt-bearer grant", () => {
+      expect(() => validateMetadata(authOf({ ...credentials, client_id: "i", client_secret: undefined, token_endpoint_auth_method: "none" }))).toThrow(/only for the jwt-bearer grant/);
+      expect(() => validateMetadata(authOf({ ...jwtBearer, token_endpoint_auth_method: "none" }))).toThrow(/must not set 'client_secret'/);
+    });
 
-      it.each(["client_credentials", "password", "refresh_token", "jwt_bearer"])("refuses the %s grant", (grant) => {
-        expect(() => validateMetadata({ model: { authentication: { type: "oauth2", grant_type: grant } } })).toThrow(
-          /oauth2 'grant_type' is not supported. Supported grant types: authorization_code/,
-        );
-      });
-
-      it("rejects a field the grant doesn't support", () => {
-        const authentication = {
-          type: "oauth2",
-          grant_type: "authorization_code",
-          authorize_url: "https://auth.example.com/authorize",
-          token_url: "https://auth.example.com/token",
-          client_id: "i",
-          client_secret: "s",
-        };
-        expect(() => validateMetadata({ model: { authentication } })).toThrow(/does not support 'client_secret'/);
-      });
-
-      it.each([["constructor"], ["__proto__"], ["toString"], ["hasOwnProperty"]])("rejects the grant_type %s as unsupported, not with a crash", (grant) => {
-        const check = () => validateMetadata({ model: { authentication: { type: "oauth2", grant_type: grant } } });
-        expect(check).toThrow(AfmValidationError);
-        expect(check).toThrow(/grant_type' is not supported/);
-      });
-
-      it.each([
-        ["token_url", "not-a-url"],
-        ["token_url", "ftp://auth.example.com/token"],
-        ["authorize_url", "/relative/authorize"],
-      ])("rejects a %s that is not an http or https address: %s", (field, value) => {
-        const authentication = {
-          type: "oauth2",
-          grant_type: "authorization_code",
-          authorize_url: "https://auth.example.com/authorize",
-          token_url: "https://auth.example.com/token",
-          client_id: "c",
-          [field]: value,
-        };
-        expect(() => validateMetadata({ model: { authentication } })).toThrow(new RegExp(`authentication.${field} must be`));
-      });
-
-      it("accepts a sign-in address that is still a variable", () => {
-        const authentication = { type: "oauth2", grant_type: "authorization_code", authorize_url: "${env:AUTHORIZE_URL}", token_url: "${env:TOKEN_URL}", client_id: "i" };
-        expect(() => validateMetadata({ model: { authentication } })).not.toThrow();
-      });
-
-      it("accepts the browser-runtime authorization_code grant without a client_secret", () => {
-        const md = validateMetadata({
-          model: {
-            authentication: {
-              type: "oauth2",
-              grant_type: "authorization_code",
-              authorize_url: "https://auth.example.com/authorize",
-              token_url: "https://auth.example.com/token",
-              client_id: "${env:OAUTH_CLIENT_ID}",
-            },
-          },
-        });
-        expect(md.model?.authentication?.type).toBe("oauth2");
-      });
-
-      it("authorization_code requires authorize_url", () => {
-        expect(() =>
-          validateMetadata({
-            model: {
-              authentication: {
-                type: "oauth2",
-                grant_type: "authorization_code",
-                token_url: "https://auth.example.com/token",
-                client_id: "id",
-              },
-            },
-          }),
-        ).toThrow(/requires 'authorize_url'/);
-      });
+    it("requires a closed assertion_signing object for the jwt-bearer grant", () => {
+      expect(() => validateMetadata(authOf({ ...jwtBearer, assertion_signing: undefined }))).toThrow(/requires 'assertion_signing'/);
+      expect(() => validateMetadata(authOf({ ...jwtBearer, assertion_signing: "key" }))).toThrow(/must be an object/);
+      expect(() => validateMetadata(authOf({ ...jwtBearer, assertion_signing: { issuer: "i", audience: "a" } }))).toThrow(/requires 'signing_key'/);
+      expect(() => validateMetadata(authOf({ ...jwtBearer, assertion_signing: { issuer: "i", audience: "a", signing_key: "k", extra: 1 } }))).toThrow(/does not support 'extra'/);
     });
   });
 });
