@@ -18,7 +18,7 @@
 import { type AgentMetadata, type Env, processEnv } from "@afm/engine";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { LanguageModel } from "ai";
+import { defaultSettingsMiddleware, type LanguageModel, wrapLanguageModel } from "ai";
 
 export interface ModelOptions {
   env?: Env;
@@ -55,6 +55,11 @@ export function createModel(model: Model = {}, { env = processEnv(), fetch }: Mo
   if (defaults === undefined) throw new Error(`The model provider '${provider}' is not yet supported by this interpreter. Use openai or anthropic.`);
   const apiKey = apiKeyOf(model, defaults.keyVariable, env);
   const name = model.name ?? defaults.name;
-  if (provider === "openai") return createOpenAI({ apiKey, baseURL: model.url, fetch }).chat(name);
+  if (provider === "openai") {
+    const openai = createOpenAI({ apiKey, baseURL: model.url, fetch });
+    if (model.url !== undefined) return openai.chat(name);
+    const middleware = defaultSettingsMiddleware({ settings: { providerOptions: { openai: { store: false } } } });
+    return wrapLanguageModel({ model: openai(name), middleware });
+  }
   return createAnthropic({ apiKey, baseURL: model.url, fetch })(name);
 }
