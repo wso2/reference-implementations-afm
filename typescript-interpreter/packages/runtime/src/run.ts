@@ -14,20 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
+
 import { describeError } from "@afm/engine";
 import { type FinishReason, type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from "ai";
 
 export const DEFAULT_MAX_ITERATIONS = 10;
 
+const MAX_RETRIES = 4;
+
 export interface ToolOutput {
   ok: boolean;
   content: string;
-}
-
-export interface Budget {
-  maxIterations: number;
-  maxTokens: number;
-  maxWallClockMs: number;
 }
 
 export interface AgentTurnInput {
@@ -35,68 +32,50 @@ export interface AgentTurnInput {
   messages: ModelMessage[];
   model: LanguageModel;
   tools: ToolSet;
-  budget?: Partial<Budget>;
+  maxIterations?: number;
   signal?: AbortSignal;
 }
 
-export type TurnFinishReason = Exclude<FinishReason, "tool-calls"> | "max-iterations" | "budget" | "aborted";
+export type TurnFinishReason = Exclude<FinishReason, "tool-calls"> | "max-iterations" | "aborted";
 
 export type LoopEvent =
   | { type: "text-delta"; text: string }
   | { type: "tool-call"; id: string; name: string; args: unknown }
   | { type: "tool-result"; id: string; name: string; ok: boolean; content: string }
+  | { type: "usage"; totalTokens: number; inputTokens: number; outputTokens: number; iteration: number; maxIterations: number }
   | { type: "turn-checkpoint"; messages: ModelMessage[] }
-  | {
-      type: "budget-update";
-      totalTokens: number;
-      inputTokens: number;
-      outputTokens: number;
-      maxTokens?: number;
-      iteration: number;
-      maxIterations: number;
-      elapsedMs: number;
-      maxWallClockMs?: number;
-    }
   | { type: "turn-complete"; messages: ModelMessage[] }
   | { type: "finish"; reason: TurnFinishReason };
-
-const MAX_RETRIES = 4;
 
 const hasContent = (message: ModelMessage): boolean =>
   message.role !== "assistant" || (typeof message.content === "string" ? message.content !== "" : message.content.length > 0);
 
-export async function* runAgentTurn(input: AgentTurnInput): AsyncIterable<LoopEvent> {
-  if (input.signal?.aborted) {
-    yield { type: "turn-complete", messages: input.messages };
+export async function* runAgentTurn({ system, messages, model, tools, maxIterations = DEFAULT_MAX_ITERATIONS, signal }: AgentTurnInput): AsyncIterable<LoopEvent> {
+  if (signal?.aborted) {
+    yield { type: "turn-complete", messages };
     yield { type: "finish", reason: "aborted" };
     return;
   }
 
-  const { maxIterations = DEFAULT_MAX_ITERATIONS, maxTokens, maxWallClockMs } = input.budget ?? {};
-  const startedAt = Date.now();
-  const timeout = maxWallClockMs === undefined ? undefined : AbortSignal.timeout(maxWallClockMs);
   const stop = new AbortController();
-  for (const signal of [input.signal, timeout]) signal?.addEventListener("abort", () => stop.abort(), { once: true });
+  signal?.addEventListener("abort", () => stop.abort(), { once: true });
 
-  let saved = input.messages;
+  let saved = messages;
   let partial = "";
   let tokens = { total: 0, input: 0, output: 0 };
   let steps = 0;
   let last = "other";
 
   const result = streamText({
-    model: input.model,
-    system: input.system,
-    messages: input.messages,
-    tools: input.tools,
+    model,
+    system,
+    messages,
+    tools,
     abortSignal: stop.signal,
     maxRetries: MAX_RETRIES,
-    stopWhen: [
-      stepCountIs(maxIterations),
-      ({ steps }) => maxTokens !== undefined && steps.reduce((sum, step) => sum + (step.usage.totalTokens ?? 0), 0) >= maxTokens,
-    ],
+    stopWhen: stepCountIs(maxIterations),
     onStepFinish: (step) => {
-      saved = [...input.messages, ...step.response.messages.filter(hasContent)];
+      saved = [...messages, ...step.response.messages.filter(hasContent)];
     },
     onError: () => {},
   });
@@ -116,11 +95,9 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncIterable<LoopEv
           yield { type: "tool-result", id: part.toolCallId, name: part.toolName, ok, content };
           break;
         }
-        case "tool-error": {
-          const content = `Tool '${part.toolName}' failed: ${describeError(part.error)}`;
-          yield { type: "tool-result", id: part.toolCallId, name: part.toolName, ok: false, content };
+        case "tool-error":
+          yield { type: "tool-result", id: part.toolCallId, name: part.toolName, ok: false, content: `Tool '${part.toolName}' failed: ${describeError(part.error)}` };
           break;
-        }
         case "finish-step":
           partial = "";
           steps += 1;
@@ -130,17 +107,7 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncIterable<LoopEv
             output: tokens.output + (part.usage.outputTokens ?? 0),
           };
           if (part.finishReason === "tool-calls") yield { type: "turn-checkpoint", messages: saved };
-          yield {
-            type: "budget-update",
-            totalTokens: tokens.total,
-            inputTokens: tokens.input,
-            outputTokens: tokens.output,
-            maxTokens,
-            iteration: steps,
-            maxIterations,
-            elapsedMs: Date.now() - startedAt,
-            maxWallClockMs,
-          };
+          yield { type: "usage", totalTokens: tokens.total, inputTokens: tokens.input, outputTokens: tokens.output, iteration: steps, maxIterations };
           break;
         case "error":
           throw part.error;
@@ -150,17 +117,9 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncIterable<LoopEv
       }
     }
 
-    const messages: ModelMessage[] = partial === "" ? saved : [...saved, { role: "assistant", content: partial }];
-    yield { type: "turn-complete", messages };
-    yield { type: "finish", reason: finishReason() };
+    yield { type: "turn-complete", messages: partial === "" ? saved : [...saved, { role: "assistant", content: partial }] };
+    yield { type: "finish", reason: signal?.aborted ? "aborted" : last === "tool-calls" ? "max-iterations" : (last as TurnFinishReason) };
   } finally {
     stop.abort();
-  }
-
-  function finishReason(): TurnFinishReason {
-    if (input.signal?.aborted) return "aborted";
-    if (timeout?.aborted) return "budget";
-    if (last !== "tool-calls") return last as TurnFinishReason;
-    return maxTokens !== undefined && tokens.total >= maxTokens ? "budget" : "max-iterations";
   }
 }

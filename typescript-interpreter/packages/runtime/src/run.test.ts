@@ -71,21 +71,20 @@ const completeOf = (events: LoopEvent[]) => events.find((event) => event.type ==
 describe("a turn without tools", () => {
   it("streams the text, then completes with the whole conversation", async () => {
     const events = await run(modelOf(text("hello")));
-    expect(types(events)).toEqual(["text-delta", "budget-update", "turn-complete", "finish"]);
+    expect(types(events)).toEqual(["text-delta", "usage", "turn-complete", "finish"]);
     expect(finishOf(events)).toEqual({ type: "finish", reason: "stop" });
     expect(completeOf(events)).toMatchObject({ messages: [user, { role: "assistant" }] });
   });
 
   it("reports tokens and the step number", async () => {
-    const events = await run(modelOf(text("hello")), { budget: { maxTokens: 1000, maxWallClockMs: 60_000 } });
-    expect(events.find((event) => event.type === "budget-update")).toMatchObject({
+    const events = await run(modelOf(text("hello")));
+    expect(events.find((event) => event.type === "usage")).toEqual({
+      type: "usage",
       totalTokens: 15,
       inputTokens: 10,
       outputTokens: 5,
-      maxTokens: 1000,
       iteration: 1,
       maxIterations: 10,
-      maxWallClockMs: 60_000,
     });
   });
 
@@ -109,9 +108,9 @@ describe("a turn with tools", () => {
       "tool-call",
       "tool-result",
       "turn-checkpoint",
-      "budget-update",
+      "usage",
       "text-delta",
-      "budget-update",
+      "usage",
       "turn-complete",
       "finish",
     ]);
@@ -152,7 +151,7 @@ describe("a turn with tools", () => {
   });
 });
 
-describe("the limits of a turn", () => {
+describe("the step limit of a turn", () => {
   const endless = modelOf(calls(call("c", "echo")));
   const tools: ToolSet = { echo };
 
@@ -164,27 +163,9 @@ describe("the limits of a turn", () => {
   });
 
   it("uses the step limit from the agent file", async () => {
-    const events = await run(endless, { tools, budget: { maxIterations: 2 } });
+    const events = await run(endless, { tools, maxIterations: 2 });
     expect(endless.doStreamCalls).toHaveLength(2);
     expect(finishOf(events)).toEqual({ type: "finish", reason: "max-iterations" });
-  });
-
-  it("stops when the token budget is used up", async () => {
-    const model = modelOf(calls(call("c", "echo")));
-    const events = await run(model, { tools, budget: { maxTokens: 30 } });
-    expect(model.doStreamCalls).toHaveLength(2);
-    expect(finishOf(events)).toEqual({ type: "finish", reason: "budget" });
-  });
-
-  it("stops when the time is up", async () => {
-    const slow = new MockLanguageModelV3({
-      doStream: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        return { stream: simulateReadableStream({ chunks: calls(call("c", "echo")) }) } as never;
-      },
-    });
-    const events = await run(slow, { tools, budget: { maxWallClockMs: 30 } });
-    expect(finishOf(events)).toEqual({ type: "finish", reason: "budget" });
   });
 });
 
