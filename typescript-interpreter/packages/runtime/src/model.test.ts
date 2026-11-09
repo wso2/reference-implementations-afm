@@ -19,7 +19,7 @@ import { generateText } from "ai";
 import { describe, expect, it } from "vitest";
 import { createModel, type ModelOptions } from "./model";
 
-type Seen = { url: string; headers: Headers; body: { model?: string; store?: boolean } };
+type Seen = { url: string; headers: Headers; body: { model?: string } };
 
 async function request(model: Parameters<typeof createModel>[0], options: ModelOptions = {}): Promise<Seen> {
   const seen: Seen[] = [];
@@ -34,10 +34,9 @@ async function request(model: Parameters<typeof createModel>[0], options: ModelO
 const keyed = (provider: string, extra: object = {}) => ({ provider, authentication: { type: "api-key", api_key: "k-1" }, ...extra });
 
 describe("createModel", () => {
-  it("calls the OpenAI Responses API, which the newest models need for tools, with the key, the default model and nothing stored", async () => {
+  it("calls the OpenAI Chat Completions API, as the Python and Ballerina interpreters do, with the key and the default model", async () => {
     const seen = await request(keyed("openai"));
-    expect(seen.url).toBe("https://api.openai.com/v1/responses");
-    expect(seen.body.store).toBe(false);
+    expect(seen.url).toBe("https://api.openai.com/v1/chat/completions");
     expect(seen.headers.get("authorization")).toBe("Bearer k-1");
     expect(seen.body.model).toBe("gpt-4o");
   });
@@ -59,7 +58,7 @@ describe("createModel", () => {
     expect((await request(keyed("openai", { name: "gpt-4o-mini" }))).body.model).toBe("gpt-4o-mini");
   });
 
-  it("treats the url as the base address of the provider's API, and talks Chat Completions to a custom OpenAI address", async () => {
+  it("treats the url as the base address of the provider's API, for OpenAI and for Anthropic", async () => {
     const seen = await request(keyed("openai", { name: "llama3", url: "http://localhost:11434/v1" }));
     expect(seen.url).toBe("http://localhost:11434/v1/chat/completions");
     expect((await request(keyed("anthropic", { url: "https://llm.example.com/v1" }))).url).toBe("https://llm.example.com/v1/messages");
