@@ -15,5 +15,6 @@ FROM node:24-bookworm-slim
 COPY --from=build /app/dist/main.js /app/main.js
 
 USER node
+EXPOSE 8085
 WORKDIR /agent
 ENTRYPOINT ["node", "/app/main.js"]
