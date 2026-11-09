@@ -1,0 +1,174 @@
+name: Release TypeScript
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to release from'
+        required: false
+        default: 'main'
+        type: string
+
+concurrency:
+  group: release-typescript-interpreter
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_version: ${{ steps.version.outputs.RELEASE_VERSION }}
+      next_version: ${{ steps.version.outputs.NEXT_VERSION }}
+      tag: ${{ steps.version.outputs.TAG }}
+    steps:
+      - name: Validate branch format
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          # Validate branch format (alphanumeric, dash, underscore, dot, slash)
+          if [[ ! "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "::error::Invalid branch name: $BRANCH"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Read and validate version
+        id: version
+        run: |
+          VERSION_FILE="typescript-interpreter/package.json"
+
+          if [ ! -f "$VERSION_FILE" ]; then
+            echo "::error::Version file not found: $VERSION_FILE"
+            exit 1
+          fi
+
+          RELEASE_VERSION=$(node -p "require('./$VERSION_FILE').version")
+
+          # Validate version format
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version in $VERSION_FILE must be in format X.Y.Z, got: $RELEASE_VERSION"
+            exit 1
+          fi
+
+          # Parse for next patch bump
+          MAJOR=$(echo "$RELEASE_VERSION" | cut -d. -f1)
+          MINOR=$(echo "$RELEASE_VERSION" | cut -d. -f2)
+          PATCH=$(echo "$RELEASE_VERSION" | cut -d. -f3)
+          NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          TAG="typescript-interpreter-v$RELEASE_VERSION"
+
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> $GITHUB_OUTPUT
+          echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_OUTPUT
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "Releasing typescript-interpreter $RELEASE_VERSION (tag: $TAG), next will be $NEXT_VERSION"
+
+      - name: Check tag doesn't already exist
+        env:
+          TAG: ${{ steps.version.outputs.TAG }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists."
+            exit 1
+          fi
+
+      - name: Check release branch doesn't already exist
+        env:
+          RELEASE_BRANCH: release-typescript-interpreter-${{ steps.version.outputs.RELEASE_VERSION }}
+        run: |
+          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+            echo "::error::Release branch $RELEASE_BRANCH already exists."
+            exit 1
+          fi
+
+  test:
+    needs: validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: typescript-interpreter
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: typescript-interpreter/package.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: typescript-interpreter/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck, test and build
+        run: |
+          pnpm run check
+          pnpm run build
+
+  docker:
+    needs: [validate, test]
+    uses: ./.github/workflows/release-docker.yml
+    with:
+      context: typescript-interpreter
+      image_name: afm-typescript-interpreter
+      version: ${{ needs.validate.outputs.release_version }}
+      branch: ${{ inputs.branch }}
+      image_title: AFM TypeScript Interpreter
+    permissions:
+      packages: write
+      security-events: write
+
+  finalize:
+    needs: [validate, docker]
+    uses: ./.github/workflows/release-finalize.yml
+    with:
+      tag: ${{ needs.validate.outputs.tag }}
+      implementation: typescript-interpreter
+      package: typescript-interpreter
+      version: ${{ needs.validate.outputs.release_version }}
+      branch: ${{ inputs.branch }}
+      is_rerelease: false
+    permissions:
+      contents: write
+
+  bump-version:
+    needs: [validate, finalize]
+    if: false  # Disabled: direct push blocked by branch protection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Bump version to next
+        env:
+          BRANCH: ${{ inputs.branch }}
+          NEXT_VERSION: ${{ needs.validate.outputs.next_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull origin "$BRANCH" --rebase
+
+          VERSION_FILE="typescript-interpreter/package.json"
+          sed -i "s/^  \"version\": \".*\",/  \"version\": \"$NEXT_VERSION\",/" "$VERSION_FILE"
+          git add "$VERSION_FILE"
+          git commit -m "Bump typescript-interpreter version to $NEXT_VERSION"
+          git push origin "$BRANCH"

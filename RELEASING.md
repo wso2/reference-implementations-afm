@@ -9,6 +9,7 @@ Releases are triggered manually via `workflow_dispatch`.
 |------|---------|
 | `release-python.yml` | Release Python packages (LangChain backend, core libraries) to PyPI + Docker |
 | `release-ballerina.yml` | Release Ballerina interpreter to Docker |
+| `release-typescript.yml` | Release TypeScript interpreter to Docker |
 | `release-docker.yml` | Shared: build, push, and scan Docker images |
 | `release-finalize.yml` | Shared: create tag, release branch, and GitHub Release |
 
@@ -118,6 +119,69 @@ git push origin ballerina-interpreter-v0.1.x
 2. Builds, tags `ballerina-interpreter-v0.1.1`
 3. On `ballerina-interpreter-v0.1.x`: bumps to `0.1.2`
 
+## TypeScript
+
+Released via `release-typescript.yml`.
+
+- **Docker:** `ghcr.io/wso2/afm-typescript-interpreter`
+
+### Workflow Inputs
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `branch` | string | no | `main` | Branch to release from |
+
+### Normal Release
+
+**Example:** releasing `0.1.0` from `main`.
+
+**Before:** `typescript-interpreter/package.json` version = `0.1.0`
+
+**Trigger:** Run `release-typescript.yml` → select `branch`.
+
+What happens:
+
+1. Reads version from `typescript-interpreter/package.json`
+2. Validates tag and release branch don't already exist
+3. Runs `pnpm run check` and `pnpm run build`
+4. Builds and pushes Docker image to
+   `ghcr.io/wso2/afm-typescript-interpreter:v0.1.0` and `:latest`
+5. Creates tag `typescript-interpreter-v0.1.0`
+6. Creates release branch and GitHub Release
+7. Bumps `typescript-interpreter/package.json` version to `0.1.1`
+
+> **Note:** The `:latest` Docker tag is only updated when releasing from `main` or `dev`.
+
+**After:**
+- `main` branch: `typescript-interpreter/package.json` version = `0.1.1`
+- Branch: `release-typescript-interpreter-0.1.0`
+- Tag: `typescript-interpreter-v0.1.0`
+- Docker: `ghcr.io/wso2/afm-typescript-interpreter:v0.1.0`
+
+### Patch Release
+
+**Scenario:** `main` is at `0.2.1`, need to patch `0.1.x`.
+
+**Manual prep:**
+
+```bash
+git checkout -b typescript-interpreter-v0.1.x typescript-interpreter-v0.1.0
+# package.json version = 0.1.0 (from tag)
+# Edit the version to 0.1.1
+sed -i 's/^  "version": ".*",/  "version": "0.1.1",/' typescript-interpreter/package.json
+git add .
+git commit -m "Bump version"
+git push origin typescript-interpreter-v0.1.x
+```
+
+**Trigger:** Run `release-typescript.yml` workflow with:
+- branch: `typescript-interpreter-v0.1.x`
+
+**What happens:**
+1. Creates branch `release-typescript-interpreter-0.1.1`
+2. Builds, tags `typescript-interpreter-v0.1.1`
+3. On `typescript-interpreter-v0.1.x`: bumps to `0.1.2`
+
 ---
 
 ## Summary
@@ -127,4 +191,5 @@ git push origin ballerina-interpreter-v0.1.x
 | Release `afm-core` | `release-python.yml` | PyPI (`afm-core` + `afm-cli`) | — | Yes |
 | Release `afm-langchain` | `release-python.yml` | PyPI (`afm-langchain`) | `afm-langchain-interpreter` | Yes |
 | Release Ballerina | `release-ballerina.yml` | — | `afm-ballerina-interpreter` | Yes |
+| Release TypeScript | `release-typescript.yml` | — | `afm-typescript-interpreter` | Yes |
 | Patch release | Same as above (from patch branch) | Same as above | Same as above | Yes |
