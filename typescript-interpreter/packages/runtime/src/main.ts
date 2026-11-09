@@ -14,28 +14,67 @@
 // specific language governing permissions and limitations
 // under the License.
 
-
-import { loadAfm } from "@afm/engine";
+import { agentDetails, loadAfm } from "@afm/engine";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createAgent } from "./agent";
-import { checkConsoleChat, consoleChat } from "./console-chat";
+import { consoleChat } from "./console-chat";
+import { chooseInterfaces } from "./interfaces";
+import { serve } from "./serve";
 
-async function main(path: string | undefined): Promise<void> {
-  if (path === undefined) throw new Error("Usage: node main.js <agent file>.afm.md");
+const USAGE = "Usage: node main.js <agent file>.afm.md [--port <port>] [--host <host>]";
+const DEFAULT_PORT = 8085;
+
+function parseArguments(args: string[]): { file: string; port: number; host: string } {
+  let file: string | undefined;
+  let port = DEFAULT_PORT;
+  let host = "0.0.0.0";
+  for (let at = 0; at < args.length; at += 1) {
+    const arg = args[at]!;
+    if (arg === "--port" || arg === "-p") {
+      port = Number(args[(at += 1)]);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("The port must be a whole number from 0 to 65535.");
+    } else if (arg === "--host" || arg === "-H") {
+      host = args[(at += 1)] ?? "";
+      if (host === "") throw new Error("The --host option needs a host name or address.");
+    } else if (arg.startsWith("-") || file !== undefined) {
+      throw new Error(USAGE);
+    } else {
+      file = arg;
+    }
+  }
+  if (file === undefined) throw new Error(USAGE);
+  return { file, port, host };
+}
+
+async function main(args: string[]): Promise<void> {
+  const { file: path, port, host } = parseArguments(args);
   const file = resolve(path);
   const loaded = loadAfm(await readFile(file, "utf-8"));
   for (const warning of loaded.warnings) console.warn(`Warning: ${warning}`);
-  checkConsoleChat(loaded.metadata);
+  const chosen = chooseInterfaces(loaded.metadata);
   const agent = await createAgent(loaded, dirname(file));
+  const stopped = new Promise<void>((done) => {
+    for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => done());
+  });
+  let serving: Awaited<ReturnType<typeof serve>> | undefined;
   try {
-    await consoleChat(agent, process.stdin, process.stdout);
+    if (chosen.webchat !== undefined || chosen.webhook !== undefined) {
+      serving = await serve(agent, agentDetails(loaded, file), chosen, { host, port });
+      console.error(`Serving on http://${host}:${serving.port}`);
+    }
+    if (chosen.console !== undefined) {
+      const quit = await Promise.race([consoleChat(agent, process.stdin, process.stdout, chosen.console.signature), stopped.then(() => true)]);
+      if (quit || serving === undefined) return;
+    }
+    await stopped;
   } finally {
+    await serving?.close();
     await agent.close();
   }
 }
 
-main(process.argv[2]).then(
+main(process.argv.slice(2)).then(
   () => process.exit(0),
   (error: unknown) => {
     console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

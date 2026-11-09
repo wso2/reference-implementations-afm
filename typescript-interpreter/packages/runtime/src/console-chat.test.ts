@@ -15,76 +15,25 @@
 // under the License.
 
 
+import { type Signature } from "@afm/engine";
 import { PassThrough } from "node:stream";
 import { simulateReadableStream, tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { Agent } from "./agent";
-import { checkConsoleChat, consoleChat } from "./console-chat";
+import { consoleChat } from "./console-chat";
+import { agentFinishing, agentSaying } from "./test-fixtures/agents";
 
-const metadata = (interfaces?: unknown[]) => ({ interfaces }) as never;
-
-describe("checkConsoleChat", () => {
-  it("accepts a file with no interfaces, and one with console chat", () => {
-    expect(() => checkConsoleChat(metadata())).not.toThrow();
-    expect(() => checkConsoleChat(metadata([{ type: "consolechat", signature: { input: { type: "string" }, output: { type: "string" } } }]))).not.toThrow();
-  });
-
-  it.each(["webchat", "webhook", "platformchat"])("refuses the %s interface, saying it is not yet supported", (type) => {
-    expect(() => checkConsoleChat(metadata([{ type }]))).toThrow(`The '${type}' interface is not yet supported by this interpreter.`);
-  });
-
-  it("refuses structured input or output", () => {
-    const structured = { type: "consolechat", signature: { input: { type: "object" }, output: { type: "string" } } };
-    expect(() => checkConsoleChat(metadata([structured]))).toThrow(/Structured input or output is not yet supported/);
-  });
-});
-
-function agentSaying(...replies: (string | Error)[]): { agent: Agent; model: MockLanguageModelV3 } {
-  let next = 0;
-  const model = new MockLanguageModelV3({
-    doStream: async () => {
-      const reply = replies[next++]!;
-      if (reply instanceof Error) throw reply;
-      const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
-      const chunks = [
-        { type: "text-start", id: "t" },
-        { type: "text-delta", id: "t", delta: reply },
-        { type: "text-end", id: "t" },
-        { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
-      ];
-      return { stream: simulateReadableStream({ chunks }) } as never;
-    },
-  });
-  return { agent: { system: "s", model, tools: {}, close: async () => undefined }, model };
-}
-
-async function chat(agent: Agent, lines: string): Promise<string> {
+async function chat(agent: Agent, lines: string, signature?: Signature): Promise<string> {
   const input = new PassThrough();
   const output = new PassThrough();
   let text = "";
   output.on("data", (data: Buffer) => (text += data.toString()));
-  const done = consoleChat(agent, input, output);
+  const done = consoleChat(agent, input, output, signature);
   input.end(lines);
   await done;
   return text;
-}
-
-function agentFinishing(unified: string, tools = {}): Agent {
-  const model = new MockLanguageModelV3({
-    doStream: async () => {
-      const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
-      const chunks = [
-        { type: "text-start", id: "t" },
-        { type: "text-delta", id: "t", delta: "Partial" },
-        { type: "text-end", id: "t" },
-        { type: "finish", finishReason: { unified, raw: unified }, usage },
-      ];
-      return { stream: simulateReadableStream({ chunks }) } as never;
-    },
-  });
-  return { system: "s", model, tools, close: async () => undefined };
 }
 
 describe("consoleChat", () => {
@@ -122,6 +71,19 @@ describe("consoleChat", () => {
     expect(await chat(agentSaying("Hi").agent, "hello\nquit\n")).toBe("> Hi\n> ");
   });
 
+  it("tells its caller whether the person asked to leave, or the input just ended", async () => {
+    const { agent } = agentSaying("Hi");
+    const run = async (lines: string): Promise<boolean> => {
+      const input = new PassThrough();
+      const done = consoleChat(agent, input, new PassThrough());
+      input.end(lines);
+      return done;
+    };
+    expect(await run("exit\n")).toBe(true);
+    expect(await run("quit\n")).toBe(true);
+    expect(await run("")).toBe(false);
+  });
+
   it("ignores empty lines and ends at the end of input", async () => {
     const { agent, model } = agentSaying("Only once");
     expect(await chat(agent, "\n  \nhello\n")).toBe("> > > Only once\n> ");
@@ -142,5 +104,44 @@ describe("consoleChat", () => {
     const text = await chat(agent, "a\nb\nexit\n");
     expect(text).toContain("[ERROR] model is down");
     expect(text).toContain("back");
+  });
+});
+
+describe("consoleChat with a structured signature", () => {
+  const fenced = (value: unknown) => "```json\n" + JSON.stringify(value) + "\n```";
+  const forecast = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] };
+  const weather = { type: "object", properties: { city: { type: "string" } }, required: ["city"] };
+
+  it("prints structured output as indented JSON instead of the text the model wrote", async () => {
+    const { agent } = agentSaying(`Sure!\n${fenced({ summary: "sunny" })}`);
+    expect(await chat(agent, "weather?\nexit\n", { input: { type: "string" }, output: forecast })).toBe('> {\n  "summary": "sunny"\n}\n> ');
+  });
+
+  it("reads each line as JSON when the input is structured, and sends it to the model as JSON", async () => {
+    const { agent, model } = agentSaying("fine");
+    expect(await chat(agent, '{"city":"Paris"}\nexit\n', { input: weather, output: { type: "string" } })).toBe("> fine\n> ");
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain('{\\"city\\":\\"Paris\\"}');
+  });
+
+  it("reports a line that is not JSON, or does not fit the schema, and goes on, without asking the model", async () => {
+    const { agent, model } = agentSaying("fine");
+    const shown = await chat(agent, 'not json\n{"town":"Rome"}\n{"city":"Paris"}\nexit\n', { input: weather, output: { type: "string" } });
+    expect(shown).toContain("[ERROR] The input of this agent must be JSON.");
+    expect(shown).toMatch(/\[ERROR\] .*city/);
+    expect(shown).toContain("fine");
+    expect(model.doStreamCalls).toHaveLength(1);
+  });
+
+  it("reports an answer that is not the JSON that was asked for, and goes on", async () => {
+    const { agent } = agentSaying("I refuse", fenced({ summary: "ok" }));
+    const shown = await chat(agent, "one\ntwo\nexit\n", { input: { type: "string" }, output: forecast });
+    expect(shown).toContain("[ERROR] Failed to parse response as JSON");
+    expect(shown).toContain('"summary": "ok"');
+  });
+
+  it("keeps the original input in the conversation, not the text about the schema", async () => {
+    const { agent, model } = agentSaying(fenced({ summary: "a" }), fenced({ summary: "b" }));
+    await chat(agent, "first\nsecond\nexit\n", { input: { type: "string" }, output: forecast });
+    expect(JSON.stringify(model.doStreamCalls[1]!.prompt).match(/The final response MUST conform/g)).toHaveLength(1);
   });
 });

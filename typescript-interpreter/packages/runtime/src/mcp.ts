@@ -40,7 +40,7 @@ type Result = { content?: unknown; structuredContent?: unknown; isError?: unknow
 
 export const CONNECT_TIMEOUT_MS = 30_000;
 const MAX_PAGES = 50;
-const LOOPBACK = /^(localhost|\[::1\]|127(\.\d{1,3}){3})$/;
+export const LOOPBACK = /^(localhost|\[::1\]|127(\.\d{1,3}){3})$/;
 const SESSION_ENDED = "The server's session had ended (HTTP 404). The call was not repeated; the next call starts a new session.";
 const NEVER_ENDS = "The server kept offering more pages of tools without ever finishing its list.";
 

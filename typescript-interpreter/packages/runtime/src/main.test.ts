@@ -16,11 +16,11 @@
 
 
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type FakeMcp, startFakeMcp } from "./test-fixtures/fake-mcp-http";
 import { type FakeModel, startFakeModel } from "./test-fixtures/fake-model";
 
@@ -57,6 +57,29 @@ function run(args: string[], input: string, env: Record<string, string> = {}): P
     child.on("close", (code) => resolve({ code, stdout, stderr }));
     child.stdin.end(input);
   });
+}
+
+interface Running {
+  url: string;
+  child: ReturnType<typeof spawn>;
+  done: Promise<Result>;
+}
+
+async function startMain(args: string[], env: Record<string, string>): Promise<Running> {
+  const child = spawn(execPath, [main, ...args], { cwd: folder, env: { PATH: processEnv["PATH"] ?? "", ...env } });
+  let stdout = "";
+  let stderr = "";
+  child.stdout!.on("data", (data: Buffer) => (stdout += data.toString()));
+  const url = await new Promise<string>((resolve, reject) => {
+    child.stderr!.on("data", (data: Buffer) => {
+      stderr += data.toString();
+      const found = /Serving on (http:\/\/\S+)/.exec(stderr);
+      if (found !== null) resolve(found[1]!);
+    });
+    child.on("close", () => reject(new Error(`the interpreter ended before it served: ${stderr}`)));
+  });
+  const done = new Promise<Result>((resolve) => child.on("close", (code) => resolve({ code, stdout, stderr })));
+  return { url, child, done };
 }
 
 async function agentFile(name: string, model: string, mcp: string, extra = ""): Promise<string> {
@@ -167,15 +190,86 @@ describe("the built interpreter, started with an agent file", () => {
     expect((await run([file], "hello\n", ENV)).code).toBe(0);
   }, 60_000);
 
+  it("names the agent after its file when the file gives no name", async () => {
+    const file = await agentFile("nameless-agent.afm.md", model.url, mcp.url, "interfaces:\n  - type: webchat\n");
+    await writeFile(file, (await readFile(file, "utf-8")).replace("name: E2E\n", ""));
+    const served = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
+    expect(await (await fetch(`${served.url}/`)).json()).toMatchObject({ name: "nameless-agent" });
+  });
+
+  it("serves web chat on the port it is given, keeps one conversation per session, and stops cleanly on SIGTERM", async () => {
+    const file = await agentFile("webchat.afm.md", model.url, mcp.url, "interfaces:\n  - type: webchat\n");
+    const served = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
+    const say = async (message: string, session: string) =>
+      (await fetch(`${served.url}/chat`, { method: "POST", body: message, headers: { "X-Session-Id": session } })).text();
+    expect(await say("hello", "a")).toBe("You said: hello");
+    expect(await say("again", "a")).toBe("You said: again");
+    expect(await (await fetch(`${served.url}/health`)).json()).toEqual({ status: "ok" });
+    expect(await (await fetch(`${served.url}/`)).json()).toMatchObject({ name: "E2E", version: "0.0.0" });
+    expect((await fetch(`${served.url}/chat/ui`)).status).toBe(200);
+    const withHistory = model.requests.filter((request) => request.body.messages.some((message) => String(message.content) === "hello") && request.body.messages.some((message) => String(message.content) === "again"));
+    expect(withHistory).toHaveLength(1);
+    served.child.kill("SIGTERM");
+    expect((await served.done).code).toBe(0);
+  }, 60_000);
+
+  it("receives a signed webhook event and runs the agent with the prompt from the file", async () => {
+    const { createHmac } = await import("node:crypto");
+    const hook = "interfaces:\n  - type: webhook\n    prompt: \"event ${http:payload.kind}\"\n    subscription:\n      protocol: websub\n      secret: \"shh\"\n";
+    const file = await agentFile("webhook.afm.md", model.url, mcp.url, hook);
+    const served = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
+    const body = JSON.stringify({ kind: "deploy" });
+    const unsigned = await fetch(`${served.url}/webhook`, { method: "POST", body });
+    expect(unsigned.status).toBe(401);
+    const signature = `sha256=${createHmac("sha256", "shh").update(body).digest("hex")}`;
+    const accepted = await fetch(`${served.url}/webhook`, { method: "POST", body, headers: { "X-Hub-Signature-256": signature } });
+    expect([accepted.status, await accepted.json()]).toEqual([202, { status: "accepted" }]);
+    await vi.waitFor(() => expect(model.requests.some((request) => request.body.messages.some((message) => String(message.content) === "event deploy"))).toBe(true));
+    served.child.kill("SIGINT");
+    expect((await served.done).code).toBe(0);
+  }, 60_000);
+
+  it("serves a web chat with structured input, and refuses input that does not fit the schema", async () => {
+    const signature = "interfaces:\n  - type: webchat\n    signature:\n      input:\n        type: object\n        properties:\n          city:\n            type: string\n        required: [city]\n        additionalProperties: false\n      output:\n        type: string\n";
+    const file = await agentFile("structured.afm.md", model.url, mcp.url, signature);
+    const served = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
+    const post = (body: unknown) => fetch(`${served.url}/chat`, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+    expect(await (await post({ city: "Paris" })).json()).toEqual({ response: 'You said: {"city":"Paris"}' });
+    const refused = await post({ town: "Rome" });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { detail: string }).detail).toMatch(/city|Unrecognized/);
+    served.child.kill("SIGTERM");
+    expect((await served.done).code).toBe(0);
+  }, 60_000);
+
+  it("keeps serving when console chat and web chat are both asked for and the input ends, and stops when told to exit", async () => {
+    const file = await agentFile("both.afm.md", model.url, mcp.url, "interfaces:\n  - type: consolechat\n  - type: webchat\n");
+    const ended = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
+    ended.child.stdin!.end();
+    await new Promise((done) => setTimeout(done, 300));
+    expect((await fetch(`${ended.url}/health`)).status).toBe(200);
+    ended.child.kill("SIGTERM");
+    expect((await ended.done).code).toBe(0);
+
+    const quitting = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
+    quitting.child.stdin!.write("hello\nexit\n");
+    const result = await quitting.done;
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("You said: hello");
+  }, 60_000);
+
   it.each([
     ["no file is given", async () => [], {}, /Usage: node main.js/],
     ["the file does not exist", async () => [join(folder, "missing.afm.md")], {}, /ENOENT/],
     ["a variable has no value", async () => [await agentFile("novar.afm.md", model.url, mcp.url)], { TEST_KEY: "k", DOCS_TOKEN: "t" }, /Could not resolve variable '\$\{env:AGENT_NAME\}'/],
-    ["the file asks for web chat", async () => {
-      const path = join(folder, "web.afm.md");
-      await writeFile(path, "---\ninterfaces:\n  - type: webchat\n---\n\n# Role\nr\n\n# Instructions\ni\n");
+    ["the file asks for platform chat", async () => {
+      const path = join(folder, "platform.afm.md");
+      await writeFile(path, "---\ninterfaces:\n  - type: platformchat\n    platform: slack\n    mode: notification\n---\n\n# Role\nr\n\n# Instructions\ni\n");
       return [path];
-    }, {}, /The 'webchat' interface is not yet supported by this interpreter\./],
+    }, {}, /The 'platformchat' interface is not yet supported by this interpreter\./],
+    ["an option is not known", async () => [await agentFile("opt.afm.md", model.url, mcp.url), "--bogus"], {}, /Usage: node main.js/],
+    ["the port is not a number", async () => [await agentFile("port.afm.md", model.url, mcp.url), "--port", "abc"], {}, /The port must be a whole number from 0 to 65535/],
+    ["the host is missing", async () => [await agentFile("host.afm.md", model.url, mcp.url), "--host"], {}, /The --host option needs a host name or address/],
     ["the file asks for jwt", async () => {
       const path = join(folder, "jwt.afm.md");
       await writeFile(path, `---\ntools:\n  mcp:\n    - name: s\n      transport:\n        type: http\n        url: "${mcp.url}"\n        authentication:\n          type: jwt\n          issuer: i\n          audience: a\n          signing_key: k\n---\n\n# Role\nr\n\n# Instructions\ni\n`);

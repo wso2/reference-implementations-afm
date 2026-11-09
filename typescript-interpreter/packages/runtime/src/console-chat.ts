@@ -15,49 +15,33 @@
 // under the License.
 
 
-import { type AgentMetadata, describeError } from "@afm/engine";
+import { describeError, isTextSchema, type Signature, TEXT_SIGNATURE } from "@afm/engine";
 import type { ModelMessage } from "ai";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { Agent } from "./agent";
-import { runAgentTurn } from "./run";
+import { askStructured } from "./turn";
 
-const isText = (schema: unknown): boolean => JSON.stringify(schema) === '{"type":"string"}';
-
-export function checkConsoleChat({ interfaces }: AgentMetadata): void {
-  for (const item of interfaces ?? []) {
-    if (item.type !== "consolechat") throw new Error(`The '${item.type}' interface is not yet supported by this interpreter.`);
-    if ("signature" in item && !(isText(item.signature.input) && isText(item.signature.output))) {
-      throw new Error("Structured input or output is not yet supported by this interpreter.");
-    }
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("The input of this agent must be JSON.");
   }
 }
 
-const STOPPED: Record<string, string> = {
-  "max-iterations": "the agent reached its max_iterations limit",
-  length: "the reply reached the model's length limit",
-  "content-filter": "the model's content filter stopped the reply",
-};
-
-async function answer(agent: Agent, history: ModelMessage[], text: string, output: Writable): Promise<ModelMessage[]> {
-  let messages = [...history, { role: "user" as const, content: text }];
-  for await (const event of runAgentTurn({ ...agent, messages })) {
-    if (event.type === "text-delta") output.write(event.text);
-    if (event.type === "turn-complete") messages = event.messages;
-    if (event.type === "finish" && event.reason !== "stop") output.write(`\n[Stopped: ${STOPPED[event.reason] ?? `the model finished with '${event.reason}'`}]`);
-  }
-  return messages;
-}
-
-export async function consoleChat(agent: Agent, input: Readable, output: Writable): Promise<void> {
+export async function consoleChat(agent: Agent, input: Readable, output: Writable, signature: Signature = TEXT_SIGNATURE): Promise<boolean> {
   let history: ModelMessage[] = [];
+  const textOutput = isTextSchema(signature.output);
   output.write("> ");
   for await (const line of createInterface({ input })) {
     const text = line.trim();
-    if (text === "exit" || text === "quit") break;
+    if (text === "exit" || text === "quit") return true;
     if (text !== "") {
       try {
-        history = await answer(agent, history, text, output);
+        const answer = await askStructured(agent, history, isTextSchema(signature.input) ? text : parseJson(text), signature, { onText: textOutput ? (more) => output.write(more) : undefined });
+        history = answer.messages;
+        if (!textOutput) output.write(JSON.stringify(answer.value, null, 2));
         output.write("\n");
       } catch (error) {
         output.write(`\n[ERROR] ${describeError(error)}\n`);
@@ -65,4 +49,5 @@ export async function consoleChat(agent: Agent, input: Readable, output: Writabl
     }
     output.write("> ");
   }
+  return false;
 }
