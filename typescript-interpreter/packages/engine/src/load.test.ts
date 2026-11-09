@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AfmParseError, AfmValidationError, VariableResolutionError } from "./errors";
-import { buildSystemPrompt, loadAfm, loadParsed } from "./load";
+import { agentDetails, buildSystemPrompt, loadAfm, loadParsed } from "./load";
 import { parseAfm } from "./parse";
 
 const agentFile = (name: string): string => readFileSync(new URL(`../fixtures/agents/${name}`, import.meta.url), "utf-8");
@@ -281,5 +281,32 @@ describe("the example agents from the AFM specification", () => {
     expect(loaded.metadata.name).toBe(name);
     expect(loaded.role).not.toBe("");
     expect(loaded.instructions).not.toBe("");
+  });
+});
+
+describe("agentDetails", () => {
+  const afm = (frontmatter: string) => loadAfm(`---\n${frontmatter}\n---\n# Role\nYou help with maths.\nStep by step.\n\nSecond paragraph.\n# Instructions\nBe kind.\n`);
+
+  it("uses what the file says", () => {
+    const loaded = afm("name: Tutor\ndescription: Helps\nversion: 1.2.0\nicon_url: https://example.com/a.png");
+    expect(agentDetails(loaded, "/agents/other.afm.md")).toEqual({ name: "Tutor", description: "Helps", version: "1.2.0", iconUrl: "https://example.com/a.png" });
+  });
+
+  it("falls back to the file name, the first paragraph of the Role and 0.0.0", () => {
+    expect(agentDetails(afm("spec_version: '0.4.0'"), "/agents/math-tutor.afm.md")).toEqual({
+      name: "math-tutor",
+      description: "You help with maths. Step by step.",
+      version: "0.0.0",
+      iconUrl: undefined,
+    });
+  });
+
+  it("takes the name from a file that ends in .afm, or in .AFM.MD", () => {
+    expect(agentDetails(afm("spec_version: '0.4.0'"), "C:\\agents\\helper.afm").name).toBe("helper");
+    expect(agentDetails(afm("spec_version: '0.4.0'"), "Helper.AFM.MD").name).toBe("Helper");
+  });
+
+  it("names the agent AFM Agent when there is no name and no file", () => {
+    expect(agentDetails(afm("spec_version: '0.4.0'")).name).toBe("AFM Agent");
   });
 });

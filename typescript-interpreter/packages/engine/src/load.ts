@@ -52,3 +52,20 @@ export function loadParsed(parsed: ParsedAfm, { env = processEnv() }: { env?: En
 export function loadAfm(content: string, options: { env?: Env } = {}): LoadedAfm {
   return loadParsed(parseAfm(content), options);
 }
+
+export interface AgentDetails {
+  name: string;
+  description: string;
+  version: string;
+  iconUrl?: string;
+}
+
+export function agentDetails({ metadata, role }: LoadedAfm, file = ""): AgentDetails {
+  const fromFile = file.replace(/^.*[\\/]/, "").replace(/\.afm(\.md)?$/i, "");
+  return {
+    name: metadata.name ?? (fromFile === "" ? "AFM Agent" : fromFile),
+    description: metadata.description ?? role.split(/\n\s*\n/)[0]!.replace(/\s+/g, " "),
+    version: metadata.version ?? "0.0.0",
+    iconUrl: metadata.icon_url,
+  };
+}

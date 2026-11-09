@@ -25,6 +25,6 @@ export { checkSignature, inputText, isTextSchema, outputInstruction, outputValue
 export type { Signature } from "./signature";
 export { compileTemplate, evaluateTemplate, TemplateError } from "./template";
 export type { PromptTemplate, RequestHeaders } from "./template";
-export { loadAfm, loadParsed, buildSystemPrompt } from "./load";
-export type { LoadedAfm } from "./load";
+export { agentDetails, loadAfm, loadParsed, buildSystemPrompt } from "./load";
+export type { AgentDetails, LoadedAfm } from "./load";
 export { AfmParseError, AfmValidationError, VariableResolutionError, describeError } from "./errors";
