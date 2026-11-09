@@ -21,6 +21,8 @@ export { validateMetadata, agentMetadataSchema } from "./schema";
 export type { AgentMetadata, ClientAuthentication, JsonSchemaData } from "./schema";
 export { checkHttpVariables, processEnv, resolveText, resolveValues } from "./variables";
 export type { Env } from "./variables";
+export { compileTemplate, evaluateTemplate, TemplateError } from "./template";
+export type { PromptTemplate, RequestHeaders } from "./template";
 export { loadAfm, loadParsed, buildSystemPrompt } from "./load";
 export type { LoadedAfm } from "./load";
 export { AfmParseError, AfmValidationError, VariableResolutionError, describeError } from "./errors";
