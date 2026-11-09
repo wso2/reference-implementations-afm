@@ -27,7 +27,14 @@ export interface LoadedAfm {
   warnings: string[];
 }
 
-const SPEC_VERSION = "0.4.0";
+const SUPPORTED_SPEC_VERSIONS = ["0.3.0", "0.4.0"];
+
+function specVersionWarnings(specVersion: string | undefined): string[] {
+  const supported = SUPPORTED_SPEC_VERSIONS.join(", ");
+  if (specVersion === undefined) return [`AFM file has no 'spec_version'; expected one of: ${supported}. Proceeding anyway.`];
+  if (SUPPORTED_SPEC_VERSIONS.includes(specVersion)) return [];
+  return [`AFM file 'spec_version' '${specVersion}' is not in the supported set (${supported}). Proceeding anyway; some fields may not be recognized.`];
+}
 
 export function buildSystemPrompt(role: string, instructions: string): string {
   return `# Role\n\n${role}\n\n# Instructions\n\n${instructions}`;
@@ -38,7 +45,7 @@ export function loadParsed(parsed: ParsedAfm, { env = processEnv() }: { env?: En
   const metadata = validateMetadata(resolveValues(parsed.frontmatter, env) as Record<string, unknown>);
   const role = resolveText(parsed.role, env);
   const instructions = resolveText(parsed.instructions, env);
-  const warnings = metadata.spec_version === undefined || metadata.spec_version === SPEC_VERSION ? [] : [`The file's spec_version is not ${SPEC_VERSION}, which this interpreter was written for.`];
+  const warnings = specVersionWarnings(metadata.spec_version);
   return { metadata, role, instructions, systemPrompt: buildSystemPrompt(role, instructions), warnings };
 }
 

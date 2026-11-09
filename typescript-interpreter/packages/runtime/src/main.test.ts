@@ -64,6 +64,7 @@ async function agentFile(name: string, model: string, mcp: string, extra = ""): 
   await writeFile(
     path,
     `---
+spec_version: "0.4.0"
 name: E2E
 max_iterations: 5
 model:

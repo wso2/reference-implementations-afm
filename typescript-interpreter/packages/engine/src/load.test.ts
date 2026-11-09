@@ -26,6 +26,7 @@ const agentFile = (name: string): string => readFileSync(new URL(`../fixtures/ag
 const KEY = { OPENAI_API_KEY: "sk-123" };
 
 const FULL = `---
+spec_version: "0.4.0"
 name: Demo
 max_iterations: 4
 model:
@@ -112,10 +113,24 @@ describe("loadAfm", () => {
     expect(() => loadAfm(role, { env: {} })).toThrow(/found in: role/);
   });
 
-  it("warns, and does not fail, when the spec_version is not the one this interpreter was written for", () => {
-    const loaded = loadAfm(FULL.replace("name: Demo", 'spec_version: "0.3.0"\nname: Demo'), { env: KEY });
-    expect(loaded.warnings).toEqual(["The file's spec_version is not 0.4.0, which this interpreter was written for."]);
-    expect(loadAfm(FULL.replace("name: Demo", 'spec_version: "0.4.0"\nname: Demo'), { env: KEY }).warnings).toEqual([]);
+  describe("spec_version", () => {
+    const withVersion = (line: string) => FULL.replace('spec_version: "0.4.0"\n', line);
+    const warningsFor = (line: string) => loadAfm(withVersion(line), { env: KEY }).warnings;
+
+    it("accepts 0.3.0 and 0.4.0 without a warning, like the Python and Ballerina interpreters", () => {
+      expect(warningsFor('spec_version: "0.3.0"\n')).toEqual([]);
+      expect(warningsFor('spec_version: "0.4.0"\n')).toEqual([]);
+    });
+
+    it("warns, and does not fail, when the file has no spec_version", () => {
+      expect(warningsFor("")).toEqual(["AFM file has no 'spec_version'; expected one of: 0.3.0, 0.4.0. Proceeding anyway."]);
+    });
+
+    it("warns, and does not fail, for any other version", () => {
+      expect(warningsFor('spec_version: "0.2.0"\n')).toEqual([
+        "AFM file 'spec_version' '0.2.0' is not in the supported set (0.3.0, 0.4.0). Proceeding anyway; some fields may not be recognized.",
+      ]);
+    });
   });
 
   it("accepts a number that comes from a variable", () => {
