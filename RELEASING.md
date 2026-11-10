@@ -193,4 +193,4 @@ git push origin typescript-interpreter-v0.1.x
 | Release `afm-langchain` | `release-python.yml` | PyPI (`afm-langchain`) | `afm-langchain-interpreter` | Yes |
 | Release Ballerina | `release-ballerina.yml` | — | `afm-ballerina-interpreter` | Yes |
 | Release TypeScript | `release-typescript.yml` | — | `afm-typescript-interpreter` | No (manual) |
-| Patch release | Same as above (from patch branch) | Same as above | Same as above | Yes |
+| Patch release | Same as above (from patch branch) | Same as above | Same as above | No (manual) |
