@@ -52,6 +52,8 @@ You are a patient math tutor.
 Explain each step. Use the math tools for calculations.
 ```
 
+Before you run it, set `MATH_MCP_SERVER` to the address of an MCP server that offers math tools (for example `export MATH_MCP_SERVER=https://math.example.com/mcp`), or remove the `tools` block.
+
 ## What it supports
 
 | AFM feature | Support |
@@ -156,7 +158,7 @@ interfaces:
 | `@afm/engine` | Reads an agent file: parsing, validation, variables. Works anywhere JavaScript runs. |
 | `@afm/runtime` | Runs the agent: the model, tool servers and the agent loop. Its `main.ts`, `agent.ts`, `console-chat.ts`, `serve.ts`, `webchat.ts`, `webhook.ts`, `stdio.ts` and `skills.ts` use Node.js and are not part of its public entry. |
 
-The packages are private workspace packages and are not published to npm. Their entry points export TypeScript source.
+The packages are private workspace packages and are not published to npm. Their entry points export TypeScript source with imports that have no file extension, so to import them from another project you need a bundler or a TypeScript loader. Plain Node.js cannot load them.
 
 To use them as libraries:
 

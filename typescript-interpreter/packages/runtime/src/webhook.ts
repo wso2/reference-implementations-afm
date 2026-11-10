@@ -49,6 +49,7 @@ export class WebSub {
   private callback = "";
   private wake: (() => void) | undefined;
   private renewal: NodeJS.Timeout | undefined;
+  private requested: "subscribe" | "unsubscribe" | undefined;
 
   constructor(
     private readonly hub: string,
@@ -58,6 +59,7 @@ export class WebSub {
   ) {}
 
   private async send(mode: "subscribe" | "unsubscribe", callback: string): Promise<boolean> {
+    this.requested = mode;
     const form = new URLSearchParams({ "hub.mode": mode, "hub.topic": this.topic, "hub.callback": callback });
     if (mode === "subscribe") {
       form.set("hub.lease_seconds", String(LEASE_SECONDS));
@@ -84,7 +86,7 @@ export class WebSub {
   }
 
   confirm(mode: string, topic: string, challenge: string, leaseSeconds = LEASE_SECONDS): string | undefined {
-    if (topic !== this.topic || (mode !== "subscribe" && mode !== "unsubscribe")) return undefined;
+    if (topic !== this.topic || mode !== this.requested) return undefined;
     this.verified = mode === "subscribe";
     clearTimeout(this.renewal);
     if (this.verified && !this.stopped) {

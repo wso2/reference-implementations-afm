@@ -305,6 +305,27 @@ describe("subscribing at a hub", () => {
     await vi.waitFor(() => expect(hub.posts).toHaveLength(2), { timeout: 3000 });
   });
 
+  it("confirms only the kind of check it asked for, so a stray unsubscribe check does not end the renewal", async () => {
+    const hub = await fakeHub();
+    const websub = new WebSub(hub.url, "t", undefined);
+    await websub.start("https://agent.example.com/hook", 1, 1);
+    expect(websub.confirm("unsubscribe", "t", "c")).toBeUndefined();
+    expect(websub.confirm("subscribe", "t", "c", 1)).toBe("c");
+    expect(websub.confirm("unsubscribe", "t", "c")).toBeUndefined();
+    expect(websub.verified).toBe(true);
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(2), { timeout: 3000 });
+    await websub.stop();
+  });
+
+  it("answers 404 to a check of a kind it did not ask for", async () => {
+    const hub = await fakeHub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const base = await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: hub.url, topic: "t" } });
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(1));
+    expect((await fetch(`${base}/webhook?hub.mode=unsubscribe&hub.topic=t&hub.challenge=c`)).status).toBe(404);
+    expect((await fetch(`${base}/webhook?hub.mode=subscribe&hub.topic=t&hub.challenge=c`)).status).toBe(200);
+  });
+
   it("uses the callback from the file, and does not unsubscribe when the hub never checked it", async () => {
     const hub = await fakeHub();
     const base = await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: hub.url, topic: "t", callback: "https://agent.example.com/hook", secret: SECRET } });
