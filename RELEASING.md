@@ -148,12 +148,13 @@ What happens:
    `ghcr.io/wso2/afm-typescript-interpreter:v0.1.0` and `:latest`
 5. Creates tag `typescript-interpreter-v0.1.0`
 6. Creates release branch and GitHub Release
-7. Bumps `typescript-interpreter/package.json` version to `0.1.1`
 
 > **Note:** The `:latest` Docker tag is only updated when releasing from `main` or `dev`.
 
+> **Note:** The version is **not** bumped automatically: the `bump-version` job is switched off because direct pushes are blocked by branch protection. Before the next release, change the version in `typescript-interpreter/package.json` in a pull request. Otherwise the run stops at "Tag already exists".
+
 **After:**
-- `main` branch: `typescript-interpreter/package.json` version = `0.1.1`
+- `main` branch: `typescript-interpreter/package.json` version is still `0.1.0` until you change it
 - Branch: `release-typescript-interpreter-0.1.0`
 - Tag: `typescript-interpreter-v0.1.0`
 - Docker: `ghcr.io/wso2/afm-typescript-interpreter:v0.1.0`
@@ -180,7 +181,7 @@ git push origin typescript-interpreter-v0.1.x
 **What happens:**
 1. Creates branch `release-typescript-interpreter-0.1.1`
 2. Builds, tags `typescript-interpreter-v0.1.1`
-3. On `typescript-interpreter-v0.1.x`: bumps to `0.1.2`
+3. The version on `typescript-interpreter-v0.1.x` stays `0.1.1`; change it by hand before the next patch release
 
 ---
 
@@ -191,5 +192,5 @@ git push origin typescript-interpreter-v0.1.x
 | Release `afm-core` | `release-python.yml` | PyPI (`afm-core` + `afm-cli`) | — | Yes |
 | Release `afm-langchain` | `release-python.yml` | PyPI (`afm-langchain`) | `afm-langchain-interpreter` | Yes |
 | Release Ballerina | `release-ballerina.yml` | — | `afm-ballerina-interpreter` | Yes |
-| Release TypeScript | `release-typescript.yml` | — | `afm-typescript-interpreter` | Yes |
+| Release TypeScript | `release-typescript.yml` | — | `afm-typescript-interpreter` | No (manual) |
 | Patch release | Same as above (from patch branch) | Same as above | Same as above | Yes |

@@ -38,6 +38,7 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Read and validate version
         id: version
@@ -90,6 +91,8 @@ jobs:
   test:
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: typescript-interpreter
@@ -99,6 +102,7 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
