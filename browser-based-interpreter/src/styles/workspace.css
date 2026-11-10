@@ -670,7 +670,6 @@ label.u-group {
   display: flex;
   flex-direction: column;
   gap: 9px;
-  padding-top: 0;
   padding: 7% 0;
 }
 .u-rail-gap {
@@ -1188,9 +1187,12 @@ label.u-group {
   font-family: inherit;
   text-align: left;
 }
-.u-select-opt:hover,
+.u-select-opt:hover {
+  background: var(--sunk);
+}
 .u-select-opt:focus-visible {
-  outline: 0;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
   background: var(--sunk);
 }
 .u-select-opt[aria-selected="true"] {

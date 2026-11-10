@@ -140,8 +140,14 @@
   opacity: 0;
   transition: opacity 0.15s;
 }
-.code-wrap:hover .code-copy {
+.code-wrap:hover .code-copy,
+.code-wrap:focus-within .code-copy {
   opacity: 1;
+}
+@media (hover: none) {
+  .code-copy {
+    opacity: 1;
+  }
 }
 .code-copy:hover {
   color: var(--ink);
