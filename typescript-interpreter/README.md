@@ -145,7 +145,7 @@ interfaces:
 - `${env:NAME}` and `${NAME}` are replaced with the value of the environment variable. A missing or empty variable stops the interpreter and names the variable, never a value.
 - Values are replaced after the file is read, so a value cannot change the structure of the file. They are also replaced in Role and Instructions, so the model sees them. Run only agent files you trust.
 - `${http:...}` is allowed only in the `prompt` of a webhook or platform chat interface. It is filled in for each event, from the payload and the headers; a field that is not there answers `400`.
-- Credentials are never sent to a plain `http://` address (`localhost` is allowed), and a tool server that answers with a redirect is refused.
+- Credentials are never sent to a plain `http://` address (`localhost` is allowed), and a tool server, a model address or a WebSub hub that answers with a redirect is refused.
 - A stdio tool server gets only the `env` of the agent file plus a few basic variables such as `PATH`.
 - Skill files are read only from the skill's own `references/` and `assets/` folders.
 

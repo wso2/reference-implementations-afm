@@ -15,16 +15,18 @@
 // under the License.
 
 
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { generateText } from "ai";
 import { describe, expect, it } from "vitest";
 import { createModel, type ModelOptions } from "./model";
 
-type Seen = { url: string; headers: Headers; body: { model?: string } };
+type Seen = { url: string; headers: Headers; body: { model?: string }; redirect?: RequestInit["redirect"] };
 
 async function request(model: Parameters<typeof createModel>[0], options: ModelOptions = {}): Promise<Seen> {
   const seen: Seen[] = [];
   const fetch = (async (input: string | URL, init?: RequestInit) => {
-    seen.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body ?? "{}")) });
+    seen.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body ?? "{}")), redirect: init?.redirect });
     return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
   }) as typeof globalThis.fetch;
   await generateText({ model: createModel(model, { ...options, fetch }), prompt: "hi", maxRetries: 0 }).catch(() => undefined);
@@ -34,6 +36,43 @@ async function request(model: Parameters<typeof createModel>[0], options: ModelO
 const keyed = (provider: string, extra: object = {}) => ({ provider, authentication: { type: "api-key", api_key: "k-1" }, ...extra });
 
 describe("createModel", () => {
+  it("does not send the key to another machine over plain http, for either provider", () => {
+    for (const provider of ["openai", "anthropic"]) {
+      expect(() => createModel(keyed(provider, { url: "http://llm.example.com/v1" }))).toThrow(/Credentials were not sent to llm.example.com because it uses plain http/);
+    }
+  });
+
+  it("allows plain http on this machine, and https anywhere", async () => {
+    for (const url of ["http://127.0.0.1:11434/v1", "http://[::1]:11434/v1", "http://LOCALHOST:11434/v1"]) {
+      expect((await request(keyed("openai", { url }))).url).toContain("/chat/completions");
+    }
+    expect((await request(keyed("openai", { url: "https://llm.example.com/v1" }))).url).toBe("https://llm.example.com/v1/chat/completions");
+  });
+
+  it("asks the fetch it was given not to follow redirects", async () => {
+    expect((await request(keyed("openai"))).redirect).toBe("error");
+    expect((await request(keyed("anthropic"))).redirect).toBe("error");
+  });
+
+  it("refuses a redirect, so the key is not sent on to another address", async () => {
+    const servers: Server[] = [];
+    const listen = (server: Server) => new Promise<number>((done) => server.listen(0, "127.0.0.1", () => done((server.address() as AddressInfo).port)));
+    for (const provider of ["openai", "anthropic"]) {
+      const reached: IncomingHttpHeaders[] = [];
+      const elsewhere = createServer((req, res) => {
+        reached.push(req.headers);
+        res.writeHead(200, { "content-type": "application/json" }).end("{}");
+      });
+      const port = await listen(elsewhere);
+      const redirecting = createServer((_req, res) => res.writeHead(307, { Location: `http://127.0.0.1:${port}/elsewhere` }).end());
+      const url = `http://127.0.0.1:${await listen(redirecting)}/v1`;
+      servers.push(elsewhere, redirecting);
+      await generateText({ model: createModel(keyed(provider, { url })), prompt: "hi", maxRetries: 0 }).catch(() => undefined);
+      expect(reached).toHaveLength(0);
+    }
+    await Promise.all(servers.map((server) => new Promise((done) => server.close(done))));
+  });
+
   it("calls the OpenAI Chat Completions API, as the Python and Ballerina interpreters do, with the key and the default model", async () => {
     const seen = await request(keyed("openai"));
     expect(seen.url).toBe("https://api.openai.com/v1/chat/completions");

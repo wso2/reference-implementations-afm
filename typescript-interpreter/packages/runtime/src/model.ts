@@ -19,6 +19,7 @@ import { type AgentMetadata, type Env, processEnv } from "@afm/engine";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
+import { refuseCredentialsOverHttp } from "./mcp";
 
 export interface ModelOptions {
   env?: Env;
@@ -49,12 +50,16 @@ function apiKeyOf({ authentication }: Model, keyVariable: string, env: Env): str
   throw new Error(`'${authentication.type}' authentication is not yet supported by this interpreter`);
 }
 
+const refuseRedirects = (send: typeof fetch = fetch): typeof fetch => (input, init) => send(input, { ...init, redirect: "error" });
+
 export function createModel(model: Model = {}, { env = processEnv(), fetch }: ModelOptions = {}): LanguageModel {
   const provider = (model.provider ?? "openai").toLowerCase();
   const defaults = Object.hasOwn(PROVIDERS, provider) ? PROVIDERS[provider] : undefined;
   if (defaults === undefined) throw new Error(`The model provider '${provider}' is not yet supported by this interpreter. Use openai or anthropic.`);
   const apiKey = apiKeyOf(model, defaults.keyVariable, env);
+  if (model.url !== undefined && URL.canParse(model.url)) refuseCredentialsOverHttp(model.url, { key: apiKey });
+  const send = refuseRedirects(fetch);
   const name = model.name ?? defaults.name;
-  if (provider === "openai") return createOpenAI({ apiKey, baseURL: model.url, fetch }).chat(name);
-  return createAnthropic({ apiKey, baseURL: model.url, fetch })(name);
+  if (provider === "openai") return createOpenAI({ apiKey, baseURL: model.url, fetch: send }).chat(name);
+  return createAnthropic({ apiKey, baseURL: model.url, fetch: send })(name);
 }
