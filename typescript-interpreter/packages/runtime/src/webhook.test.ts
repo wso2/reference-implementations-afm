@@ -15,7 +15,7 @@
 // under the License.
 
 import { createHmac } from "node:crypto";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
@@ -227,18 +227,20 @@ describe("the hub's check of a subscription", () => {
   });
 });
 
-function fakeHub(statuses: number[] = [202]): Promise<{ url: string; posts: URLSearchParams[] }> {
+function fakeHub(statuses: number[] = [202]): Promise<{ url: string; posts: URLSearchParams[]; headers: IncomingHttpHeaders[] }> {
   const posts: URLSearchParams[] = [];
+  const headers: IncomingHttpHeaders[] = [];
   const server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk: Buffer) => (body += chunk.toString()));
     req.on("end", () => {
       posts.push(new URLSearchParams(body));
+      headers.push(req.headers);
       res.writeHead(statuses[Math.min(posts.length, statuses.length) - 1]!).end();
     });
   });
   hubs.push(server);
-  return new Promise((done) => server.listen(0, "127.0.0.1", () => done({ url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/hub`, posts })));
+  return new Promise((done) => server.listen(0, "127.0.0.1", () => done({ url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/hub`, posts, headers })));
 }
 
 describe("subscribing at a hub", () => {
@@ -258,6 +260,49 @@ describe("subscribing at a hub", () => {
     await fetch(`${base}/webhook?hub.mode=subscribe&hub.topic=${encodeURIComponent("https://example.com/t")}&hub.challenge=c`);
     await running.pop()!.close();
     expect(Object.fromEntries(hub.posts[1]!)).toEqual({ "hub.mode": "unsubscribe", "hub.topic": "https://example.com/t", "hub.callback": `${base}/webhook` });
+  });
+
+  it("sends the subscription's authentication to the hub, when subscribing and when unsubscribing", async () => {
+    const hub = await fakeHub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const base = await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: hub.url, topic: "https://example.com/t", authentication: { type: "bearer", token: "hub-token" } } });
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(1));
+    expect(hub.headers[0]!.authorization).toBe("Bearer hub-token");
+    await fetch(`${base}/webhook?hub.mode=subscribe&hub.topic=${encodeURIComponent("https://example.com/t")}&hub.challenge=c`);
+    await running.pop()!.close();
+    expect(hub.headers[1]!.authorization).toBe("Bearer hub-token");
+  });
+
+  it("sends no authorization header when the subscription has no authentication", async () => {
+    const hub = await fakeHub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: hub.url, topic: "t" } });
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(1));
+    expect(hub.headers[0]!.authorization).toBeUndefined();
+  });
+
+  it("subscribes again before the lease the hub granted runs out, and stops doing so when closed", async () => {
+    const hub = await fakeHub();
+    const websub = new WebSub(hub.url, "t", undefined);
+    await websub.start("https://agent.example.com/hook", 1, 1);
+    expect(hub.posts).toHaveLength(1);
+    websub.confirm("subscribe", "t", "c", 1);
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(2), { timeout: 3000 });
+    expect(hub.posts[1]!.get("hub.mode")).toBe("subscribe");
+    websub.confirm("subscribe", "t", "c", 1);
+    await websub.stop();
+    const after = hub.posts.length;
+    await new Promise((done) => setTimeout(done, 1300));
+    expect(hub.posts).toHaveLength(after);
+  });
+
+  it("takes the lease from the hub's check of the subscription", async () => {
+    const hub = await fakeHub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const base = await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: hub.url, topic: "t" } });
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(1));
+    await fetch(`${base}/webhook?hub.mode=subscribe&hub.topic=t&hub.challenge=c&hub.lease_seconds=1`);
+    await vi.waitFor(() => expect(hub.posts).toHaveLength(2), { timeout: 3000 });
   });
 
   it("uses the callback from the file, and does not unsubscribe when the hub never checked it", async () => {
@@ -314,6 +359,9 @@ describe("a webhook that is set up wrongly", () => {
     await fails({ subscription: { protocol: "websub", hub: "ftp://hub.example.com", topic: "t" } }, /http or https address/);
     await fails({ subscription: { protocol: "other", hub: "https://hub.example.com", topic: "t" } }, /protocol 'other' is not yet supported/);
     await fails({ subscription: { protocol: "websub", hub: "http://hub.example.com", topic: "t", secret: SECRET } }, /secret was not sent to hub.example.com because it uses plain http/);
+    await fails({ subscription: { protocol: "websub", hub: "http://hub.example.com", topic: "t", authentication: { type: "bearer", token: "x" } } }, /Credentials were not sent to hub.example.com because it uses plain http/);
+    await fails({ subscription: { protocol: "websub", hub: "https://hub.example.com", topic: "t", authentication: { type: "oauth2" } } }, /'oauth2' authentication is not yet supported/);
+    await fails({ subscription: { protocol: "websub", hub: "https://hub.example.com", topic: "t", authentication: { type: "bearer" } } }, /bearer authentication requires a 'token' field/);
   });
 
   it("may use a plain http hub when it sends no secret, or when the hub is on this machine", async () => {
@@ -321,5 +369,6 @@ describe("a webhook that is set up wrongly", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: "http://127.0.0.1:1/hub", topic: "t", secret: SECRET } });
     await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: "http://127.0.0.1:1/hub", topic: "t" } });
+    await start(agentSaying("x").agent, { subscription: { protocol: "websub", hub: "http://127.0.0.1:1/hub", topic: "t", authentication: { type: "bearer", token: "x" } } });
   });
 });

@@ -44,7 +44,7 @@ export const LOOPBACK = /^(localhost|\[::1\]|127(\.\d{1,3}){3})$/;
 const SESSION_ENDED = "The server's session had ended (HTTP 404). The call was not repeated; the next call starts a new session.";
 const NEVER_ENDS = "The server kept offering more pages of tools without ever finishing its list.";
 
-function refuseCredentialsOverHttp(address: string, headers: Record<string, string>): void {
+export function refuseCredentialsOverHttp(address: string, headers: Record<string, string>): void {
   const { protocol, host, hostname } = new URL(address);
   if (Object.keys(headers).length === 0 || protocol !== "http:" || LOOPBACK.test(hostname)) return;
   throw new Error(

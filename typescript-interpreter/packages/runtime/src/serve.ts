@@ -19,8 +19,9 @@ import type { AddressInfo } from "node:net";
 import type { Agent } from "./agent";
 import { CHAT_PAGE_POLICY, chatPage } from "./chat-page";
 import { json, type Routes, startServer, stopServer } from "./http-server";
+import { authHeaders } from "./auth-headers";
 import { type ChosenInterfaces, pathOf, UI_PATH } from "./interfaces";
-import { LOOPBACK } from "./mcp";
+import { LOOPBACK, refuseCredentialsOverHttp } from "./mcp";
 import { Sessions } from "./sessions";
 import { webChatHandler } from "./webchat";
 import { webhookHandlers, WebSub } from "./webhook";
@@ -48,7 +49,9 @@ function webSubOf(webhook: NonNullable<ChosenInterfaces["webhook"]>): WebSub | u
   if (subscription?.hub === undefined || subscription.topic === undefined) return undefined;
   if (subscription.protocol.toLowerCase() !== "websub") throw new Error(`The webhook subscription protocol '${subscription.protocol}' is not yet supported by this interpreter.`);
   checkHub(subscription.hub, subscription.secret);
-  return new WebSub(subscription.hub, subscription.topic, subscription.secret);
+  const headers = subscription.authentication === undefined ? {} : authHeaders(subscription.authentication);
+  refuseCredentialsOverHttp(subscription.hub, headers);
+  return new WebSub(subscription.hub, subscription.topic, subscription.secret, headers);
 }
 
 export async function serve(agent: Agent, details: AgentDetails, { webchat, webhook }: ChosenInterfaces, { host, port }: { host: string; port: number }): Promise<Serving> {

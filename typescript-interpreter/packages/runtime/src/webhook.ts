@@ -24,6 +24,8 @@ const MAX_BODY = 25 * 1024 * 1024;
 const MAX_RUNNING = 10;
 const ALGORITHMS = ["sha1", "sha256", "sha512"];
 const LEASE_SECONDS = 86400;
+const RENEW_AFTER = 0.8;
+const MAX_TIMER_MS = 2 ** 31 - 1;
 const HUB_TIMEOUT_MS = 30_000;
 
 export function verifySignature(body: Buffer, header: string | undefined, secret: string): boolean {
@@ -46,11 +48,13 @@ export class WebSub {
   private stopped = false;
   private callback = "";
   private wake: (() => void) | undefined;
+  private renewal: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly hub: string,
     readonly topic: string,
     private readonly secret: string | undefined,
+    private readonly headers: Record<string, string> = {},
   ) {}
 
   private async send(mode: "subscribe" | "unsubscribe", callback: string): Promise<boolean> {
@@ -60,7 +64,7 @@ export class WebSub {
       if (this.secret !== undefined && this.secret !== "") form.set("hub.secret", this.secret);
     }
     try {
-      const response = await fetch(this.hub, { method: "POST", body: form, redirect: "error", signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
+      const response = await fetch(this.hub, { method: "POST", headers: this.headers, body: form, redirect: "error", signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
       return [200, 202, 204].includes(response.status);
     } catch {
       return false;
@@ -79,14 +83,20 @@ export class WebSub {
     if (!this.stopped) console.error(`Could not subscribe to the WebSub hub ${this.hub} after ${attempts} attempts.`);
   }
 
-  confirm(mode: string, topic: string, challenge: string): string | undefined {
+  confirm(mode: string, topic: string, challenge: string, leaseSeconds = LEASE_SECONDS): string | undefined {
     if (topic !== this.topic || (mode !== "subscribe" && mode !== "unsubscribe")) return undefined;
     this.verified = mode === "subscribe";
+    clearTimeout(this.renewal);
+    if (this.verified && !this.stopped) {
+      const wait = Math.min(Math.max(leaseSeconds * RENEW_AFTER * 1000, 1000), MAX_TIMER_MS);
+      this.renewal = setTimeout(() => void this.start(this.callback), wait).unref();
+    }
     return challenge;
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    clearTimeout(this.renewal);
     this.wake?.();
     if (this.verified) await this.send("unsubscribe", this.callback);
   }
@@ -113,7 +123,8 @@ export function webhookHandlers(sessions: Sessions, webhook: Webhook, websub: We
     if (mode === null || topic === null || challenge === null) throw new HttpError(400, "Missing hub.mode, hub.topic or hub.challenge");
     if (mode !== "subscribe" && mode !== "unsubscribe") throw new HttpError(404, "Invalid mode");
     if (websub === undefined) return text(200, challenge);
-    const confirmed = websub.confirm(mode, topic, challenge);
+    const lease = Number(url.searchParams.get("hub.lease_seconds"));
+    const confirmed = websub.confirm(mode, topic, challenge, lease > 0 && Number.isFinite(lease) ? lease : undefined);
     if (confirmed === undefined) throw new HttpError(404, "Verification failed");
     return text(200, confirmed);
   };
