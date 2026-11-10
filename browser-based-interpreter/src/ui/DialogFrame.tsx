@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useEffectEvent, useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
@@ -58,8 +58,7 @@ export function DialogFrame({
   const titleId = useId();
   const subtitleId = useId();
   const panel = useRef<HTMLDivElement>(null);
-  const escape = useRef(onEscape);
-  escape.current = onEscape;
+  const escape = useEffectEvent(onEscape);
 
   useEffect(() => {
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -69,7 +68,7 @@ export function DialogFrame({
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      escape.current();
+      escape();
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
