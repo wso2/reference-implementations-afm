@@ -20,6 +20,8 @@ A web app that runs an [Agent-Flavored Markdown (AFM)](https://wso2.github.io/ag
 
 ## Quick Start
 
+> **Status:** this is the first of four PRs. The app has no entry point yet (`src/main.tsx` comes in the last PR), so `pnpm dev` cannot start it. For now, run `pnpm check` (typecheck and tests).
+
 ```sh
 cd browser-based-interpreter
 pnpm install --frozen-lockfile
