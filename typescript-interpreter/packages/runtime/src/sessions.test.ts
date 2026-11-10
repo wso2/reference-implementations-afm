@@ -16,13 +16,43 @@
 
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Sessions } from "./sessions";
 import { agentSaying } from "./test-fixtures/agents";
 
 const calls = (model: { doStreamCalls: { prompt: unknown }[] }, call: number): string => JSON.stringify(model.doStreamCalls[call]!.prompt);
 
 describe("Sessions", () => {
+  it("does not keep the question of a request that disconnected before its turn started", async () => {
+    const { agent, model } = agentSaying("one", "two");
+    const sessions = new Sessions(agent);
+    const gone = new AbortController();
+    gone.abort();
+    await sessions.ask("a", "dropped-question", { signal: gone.signal });
+    expect(await sessions.ask("a", "next-question")).toBe("one");
+    expect(calls(model, 0)).not.toContain("dropped-question");
+  });
+
+  it("does not keep a half answer when the request disconnected while the agent was answering", async () => {
+    const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+    const chunks = [
+      { type: "text-start", id: "t" },
+      { type: "text-delta", id: "t", delta: "half answer" },
+      { type: "text-end", id: "t" },
+      { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
+    ];
+    const model = new MockLanguageModelV3({ doStream: async () => ({ stream: simulateReadableStream({ chunks, initialDelayInMs: 200 }) }) as never });
+    const sessions = new Sessions({ system: "s", model, tools: {}, close: async () => undefined });
+    const gone = new AbortController();
+    const first = sessions.ask("a", "slow-question", { signal: gone.signal });
+    await vi.waitFor(() => expect(model.doStreamCalls).toHaveLength(1));
+    gone.abort();
+    await first;
+    await sessions.ask("a", "next-question");
+    expect(calls(model, 1)).not.toContain("slow-question");
+    expect(calls(model, 1)).not.toContain("half answer");
+  });
+
   it("answers, and remembers the conversation under the name it was given", async () => {
     const { agent, model } = agentSaying("one", "two", "three");
     const sessions = new Sessions(agent);

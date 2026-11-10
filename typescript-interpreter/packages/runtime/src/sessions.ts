@@ -34,7 +34,7 @@ export class Sessions {
       .catch(() => undefined)
       .then(async () => {
         const answer = await askStructured(this.agent, this.histories.get(id) ?? [], input, signature, { signal });
-        this.remember(id, answer.messages);
+        if (signal?.aborted !== true) this.remember(id, answer.messages);
         return answer.value;
       });
     this.tails.set(id, turn);

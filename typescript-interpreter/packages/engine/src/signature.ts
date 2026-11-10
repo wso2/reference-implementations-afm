@@ -83,7 +83,11 @@ function codeBlock(reply: string): string {
 }
 
 export function outputValue(reply: string, schema: JsonSchemaData): unknown {
-  if (isTextSchema(schema)) return reply;
+  if (isTextSchema(schema)) {
+    const failure = problems(reply, schema);
+    if (failure !== undefined) throw new SchemaError("output", failure);
+    return reply;
+  }
   let value: unknown;
   try {
     value = JSON.parse(codeBlock(reply));

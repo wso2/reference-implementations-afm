@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { simulateReadableStream } from "ai";
+import { MockLanguageModelV3 } from "ai/test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentDetails } from "@afm/engine";
 import type { Agent } from "./agent";
@@ -23,6 +25,8 @@ import { agentSaying } from "./test-fixtures/agents";
 
 const text = { input: { type: "string" }, output: { type: "string" } };
 const webchat = (path = "/chat") => ({ type: "webchat", signature: text, exposure: { http: { path } } });
+
+const rules = (input: object, output: object) => ({ type: "webchat", signature: { input, output }, exposure: { http: { path: "/chat" } } });
 
 const running: Serving[] = [];
 afterEach(async () => {
@@ -58,6 +62,40 @@ describe("the web chat endpoint", () => {
     expect(await (await post(`${base}/chat`, "a", { "X-Session-Id": "my chat" })).text()).toBe("one");
     expect(await (await post(`${base}/chat`, "b", { "X-Session-Id": "" })).text()).toBe("two");
     expect(await (await post(`${base}/chat`, "c")).text()).toBe("three");
+  });
+
+  it("checks a text message and a text answer against the rules of the string schemas", async () => {
+    const { agent, model } = agentSaying("fine", "no");
+    const base = await start(agent, [rules({ type: "string", minLength: 3 }, { type: "string", pattern: "^fine" })]);
+    const tooShort = await post(`${base}/chat`, "ab");
+    expect(tooShort.status).toBe(400);
+    expect(model.doStreamCalls).toHaveLength(0);
+    expect(await (await post(`${base}/chat`, "abc")).text()).toBe("fine");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const wrong = await post(`${base}/chat`, "abcd");
+    expect(wrong.status).toBe(500);
+    expect(((await wrong.json()) as { detail: string }).detail).toBe("The agent's answer did not fit the output schema");
+  });
+
+  it("does not keep the question of a client that went away while the agent was answering", async () => {
+    const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+    const chunks = [
+      { type: "text-start", id: "t" },
+      { type: "text-delta", id: "t", delta: "late answer" },
+      { type: "text-end", id: "t" },
+      { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
+    ];
+    const model = new MockLanguageModelV3({ doStream: async () => ({ stream: simulateReadableStream({ chunks, initialDelayInMs: 300 }) }) as never });
+    const base = await start({ system: "s", model, tools: {}, close: async () => undefined }, [webchat()]);
+    const gone = new AbortController();
+    const first = fetch(`${base}/chat`, { method: "POST", body: "slow-question", signal: gone.signal }).catch(() => undefined);
+    await vi.waitFor(() => expect(model.doStreamCalls).toHaveLength(1));
+    gone.abort();
+    await first;
+    expect(await (await post(`${base}/chat`, "next-question")).text()).toBe("late answer");
+    const prompt = JSON.stringify(model.doStreamCalls[1]!.prompt);
+    expect(prompt).toContain("next-question");
+    expect(prompt).not.toContain("slow-question");
   });
 
   it("keeps one conversation per X-Session-Id, and a shared one when there is no header", async () => {

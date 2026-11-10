@@ -86,6 +86,12 @@ describe("outputInstruction", () => {
 });
 
 describe("outputValue", () => {
+  it("checks a text reply against the rules of its string schema", () => {
+    expect(outputValue("abc", { type: "string", minLength: 3 })).toBe("abc");
+    fails(() => outputValue("ab", { type: "string", minLength: 3 }), "output", /3 characters/);
+    fails(() => outputValue("maybe", { type: "string", enum: ["yes", "no"] }), "output", /./);
+  });
+
   const good = '{"summary":"sunny","degrees":21.5}';
 
   it("returns text as it is when the output is text", () => {

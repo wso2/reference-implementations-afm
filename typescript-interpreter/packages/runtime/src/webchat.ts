@@ -52,11 +52,22 @@ function messageOf(raw: Buffer, contentType: string): string {
   return message as string;
 }
 
-function textHandler(sessions: Sessions): Handler {
+function schemaFailure(error: unknown): never {
+  if (!(error instanceof SchemaError)) throw error;
+  if (error.source === "input") throw new HttpError(400, error.message);
+  console.error(`The agent's answer did not fit the output schema: ${error.message}`);
+  throw new HttpError(500, "The agent's answer did not fit the output schema");
+}
+
+function textHandler(sessions: Sessions, signature: Signature): Handler {
   return async (request) => {
     const session = sessionOf(headerOf(request.headers, "x-session-id"));
     const message = messageOf(await request.body(MAX_BODY), headerOf(request.headers, "content-type") ?? "");
-    return text(200, (await sessions.ask(session, message, { signal: request.signal })) as string);
+    try {
+      return text(200, (await sessions.ask(session, message, { signature, signal: request.signal })) as string);
+    } catch (error) {
+      return schemaFailure(error);
+    }
   };
 }
 
@@ -77,10 +88,7 @@ function jsonHandler(sessions: Sessions, signature: Signature): Handler {
     try {
       value = await sessions.ask(session, input, { signature, signal: request.signal });
     } catch (error) {
-      if (!(error instanceof SchemaError)) throw error;
-      if (error.source === "input") throw new HttpError(400, error.message);
-      console.error(`The agent's answer did not fit the output schema: ${error.message}`);
-      throw new HttpError(500, "The agent's answer did not fit the output schema");
+      schemaFailure(error);
     }
     const isObject = typeof value === "object" && value !== null && !Array.isArray(value);
     return json(200, isObject && !isTextSchema(signature.output) ? value : { response: value });
@@ -88,5 +96,5 @@ function jsonHandler(sessions: Sessions, signature: Signature): Handler {
 }
 
 export function webChatHandler(sessions: Sessions, signature: Signature): Handler {
-  return isTextSchema(signature.input) && isTextSchema(signature.output) ? textHandler(sessions) : jsonHandler(sessions, signature);
+  return isTextSchema(signature.input) && isTextSchema(signature.output) ? textHandler(sessions, signature) : jsonHandler(sessions, signature);
 }
