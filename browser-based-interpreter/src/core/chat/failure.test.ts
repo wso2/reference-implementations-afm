@@ -105,6 +105,10 @@ const PROXY =
   "No MCP proxy is configured. AFM does not connect to external servers directly from the browser - set an MCP proxy (VITE_MCP_PROXY_URL) before connecting tools.";
 
 describe("briefMessage", () => {
+  it("hides a key in a short message that no rule recognises", () => {
+    expect(briefMessage("oops sk-abcdefghijklmnop1234")).toBe("oops [hidden]");
+  });
+
   it("turns the long proxy message into MCP error", () => {
     expect(briefMessage(PROXY)).toBe("MCP error");
   });

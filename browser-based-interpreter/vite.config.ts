@@ -64,16 +64,18 @@ export function clientMetadata(clientIdUrl: string) {
   };
 }
 
-function productionCsp(proxyOrigin: string | null): Plugin {
+const CSP_ANCHOR = '<meta charset="utf-8" />';
+
+export function productionCsp(proxyOrigin: string | null): Plugin {
   return {
     name: "afm-production-csp",
     transformIndexHtml(html, ctx) {
       if (ctx.server !== undefined) return html;
+      if (!html.includes(CSP_ANCHOR)) {
+        throw new Error("afm-production-csp: the charset meta tag was not found in index.html, so the Content-Security-Policy tag cannot be added.");
+      }
       const csp = cspForMetaTag(withConnectSource(CONTENT_SECURITY_POLICY, proxyOrigin));
-      return html.replace(
-        '<meta charset="utf-8" />',
-        `<meta charset="utf-8" />\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`,
-      );
+      return html.replace(CSP_ANCHOR, () => `${CSP_ANCHOR}\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`);
     },
   };
 }

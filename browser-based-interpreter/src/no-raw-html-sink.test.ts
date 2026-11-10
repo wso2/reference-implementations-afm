@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 const SRC = fileURLToPath(new URL(".", import.meta.url));
 const ALLOWED = new Set<string>();
 const SINK =
-  /\.innerHTML\s*=|dangerouslySetInnerHTML|\.outerHTML\s*=|insertAdjacentHTML|document\.write\(|[^a-zA-Z0-9_.]eval\(|new Function\(/;
+  /\.(?:inner|outer)HTML\s*[+\-*/]?=|dangerouslySetInnerHTML|insertAdjacentHTML|document\.write\(|(?:^|[^a-zA-Z0-9_.])eval\(|new Function\(/;
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];

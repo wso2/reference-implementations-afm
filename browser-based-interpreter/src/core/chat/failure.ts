@@ -99,7 +99,7 @@ export function briefMessage(message: string): string {
   for (const [pattern, short] of RULES) {
     if (pattern.test(text)) return short;
   }
-  if (text.length <= SHORT_ENOUGH) return text;
+  if (text.length <= SHORT_ENOUGH) return maskKeys(text);
   return /sign-?in/i.test(text) ? "Sign-in failed" : "Something went wrong";
 }
 

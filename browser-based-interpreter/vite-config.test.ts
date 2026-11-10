@@ -22,6 +22,7 @@ import {
   clientMetadata,
   cspForMetaTag,
   originOf,
+  productionCsp,
   withConnectSource,
 } from "./vite.config";
 
@@ -163,5 +164,22 @@ describe("values that belong to one deployment", () => {
         token_endpoint_auth_method: "none",
       });
     });
+  });
+});
+
+describe("the production Content-Security-Policy tag", () => {
+  const page = readFileSync(fileURLToPath(new URL("./index.html", import.meta.url)), "utf8");
+  const transform = (html: string, ctx: object = {}) => (productionCsp(null).transformIndexHtml as (html: string, ctx: object) => string)(html, ctx);
+
+  it("is added to index.html", () => {
+    expect(transform(page)).toContain('<meta http-equiv="Content-Security-Policy" content="');
+  });
+
+  it("is left out when the dev server serves the page", () => {
+    expect(transform(page, { server: {} })).toBe(page);
+  });
+
+  it("fails the build when index.html has no charset tag to put it after", () => {
+    expect(() => transform("<html><head></head></html>")).toThrow(/charset meta tag was not found/);
   });
 });
