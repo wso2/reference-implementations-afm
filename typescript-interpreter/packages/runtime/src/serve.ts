@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { AgentDetails } from "@afm/engine";
+import { type AgentDetails, isTextSchema } from "@afm/engine";
 import type { AddressInfo } from "node:net";
 import type { Agent } from "./agent";
 import { CHAT_PAGE_POLICY, chatPage } from "./chat-page";
@@ -61,11 +61,13 @@ export async function serve(agent: Agent, details: AgentDetails, { webchat, webh
 
   if (webchat !== undefined) {
     const path = pathOf(webchat);
-    const page = chatPage({ ...details, path });
     routes.set(path, { POST: webChatHandler(sessions, webchat.signature) });
-    routes.set(UI_PATH, {
-      GET: async () => ({ status: 200, type: "text/html; charset=utf-8", body: page, headers: { "Content-Security-Policy": CHAT_PAGE_POLICY, "Referrer-Policy": "no-referrer" } }),
-    });
+    if (isTextSchema(webchat.signature.input) && isTextSchema(webchat.signature.output)) {
+      const page = chatPage({ ...details, path });
+      routes.set(UI_PATH, {
+        GET: async () => ({ status: 200, type: "text/html; charset=utf-8", body: page, headers: { "Content-Security-Policy": CHAT_PAGE_POLICY, "Referrer-Policy": "no-referrer" } }),
+      });
+    }
   }
 
   const websub = webhook === undefined ? undefined : webSubOf(webhook);

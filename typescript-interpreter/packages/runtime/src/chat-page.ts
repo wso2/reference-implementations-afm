@@ -84,7 +84,7 @@ export const CHAT_PAGE_POLICY =
 
 export function chatPage({ name, description, version, iconUrl, path }: ChatPageInfo): string {
   const icon = iconUrl?.startsWith("https://") ? `<img src="${escapeHtml(iconUrl)}" alt="">` : "";
-  const script = PAGE_SCRIPT.replace("__PATH__", JSON.stringify(path).replace(/</g, "\\u003c"));
+  const script = PAGE_SCRIPT.replace("__PATH__", () => JSON.stringify(path).replace(/</g, "\\u003c"));
   return `<!doctype html>
 <html lang="en">
 <head>

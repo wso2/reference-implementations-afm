@@ -106,7 +106,7 @@ interfaces:
 | Request | What it does |
 |---|---|
 | `POST /chat` | Sends one message (`text/plain`, or a JSON string) and answers with the reply as text. The header `X-Session-Id` chooses the conversation; without it all requests share one, and so do the webhook events. A conversation is kept in memory for as long as the interpreter runs. |
-| `GET /chat/ui` | A chat page for the web chat. |
+| `GET /chat/ui` | A chat page for the web chat. It is served only when the input and the output are text, because the page sends plain text. |
 | `GET /webhook` | Answers a WebSub hub's check of a subscription. |
 | `POST /webhook` | Takes an event (JSON), answers `202`, then runs the agent with the prompt. With `subscription.secret`, the event must carry a matching `X-Hub-Signature-256` (or `X-Hub-Signature`) HMAC, or it gets `401`. Events are answered one at a time, in the shared conversation. |
 | `GET /` and `GET /health` | The agent's name, description, version and interfaces, and `{"status":"ok"}`. Without them in the file, the name is the file name, the description is the first paragraph of the Role, and the version is `0.0.0`. |

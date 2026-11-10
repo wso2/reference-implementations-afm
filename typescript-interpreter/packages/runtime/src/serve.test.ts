@@ -176,6 +176,21 @@ describe("the chat page", () => {
     expect(page.match(/<\/script>/g)).toHaveLength(1);
   });
 
+  it("puts a path with dollar signs in the script as it is", async () => {
+    const base = await start(agentSaying("x").agent, [webchat("/a$&b$'c$$d")]);
+    const page = await (await fetch(`${base}/chat/ui`)).text();
+    expect(page).toContain('const chatPath = "/a$&b$\'c$$d";');
+  });
+
+  it.each([
+    ["a structured input", { type: "object" }, { type: "string" }],
+    ["a structured output", { type: "string" }, { type: "object" }],
+  ])("is not served for a web chat with %s, because the page can only send text", async (_what, input, output) => {
+    const base = await start(agentSaying("x").agent, [{ type: "webchat", signature: { input, output }, exposure: { http: { path: "/chat" } } }]);
+    expect((await fetch(`${base}/chat/ui`)).status).toBe(404);
+    expect((await fetch(`${base}/health`)).status).toBe(200);
+  });
+
   it("is not there without a web chat interface", async () => {
     const base = await start(agentSaying("x").agent, [{ type: "webhook", exposure: { http: { path: "/hook" } } }]);
     expect((await fetch(`${base}/chat/ui`)).status).toBe(404);
