@@ -38,6 +38,10 @@ export class Sessions {
         return answer.value;
       });
     this.tails.set(id, turn);
+    const finished = (): void => {
+      if (this.tails.get(id) === turn) this.tails.delete(id);
+    };
+    turn.then(finished, finished);
     return turn;
   }
 
@@ -47,7 +51,6 @@ export class Sessions {
     if (this.histories.size > MAX_SESSIONS) {
       const oldest = this.histories.keys().next().value as string;
       this.histories.delete(oldest);
-      this.tails.delete(oldest);
     }
   }
 }

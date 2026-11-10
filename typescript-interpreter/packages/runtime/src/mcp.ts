@@ -53,6 +53,14 @@ function refuseCredentialsOverHttp(address: string, headers: Record<string, stri
   );
 }
 
+function rejectDuplicates(definitions: Definition[]): void {
+  const seen = new Set<string>();
+  for (const { name } of definitions) {
+    if (seen.has(name)) throw new Error(`The server lists the tool '${name}' more than once.`);
+    seen.add(name);
+  }
+}
+
 async function listDefinitions(client: MCPClient): Promise<Definition[]> {
   const definitions: Definition[] = [];
   const seen = new Set<string>();
@@ -109,20 +117,22 @@ export async function toolsFromClient(connect: () => Promise<MCPClient>, filter?
   let definitions: Definition[];
   try {
     definitions = (await listDefinitions(first)).filter(({ name }) => isAllowed(name, filter));
+    rejectDuplicates(definitions);
   } catch (error) {
     await first.close().catch(() => undefined);
     throw error;
   }
 
   async function run(name: string, args: unknown, options: ToolCallOptions): Promise<ToolOutput> {
-    const client = await open();
+    const used = open();
+    const client = await used;
     try {
       const sdkTool = client.toolsFromDefinitions({ tools: definitions })[name];
       if (sdkTool?.execute === undefined) throw new Error(`The server no longer offers the tool '${name}'.`);
       return toolOutput((await sdkTool.execute(args, options)) as Result);
     } catch (error) {
       if ((error as { statusCode?: unknown }).statusCode !== 404) throw error;
-      session = undefined;
+      if (session === used) session = undefined;
       await client.close().catch(() => undefined);
       throw new Error(SESSION_ENDED);
     }
@@ -130,7 +140,6 @@ export async function toolsFromClient(connect: () => Promise<MCPClient>, filter?
 
   const tools: ToolSet = {};
   for (const definition of definitions) {
-    if (Object.hasOwn(tools, definition.name)) throw new Error(`The server lists the tool '${definition.name}' more than once.`);
     tools[definition.name] = textTool({
       description: definition.description,
       inputSchema: jsonSchema(definition.inputSchema as Parameters<typeof jsonSchema>[0]),

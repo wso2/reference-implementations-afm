@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { simulateReadableStream } from "ai";
+import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it } from "vitest";
 import { Sessions } from "./sessions";
 import { agentSaying } from "./test-fixtures/agents";
@@ -69,4 +71,70 @@ describe("Sessions", () => {
     await sessions.ask("a", "next", { signature });
     expect(calls(model, 1)).not.toContain("lost-question");
   });
+});
+
+describe("Sessions, after a turn is over", () => {
+  const tailsOf = (sessions: Sessions): Map<string, unknown> => (sessions as unknown as { tails: Map<string, unknown> }).tails;
+
+  const scripted = (slow: string) => {
+    const events: string[] = [];
+    let release = (): void => undefined;
+    const model = new MockLanguageModelV3({
+      doStream: async ({ prompt }) => {
+        const marker = JSON.stringify(prompt).match(/turn-\w+/g)!.at(-1)!;
+        if (marker === slow || marker === "turn-second") events.push(`start ${marker}`);
+        if (marker === slow) await new Promise<void>((resolve) => (release = resolve));
+        if (marker === slow || marker === "turn-second") events.push(`end ${marker}`);
+        const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } };
+        const chunks = [
+          { type: "text-start", id: "t" },
+          { type: "text-delta", id: "t", delta: "ok" },
+          { type: "text-end", id: "t" },
+          { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
+        ];
+        return { stream: simulateReadableStream({ chunks }) } as never;
+      },
+    });
+    return { agent: { system: "s", model, tools: {}, close: async () => undefined }, events, release: () => release() };
+  };
+
+  it("keeps nothing about a session whose turns all failed", async () => {
+    const { agent } = agentSaying(...Array.from({ length: 5 }, () => new Error("down")));
+    const sessions = new Sessions(agent);
+    for (let id = 0; id < 5; id += 1) await expect(sessions.ask(`s${id}`, "question")).rejects.toThrow("down");
+    expect(tailsOf(sessions).size).toBe(0);
+  });
+
+  it("keeps nothing about a session whose turn went well", async () => {
+    const { agent } = agentSaying("one");
+    const sessions = new Sessions(agent);
+    await sessions.ask("a", "question");
+    expect(tailsOf(sessions).size).toBe(0);
+  });
+
+  it("still holds the queue of a session while its turns are waiting, and then lets it go", async () => {
+    const { agent, release } = scripted("turn-first");
+    const sessions = new Sessions(agent);
+    const first = sessions.ask("a", "turn-first");
+    const second = sessions.ask("a", "turn-second");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(tailsOf(sessions).size).toBe(1);
+    release();
+    await Promise.all([first, second]);
+    expect(tailsOf(sessions).size).toBe(0);
+  });
+
+  it("keeps the order of a session whose old conversation was dropped while its turn was running", async () => {
+    const { agent, events, release } = scripted("turn-slow");
+    const sessions = new Sessions(agent);
+    for (let id = 0; id < 1000; id += 1) await sessions.ask(`s${id}`, `turn-q${id}`);
+    const slow = sessions.ask("s0", "turn-slow");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await sessions.ask("newcomer", "turn-newcomer");
+    const second = sessions.ask("s0", "turn-second");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+    await Promise.all([slow, second]);
+    expect(events).toEqual(["start turn-slow", "end turn-slow", "start turn-second", "end turn-second"]);
+  }, 60_000);
 });

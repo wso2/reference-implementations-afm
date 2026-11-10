@@ -23,7 +23,7 @@ import type { Tool, ToolSet } from "ai";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { type HttpMcpServer, mcpTools, toolOutput } from "./mcp";
+import { type HttpMcpServer, mcpTools, toolOutput, toolsFromClient } from "./mcp";
 import type { ToolOutput } from "./run";
 
 type Extra = Partial<HttpMcpServer["transport"]> & { tool_filter?: HttpMcpServer["tool_filter"]; fetch?: typeof fetch };
@@ -434,5 +434,56 @@ describe("a server that redirects to another origin", () => {
     await expect(connect(redirector.url)).rejects.toBeTruthy();
     expect(asked.length).toBeGreaterThan(0);
     expect(asked).not.toContain("/elsewhere");
+  });
+});
+
+describe("a tool server connection that is managed with fake clients", () => {
+  const reply = async () => ({ content: [{ type: "text", text: "ok" }] });
+  const fakeClient = (names: string[], run: () => Promise<unknown> = reply) => {
+    const client = {
+      closed: 0,
+      listTools: async () => ({ tools: names.map((name) => ({ name, description: "", inputSchema: { type: "object" } })) }),
+      toolsFromDefinitions: () => Object.fromEntries(names.map((name) => [name, { execute: run }])),
+      close: async () => {
+        client.closed += 1;
+      },
+    };
+    return client;
+  };
+
+  it("closes the connection it opened when the server lists a tool twice", async () => {
+    const client = fakeClient(["a", "a"]);
+    await expect(toolsFromClient(async () => client as never)).rejects.toThrow(/lists the tool 'a' more than once/);
+    expect(client.closed).toBe(1);
+  });
+
+  it("does not call a duplicate an error when the tool filter hides one of them", async () => {
+    const client = fakeClient(["a", "a", "b"]);
+    const connection = await toolsFromClient(async () => client as never, { allow: ["b"] });
+    expect(Object.keys(connection.tools)).toEqual(["b"]);
+    await connection.close();
+  });
+
+  it("keeps a newer session when a second call of the older session also finds it ended", async () => {
+    const failures: ((error: unknown) => void)[] = [];
+    const old = fakeClient(["t"], () => new Promise<never>((_, reject) => failures.push(reject)));
+    const fresh = fakeClient(["t"]);
+    const clients = [old, fresh];
+    let connects = 0;
+    const connection = await toolsFromClient(async () => clients[connects++] as never);
+    const call = () => execute(connection.tools, "t");
+
+    const first = call().catch((error: Error) => error);
+    const second = call().catch((error: Error) => error);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    failures[0]!({ statusCode: 404 });
+    expect(String(await first)).toMatch(/session had ended/);
+    expect((await call()).ok).toBe(true);
+    failures[1]!({ statusCode: 404 });
+    expect(String(await second)).toMatch(/session had ended/);
+
+    expect(connects).toBe(2);
+    await connection.close();
+    expect(fresh.closed).toBe(1);
   });
 });
