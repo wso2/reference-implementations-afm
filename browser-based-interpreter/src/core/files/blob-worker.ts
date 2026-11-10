@@ -19,5 +19,20 @@ export async function startBlobWorker(url: string | URL): Promise<Worker> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`The worker script could not be loaded (${response.status}).`);
   const script = await response.blob();
-  return new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })), { type: "module" });
+  const address = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
+  let revoked = false;
+  const revoke = (): void => {
+    if (revoked) return;
+    revoked = true;
+    URL.revokeObjectURL(address);
+  };
+  try {
+    const worker = new Worker(address, { type: "module" });
+    worker.addEventListener("message", revoke, { once: true });
+    worker.addEventListener("error", revoke, { once: true });
+    return worker;
+  } catch (error) {
+    revoke();
+    throw error;
+  }
 }

@@ -21,13 +21,23 @@ const SCRIPT = new URL("https://afm.example/assets/worker-abc123.js");
 
 class FakeWorker {
   static created: { url: string; options?: WorkerOptions }[] = [];
+  static cannotStart = false;
+  private listeners = new Map<string, () => void>();
   constructor(url: string | URL, options?: WorkerOptions) {
+    if (FakeWorker.cannotStart) throw new Error("The worker could not start.");
     FakeWorker.created.push({ url: String(url), options });
+  }
+  addEventListener(type: string, listener: () => void): void {
+    this.listeners.set(type, listener);
+  }
+  happen(type: string): void {
+    this.listeners.get(type)?.();
   }
 }
 
 beforeEach(() => {
   FakeWorker.created = [];
+  FakeWorker.cannotStart = false;
   vi.stubGlobal("Worker", FakeWorker);
 });
 
@@ -54,13 +64,47 @@ describe("startBlobWorker in the production build", () => {
     const fetchFn = vi.fn(async () => new Response("self.onmessage = () => {};"));
     const createObjectURL = vi.fn((blob: Blob) => `blob:https://afm.example/${blob.size}`);
     vi.stubGlobal("fetch", fetchFn);
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL }));
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
     await startBlobWorker(SCRIPT);
     expect(fetchFn).toHaveBeenCalledWith(SCRIPT);
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     const blob = createObjectURL.mock.calls[0]![0];
     expect(await blob.text()).toBe("self.onmessage = () => {};");
     expect(FakeWorker.created).toEqual([{ url: "blob:https://afm.example/26", options: { type: "module" } }]);
+  });
+
+  describe("the blob: address", () => {
+    const stub = () => {
+      const revokeObjectURL = vi.fn();
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("self.onmessage = () => {};")));
+      vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:https://afm.example/1"), revokeObjectURL }));
+      return revokeObjectURL;
+    };
+
+    it("is released once the worker has sent its first message, and not before", async () => {
+      const revokeObjectURL = stub();
+      const worker = (await startBlobWorker(SCRIPT)) as unknown as FakeWorker;
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      worker.happen("message");
+      worker.happen("message");
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:https://afm.example/1");
+    });
+
+    it("is released when the worker fails to load, and only once if it also sends a message", async () => {
+      const revokeObjectURL = stub();
+      const worker = (await startBlobWorker(SCRIPT)) as unknown as FakeWorker;
+      worker.happen("error");
+      worker.happen("message");
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    });
+
+    it("is released when the worker cannot be created", async () => {
+      const revokeObjectURL = stub();
+      FakeWorker.cannotStart = true;
+      await expect(startBlobWorker(SCRIPT)).rejects.toThrow(/could not start/);
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("does not start a worker from the script's address when the script cannot be fetched", async () => {
