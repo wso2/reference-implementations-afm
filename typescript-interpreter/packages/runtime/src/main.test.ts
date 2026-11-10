@@ -195,6 +195,8 @@ describe("the built interpreter, started with an agent file", () => {
     await writeFile(file, (await readFile(file, "utf-8")).replace("name: E2E\n", ""));
     const served = await startMain([file, "--port", "0", "--host", "127.0.0.1"], ENV);
     expect(await (await fetch(`${served.url}/`)).json()).toMatchObject({ name: "nameless-agent" });
+    served.child.kill("SIGTERM");
+    expect((await served.done).code).toBe(0);
   });
 
   it("serves web chat on the port it is given, keeps one conversation per session, and stops cleanly on SIGTERM", async () => {
