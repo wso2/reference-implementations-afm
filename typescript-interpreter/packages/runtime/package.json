@@ -1,0 +1,26 @@
+{
+  "name": "@afm/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runs AFM agents: the model, tool servers and the agent loop.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@afm/engine": "workspace:*",
+    "@ai-sdk/anthropic": "^3.0.122",
+    "@ai-sdk/mcp": "^1.0.101",
+    "@ai-sdk/openai": "^3.0.118",
+    "ai": "^6.0.291",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@types/node": "^26.0.1"
+  }
+}

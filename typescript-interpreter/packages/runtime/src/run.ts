@@ -1,0 +1,143 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+
+import { describeError } from "@afm/engine";
+import {
+  type FinishReason,
+  type FlexibleSchema,
+  type LanguageModel,
+  type ModelMessage,
+  stepCountIs,
+  streamText,
+  tool,
+  type ToolCallOptions,
+  type ToolSet,
+} from "ai";
+
+export const DEFAULT_MAX_ITERATIONS = 10;
+
+const MAX_RETRIES = 4;
+
+export interface ToolOutput {
+  ok: boolean;
+  content: string;
+}
+
+export function textTool<INPUT>(options: {
+  description?: string;
+  inputSchema: FlexibleSchema<INPUT>;
+  execute: (input: INPUT, options: ToolCallOptions) => Promise<ToolOutput>;
+}) {
+  return tool({ ...options, toModelOutput: ({ output }) => ({ type: "text", value: output.content }) });
+}
+
+export interface AgentTurnInput {
+  system: string;
+  messages: ModelMessage[];
+  model: LanguageModel;
+  tools: ToolSet;
+  maxIterations?: number;
+  signal?: AbortSignal;
+}
+
+export type TurnFinishReason = Exclude<FinishReason, "tool-calls"> | "max-iterations" | "aborted";
+
+export type LoopEvent =
+  | { type: "text-delta"; text: string }
+  | { type: "tool-call"; id: string; name: string; args: unknown }
+  | { type: "tool-result"; id: string; name: string; ok: boolean; content: string }
+  | { type: "usage"; totalTokens: number; inputTokens: number; outputTokens: number; iteration: number; maxIterations: number }
+  | { type: "turn-checkpoint"; messages: ModelMessage[] }
+  | { type: "turn-complete"; messages: ModelMessage[] }
+  | { type: "finish"; reason: TurnFinishReason };
+
+const hasContent = (message: ModelMessage): boolean =>
+  message.role !== "assistant" || (typeof message.content === "string" ? message.content !== "" : message.content.length > 0);
+
+export async function* runAgentTurn({ system, messages, model, tools, maxIterations = DEFAULT_MAX_ITERATIONS, signal }: AgentTurnInput): AsyncIterable<LoopEvent> {
+  if (signal?.aborted) {
+    yield { type: "turn-complete", messages };
+    yield { type: "finish", reason: "aborted" };
+    return;
+  }
+
+  const stop = new AbortController();
+  signal?.addEventListener("abort", () => stop.abort(), { once: true });
+
+  let saved = messages;
+  let partial = "";
+  let tokens = { total: 0, input: 0, output: 0 };
+  let steps = 0;
+  let last = "other";
+
+  const result = streamText({
+    model,
+    system,
+    messages,
+    tools,
+    abortSignal: stop.signal,
+    maxRetries: MAX_RETRIES,
+    stopWhen: stepCountIs(maxIterations),
+    onStepFinish: (step) => {
+      saved = [...messages, ...step.response.messages.filter(hasContent)];
+    },
+    onError: () => {},
+  });
+
+  try {
+    for await (const part of result.fullStream) {
+      switch (part.type) {
+        case "text-delta":
+          partial += part.text;
+          yield { type: "text-delta", text: part.text };
+          break;
+        case "tool-call":
+          yield { type: "tool-call", id: part.toolCallId, name: part.toolName, args: part.input };
+          break;
+        case "tool-result": {
+          const { ok, content } = part.output as ToolOutput;
+          yield { type: "tool-result", id: part.toolCallId, name: part.toolName, ok, content };
+          break;
+        }
+        case "tool-error":
+          yield { type: "tool-result", id: part.toolCallId, name: part.toolName, ok: false, content: `Tool '${part.toolName}' failed: ${describeError(part.error)}` };
+          break;
+        case "finish-step":
+          partial = "";
+          steps += 1;
+          tokens = {
+            total: tokens.total + (part.usage.totalTokens ?? 0),
+            input: tokens.input + (part.usage.inputTokens ?? 0),
+            output: tokens.output + (part.usage.outputTokens ?? 0),
+          };
+          if (part.finishReason === "tool-calls") yield { type: "turn-checkpoint", messages: saved };
+          yield { type: "usage", totalTokens: tokens.total, inputTokens: tokens.input, outputTokens: tokens.output, iteration: steps, maxIterations };
+          break;
+        case "error":
+          throw part.error;
+        case "finish":
+          last = part.finishReason;
+          break;
+      }
+    }
+
+    yield { type: "turn-complete", messages: partial === "" ? saved : [...saved, { role: "assistant", content: partial }] };
+    yield { type: "finish", reason: signal?.aborted ? "aborted" : last === "tool-calls" ? "max-iterations" : (last as TurnFinishReason) };
+  } finally {
+    stop.abort();
+  }
+}
