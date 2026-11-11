@@ -92,6 +92,8 @@ export const initialChatState: ChatState = {
   draftError: null,
 };
 
+const NO_AGENT_DETAILS = { agentName: "", mcpServers: [], planIssues: [], tools: [] };
+
 type ChatAction =
   | { type: "user-message"; text: string; images?: ImageAttachment[] }
   | { type: "agent-loading"; content: string }
@@ -145,6 +147,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "agent-loading":
       return {
         ...state,
+        ...NO_AGENT_DETAILS,
         pendingPermission: null,
         status: "connecting",
         agentSource: action.content,
@@ -158,6 +161,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case "restore-session":
       return {
         ...state,
+        ...NO_AGENT_DETAILS,
         pendingPermission: null,
         status: "connecting",
         agentSource: action.agentSource,
@@ -295,6 +299,7 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
       return {
         ...state,
         error: message.message,
+        pendingPermission: null,
         status: state.status === "no-agent" ? "no-agent" : "ready",
         unsent: message.kept === false && last !== undefined ? [...new Set([...state.unsent, last.id])] : state.unsent,
       };

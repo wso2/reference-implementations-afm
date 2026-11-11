@@ -123,6 +123,33 @@ describe("chatReducer", () => {
     expect(state.pendingPermission).toBeNull();
   });
 
+  it("drops a permission question that is still open when an error ends the turn", () => {
+    let state = chatReducer(initialChatState, { type: "server", message: loaded("A") });
+    state = chatReducer(state, { type: "user-message", text: "hi" });
+    state = chatReducer(state, {
+      type: "server",
+      message: { type: "permission-request", id: "c1", name: "multiply", args: {} },
+    });
+    state = chatReducer(state, { type: "server", message: { type: "error", message: "boom" } });
+    expect(state.status).toBe("ready");
+    expect(state.pendingPermission).toBeNull();
+  });
+
+  it.each<[string, Parameters<typeof chatReducer>[1]]>([
+    ["starts loading", { type: "agent-loading", content: "new" }],
+    ["is restored from a saved conversation", { type: "restore-session", messages: [], agentSource: "new" }],
+  ])("forgets the name, servers, tools and notes of the agent before, when another agent %s", (_label, action) => {
+    const plan = { runnable: true, issues: [{ severity: "warning" as const, code: "x", message: "m" }] };
+    let state = chatReducer(initialChatState, { type: "server", message: { type: "loaded", name: "Old", mcpServers: ["docs"], plan } });
+    state = chatReducer(state, {
+      type: "server",
+      message: { type: "tools-listed", tools: [{ name: "search", description: "Search", serverId: "https://docs.example.com/mcp" }] },
+    });
+    expect(state).toMatchObject({ agentName: "Old", mcpServers: ["docs"], tools: [expect.anything()], planIssues: [expect.anything()] });
+    state = chatReducer(state, action);
+    expect(state).toMatchObject({ agentName: "", mcpServers: [], planIssues: [], tools: [] });
+  });
+
   it("records an error", () => {
     const state = chatReducer(initialChatState, {
       type: "server",
