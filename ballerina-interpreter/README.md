@@ -48,7 +48,7 @@ The model is configured via the `model` block in the AFM frontmatter. Supported 
 | `openai` | `name` | `authentication` (api-key) |
 | `anthropic` | `name` | `authentication` (api-key) |
 | `ollama` | `name` | none (optional `url`, defaults to `http://localhost:11434`) |
-| `gemini` | `name`, `provider_options.project` | Google credentials file via `GOOGLE_APPLICATION_CREDENTIALS` |
+| `gemini` | `name`, `provider_options.project` | Google credentials file via `GOOGLE_APPLICATION_CREDENTIALS` (optional `url` for a custom Vertex AI endpoint) |
 
 Provider-specific settings go under `provider_options`. Keys that the selected provider does not support are rejected.
 
@@ -65,7 +65,7 @@ model:
     location: us-central1        # optional, defaults to global
 ```
 
-The `authentication` field is not used. Credentials are read from the file referenced by the `GOOGLE_APPLICATION_CREDENTIALS` environment variable, which can be either:
+The `authentication` field is not supported and must be omitted. Credentials are read from the file referenced by the `GOOGLE_APPLICATION_CREDENTIALS` environment variable, which can be either:
 
 - **Application Default Credentials** (`authorized_user`), created by `gcloud auth application-default login`.
 - **A service account key** (`service_account`), a downloaded JSON key file.

@@ -93,7 +93,7 @@ afm framework list
 
 - `OPENAI_API_KEY` - Required for OpenAI models
 - `ANTHROPIC_API_KEY` - Required for Anthropic models
-- `GOOGLE_API_KEY` - Required for Gemini models, unless Vertex AI is used (see [Google Gemini](https://github.com/wso2/reference-implementations-afm/tree/main/python-interpreter/packages/afm-langchain#google-gemini))
+- `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) - Required for Gemini models, unless the key is set in `model.authentication` or Vertex AI is used (see [Google Gemini](https://github.com/wso2/reference-implementations-afm/tree/main/python-interpreter/packages/afm-langchain#google-gemini))
 
 ### CLI Options
 

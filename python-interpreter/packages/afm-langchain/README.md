@@ -54,7 +54,7 @@ model:
   name: gemini-2.5-flash  # or other Gemini models
 ```
 
-Requires: `GOOGLE_API_KEY` environment variable, or an `authentication` block
+Requires: `GOOGLE_API_KEY` (or `GEMINI_API_KEY`) environment variable, or an `authentication` block
 
 To use Vertex AI instead of the Gemini Developer API, set the project, and optionally the location, under `provider_options`:
 
