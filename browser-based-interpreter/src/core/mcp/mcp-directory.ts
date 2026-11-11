@@ -195,3 +195,8 @@ export const DIRECTORY_ENTRIES: readonly DirectoryEntry[] = ROWS.map(([id, title
   docsUrl,
   auth: authOf(auth),
 }));
+
+// A server counts as vetted only when its address is exactly one the directory lists.
+export function isDirectoryAddress(address: string): boolean {
+  return DIRECTORY_ENTRIES.some((entry) => entry.url === address);
+}

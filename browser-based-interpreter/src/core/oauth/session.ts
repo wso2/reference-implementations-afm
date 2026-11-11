@@ -27,9 +27,11 @@ import {
   challengeOf,
   checkedAuthorizationServer,
   checkedResource,
+  issuerIsWrong,
   parseChallengeScope,
 } from "./discovery";
 import { bytesToBase64Url } from "../base64";
+import { isDirectoryAddress } from "../mcp/mcp-directory";
 
 export interface OAuthProviderRef {
   authorizeUrl: string;
@@ -90,7 +92,6 @@ interface Attempt {
 }
 
 const SIGNED_OUT = "You signed out before the sign-in finished - please sign in again.";
-const withoutSlash = (url: string): string => url.replace(/\/$/, "");
 
 export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, store: KeyValueStore, fetchFn: typeof fetch): AuthorizationCodeSession {
   const refreshKey = authorizationCodeRefreshKey(config);
@@ -161,7 +162,8 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
     pending = undefined;
     if (flow === undefined) throw new Error("No OAuth2 sign-in is waiting for this answer - please sign in again.");
     if (state !== flow.state) throw new Error("OAuth2 sign-in state mismatch (possible CSRF) - please sign in again.");
-    if (iss !== undefined && withoutSlash(iss) !== withoutSlash(flow.metadata?.issuer ?? "")) {
+    // A directory server is vetted and names its own login server, so no attacker can stand in between. Every other server is checked.
+    if (!isDirectoryAddress(config.resource) && issuerIsWrong(flow.metadata, iss)) {
       throw new Error("The sign-in response did not come from the expected provider - please sign in again.");
     }
     return flow;

@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, it, expect } from "vitest";
-import { DIRECTORY_CATEGORIES, DIRECTORY_ENTRIES } from "./mcp-directory";
+import { DIRECTORY_CATEGORIES, DIRECTORY_ENTRIES, isDirectoryAddress } from "./mcp-directory";
 
 function isHttps(value: string): boolean {
   try {
@@ -129,5 +129,18 @@ describe("the directory's categories", () => {
     expect(of("notion")).toBe("work");
     expect(of("stripe")).toBe("business");
     expect(of("canva")).toBe("design");
+  });
+});
+
+describe("isDirectoryAddress", () => {
+  it("is true for the address of every listed server", () => {
+    expect(DIRECTORY_ENTRIES.filter((entry) => !isDirectoryAddress(entry.url))).toEqual([]);
+  });
+
+  it("is false for anything that is not exactly a listed address", () => {
+    const { url } = DIRECTORY_ENTRIES.find((entry) => entry.id === "notion")!;
+    for (const other of [`${url}/`, `${url}?x=1`, url.replace("mcp.notion.com", "MCP.notion.com"), url.replace("https", "http"), `${url}/other`, "https://evil.example/mcp", ""]) {
+      expect(isDirectoryAddress(other)).toBe(false);
+    }
   });
 });

@@ -22,9 +22,18 @@ export interface AuthorizationServerMetadata {
   token_endpoint: string;
   registration_endpoint?: string;
   client_id_metadata_document_supported?: boolean;
+  authorization_response_iss_parameter_supported?: boolean;
   response_types_supported?: string[];
   code_challenge_methods_supported?: string[];
   scopes_supported?: string[];
+}
+
+// RFC 9207 and the MCP specification (2026-07-28, Authorization Response Validation): an issuer in the
+// answer must equal the recorded one exactly, and a missing one is refused when the server said it sends one.
+export function issuerIsWrong(metadata: AuthorizationServerMetadata | undefined, iss: string | undefined): boolean {
+  if (metadata === undefined) return true;
+  if (iss === undefined) return metadata.authorization_response_iss_parameter_supported === true;
+  return iss !== metadata.issuer;
 }
 
 async function tryFetchJson<T>(url: string, fetchFn: typeof fetch): Promise<T | null> {

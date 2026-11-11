@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authorizationCodeRefreshKey,
   createAuthorizationCodeSession,
@@ -23,6 +23,12 @@ import {
   type AuthorizationCodeSession,
   type KeyValueStore,
 } from "./session";
+
+const directory = vi.hoisted(() => ({ addresses: [] as string[] }));
+vi.mock("../mcp/mcp-directory", () => ({ isDirectoryAddress: (address: string) => directory.addresses.includes(address) }));
+beforeEach(() => {
+  directory.addresses = [];
+});
 
 const MCP = "https://mcp.example.com/mcp";
 const AS = "https://auth.example.com";
@@ -294,14 +300,25 @@ describe("finishing a sign-in", () => {
   });
 
   describe("the issuer an answer names", () => {
-    it.each([[AS], [`${AS}/`]])("lets the sign-in finish when it is %s", async (iss) => {
+    const promised = (w: World) => {
+      w.asMetadata = { ...w.asMetadata, authorization_response_iss_parameter_supported: true };
+    };
+
+    it("lets the sign-in finish when it is exactly the recorded issuer", async () => {
       const { session } = setup();
       const authorize = await startedAt(session);
-      await session.completeSignIn("good-code", authorize.searchParams.get("state")!, iss);
+      await session.completeSignIn("good-code", authorize.searchParams.get("state")!, AS);
       expect(session.hasSession()).toBe(true);
     });
 
-    it("lets an answer with no issuer through", async () => {
+    it("refuses the recorded issuer with a slash added, because the two must be identical", async () => {
+      const { session, w } = setup();
+      const authorize = await startedAt(session);
+      await expect(session.completeSignIn("good-code", authorize.searchParams.get("state")!, `${AS}/`)).rejects.toThrow(/expected provider/);
+      expect(tokenRequests(w)).toHaveLength(0);
+    });
+
+    it("lets an answer with no issuer through when the server never said it would send one", async () => {
       const { session } = setup();
       const authorize = await startedAt(session);
       await session.completeSignIn("good-code", authorize.searchParams.get("state")!);
@@ -313,6 +330,61 @@ describe("finishing a sign-in", () => {
       const authorize = await startedAt(session);
       await expect(session.completeSignIn("good-code", authorize.searchParams.get("state")!, "https://attacker.example")).rejects.toThrow(/expected provider/);
       expect(tokenRequests(w)).toHaveLength(0);
+    });
+
+    it("refuses an answer with no issuer when the server said it would send one, without asking for tokens", async () => {
+      const { session, w } = setup();
+      promised(w);
+      const authorize = await startedAt(session);
+      await expect(session.completeSignIn("good-code", authorize.searchParams.get("state")!)).rejects.toThrow(/expected provider/);
+      expect(tokenRequests(w)).toHaveLength(0);
+    });
+
+    it("lets an answer through when the server said it would send an issuer and did", async () => {
+      const { session, w } = setup();
+      promised(w);
+      const authorize = await startedAt(session);
+      await session.completeSignIn("good-code", authorize.searchParams.get("state")!, AS);
+      expect(session.hasSession()).toBe(true);
+    });
+
+    it("uses the login server it discovered, never the one the file names", async () => {
+      const { session, w } = setup({ authorizeUrl: "https://attacker.example/authorize", tokenUrl: "https://attacker.example/token" });
+      const authorize = await startedAt(session);
+      expect(authorize.origin).toBe(AS);
+      await session.completeSignIn("good-code", authorize.searchParams.get("state")!, AS);
+      expect(w.requests.map((r) => new URL(r.url).origin)).not.toContain("https://attacker.example");
+      expect(tokenRequests(w)).toHaveLength(1);
+    });
+
+    describe("for a server the directory lists", () => {
+      it.each([["no issuer", undefined], ["another issuer", "https://attacker.example"], ["a slash added", `${AS}/`]])(
+        "is not held to it: an answer with %s still finishes the sign-in",
+        async (_name, iss) => {
+          directory.addresses = [MCP];
+          const { session, w } = setup();
+          promised(w);
+          const authorize = await startedAt(session);
+          await session.completeSignIn("good-code", authorize.searchParams.get("state")!, iss);
+          expect(session.hasSession()).toBe(true);
+        },
+      );
+
+      it("is still signed in at the login server the directory server itself names, not one the file names", async () => {
+        directory.addresses = [MCP];
+        const { session, w } = setup({ authorizeUrl: "https://attacker.example/authorize", tokenUrl: "https://attacker.example/token" });
+        const authorize = await startedAt(session);
+        expect(authorize.origin).toBe(AS);
+        await session.completeSignIn("good-code", authorize.searchParams.get("state")!, "https://attacker.example");
+        expect(w.requests.map((r) => new URL(r.url).origin)).not.toContain("https://attacker.example");
+      });
+
+      it("still needs the right state", async () => {
+        directory.addresses = [MCP];
+        const { session } = setup();
+        await startedAt(session);
+        await expect(session.completeSignIn("good-code", "forged")).rejects.toThrow(/state mismatch/);
+      });
     });
   });
 
@@ -331,6 +403,13 @@ describe("finishing a sign-in", () => {
       const again = (await startedAt(session)).searchParams.get("state")!;
       expect(() => session.declineSignIn(again, "https://attacker.example")).toThrow(/expected provider/);
       expect(state).not.toBe(again);
+    });
+
+    it("is dropped when it has no issuer and the server said it would send one", async () => {
+      const { session, w } = setup();
+      w.asMetadata = { ...w.asMetadata, authorization_response_iss_parameter_supported: true };
+      const state = (await startedAt(session)).searchParams.get("state")!;
+      expect(() => session.declineSignIn(state)).toThrow(/expected provider/);
     });
   });
 });

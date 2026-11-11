@@ -21,6 +21,7 @@ import {
   checkedAuthorizationServer,
   checkedResource,
   discoverAuthorizationServer,
+  issuerIsWrong,
   parseChallengeScope,
   registerClient,
   resolveClientId,
@@ -397,5 +398,49 @@ describe("resolveClientId", () => {
   it("gives an empty id when the registration is refused", async () => {
     const { fn } = fakeFetch(400, { error: "invalid_client_metadata" });
     expect(await resolveClientId({ registration_endpoint: "https://as.example/register" }, undefined, REDIRECT, fn)).toBe("");
+  });
+});
+
+describe("issuerIsWrong", () => {
+  const ISSUER = "https://auth.example.com";
+  const sends = { ...LINEAR_AS_METADATA, issuer: ISSUER, authorization_response_iss_parameter_supported: true };
+  const silent = { ...LINEAR_AS_METADATA, issuer: ISSUER };
+
+  it("accepts the recorded issuer, whether or not the server said it would send one", () => {
+    expect(issuerIsWrong(sends, ISSUER)).toBe(false);
+    expect(issuerIsWrong(silent, ISSUER)).toBe(false);
+  });
+
+  it("refuses any other issuer, whether or not the server said it would send one", () => {
+    expect(issuerIsWrong(sends, "https://attacker.example")).toBe(true);
+    expect(issuerIsWrong(silent, "https://attacker.example")).toBe(true);
+  });
+
+  it("refuses a missing issuer only when the server said it would send one", () => {
+    expect(issuerIsWrong(sends, undefined)).toBe(true);
+    expect(issuerIsWrong(silent, undefined)).toBe(false);
+    expect(issuerIsWrong({ ...silent, authorization_response_iss_parameter_supported: false }, undefined)).toBe(false);
+  });
+
+  it("compares as plain text: a slash, another case or a path is a different issuer", () => {
+    expect(issuerIsWrong(silent, `${ISSUER}/`)).toBe(true);
+    expect(issuerIsWrong(silent, "https://AUTH.example.com")).toBe(true);
+    expect(issuerIsWrong(silent, `${ISSUER}/mcp`)).toBe(true);
+  });
+
+  it("treats an empty issuer as an issuer that is present and wrong", () => {
+    expect(issuerIsWrong(silent, "")).toBe(true);
+    expect(issuerIsWrong(sends, "")).toBe(true);
+  });
+
+  it("counts the promise only when it is the boolean true", () => {
+    for (const promise of ["true", 1, "yes", null]) {
+      expect(issuerIsWrong({ ...silent, authorization_response_iss_parameter_supported: promise as never }, undefined)).toBe(false);
+    }
+  });
+
+  it("refuses everything when no issuer was recorded", () => {
+    expect(issuerIsWrong(undefined, ISSUER)).toBe(true);
+    expect(issuerIsWrong(undefined, undefined)).toBe(true);
   });
 });
