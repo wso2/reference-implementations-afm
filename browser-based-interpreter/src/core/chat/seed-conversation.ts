@@ -18,6 +18,8 @@ import { type ModelMessage } from "@afm/runtime";
 import { type UiMessage } from "./chat-state";
 import { userContent } from "./chat-text";
 
+const INTERRUPTED = "This tool call was interrupted before it returned a result.";
+
 export function toSeededConversation(messages: UiMessage[]): ModelMessage[] {
   const conversation: ModelMessage[] = [];
   let assistantText: string | null = null;
@@ -57,7 +59,7 @@ export function toSeededConversation(messages: UiMessage[]): ModelMessage[] {
       flush();
       assistantText = message.text;
     } else if (message.kind === "tool") {
-      calls.push({ id: message.callId, name: message.name, args: message.args, result: message.result ?? "" });
+      calls.push({ id: message.callId, name: message.name, args: message.args, result: message.result ?? INTERRUPTED });
     }
   }
   flush();

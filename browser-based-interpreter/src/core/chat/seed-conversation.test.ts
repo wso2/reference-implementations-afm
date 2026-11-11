@@ -130,6 +130,21 @@ describe("toSeededConversation", () => {
     expect(callIds).toEqual(resultIds);
   });
 
+  it("tells the model that a tool call still running when stored was interrupted, not that it returned nothing", () => {
+    const conversation = toSeededConversation([{ kind: "user", id: 1, text: "go" }, tool(2, "c1", "slow")]);
+    expect(conversation.at(-1)).toEqual({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "slow",
+          output: { type: "text", value: "This tool call was interrupted before it returned a result." },
+        },
+      ],
+    });
+  });
+
   it("ignores notice rows, which the model never saw", () => {
     expect(
       toSeededConversation([

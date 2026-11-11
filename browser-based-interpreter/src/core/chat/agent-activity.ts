@@ -54,7 +54,7 @@ function brokenLines(state: ChatState, tools: ToolInfo[]): { servers: string[]; 
   }
   const answeringNowhere = [...callsByServer].filter(([, failures]) => failures.every(Boolean)).map(([id]) => id);
   const anyCallFailed = [...callsByServer.values()].some((failures) => failures.some(Boolean));
-  return { servers: answeringNowhere, model: state.error !== null && !anyCallFailed };
+  return { servers: answeringNowhere, model: state.error !== null && state.status !== "streaming" && !anyCallFailed };
 }
 
 export function reportedActivity(state: ChatState, tools: ToolInfo[]): AgentActivity {
@@ -64,7 +64,8 @@ export function reportedActivity(state: ChatState, tools: ToolInfo[]): AgentActi
   if (state.status === "connecting") return { phase: "thinking", ...rest };
   if (state.status !== "streaming") return { phase: "idle", ...rest };
 
-  const running = state.messages.findLast((message) => message.kind === "tool" && message.status === "running");
+  const thisTurn = state.messages.slice(lastUserIndex(state.messages) + 1);
+  const running = thisTurn.findLast((message) => message.kind === "tool" && message.status === "running");
   if (running?.kind === "tool") {
     return { phase: "tool", serverId: serverOf(running.name, tools), ...rest };
   }

@@ -71,6 +71,11 @@ describe("what the diagram is allowed to light up", () => {
     expect(reportedActivity(state({ status: "streaming", messages }), TOOLS).phase).toBe("thinking");
   });
 
+  it("does not let a tool left running in an earlier turn decide what this turn is doing", () => {
+    const messages: UiMessage[] = [user, tool("get_issue", "running"), { kind: "user", id: 9, text: "again" }];
+    expect(reportedActivity(state({ status: "streaming", messages, tools: TOOLS }), TOOLS).phase).toBe("thinking");
+  });
+
   it("lights nothing for a tool it cannot place", () => {
     const messages = [user, tool("mystery", "running")];
     const activity = reportedActivity(state({ status: "streaming", messages }), TOOLS);
@@ -160,6 +165,11 @@ describe("which line broke", () => {
     const activity = reportedActivity(state({ messages: [user], error: "rate limited" }), TOOLS);
     expect(activity.modelBroken).toBe(true);
     expect(activity.brokenServerIds).toEqual([]);
+  });
+
+  it("does not blame the model for a command that was turned down while it is still answering", () => {
+    const activity = reportedActivity(state({ status: "streaming", messages: [user], error: "still answering" }), TOOLS);
+    expect(activity.modelBroken).toBe(false);
   });
 
   it("blames the tool that failed rather than the model that reported it", () => {
