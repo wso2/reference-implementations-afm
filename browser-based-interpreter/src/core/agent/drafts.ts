@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type AgentMetadata } from "@afm/engine";
+import { type AgentMetadata, parseAfm } from "@afm/engine";
 import type { LanguageModel } from "@afm/runtime";
 import { completeText } from "../runtime/complete-text";
 import { DEFAULT_PROVIDER, findProvider } from "./catalogs";
@@ -40,8 +40,8 @@ export function buildAfmSource(rawText: string, provider: string, modelName: str
     "---",
     `name: ${JSON.stringify(name)}`,
     "model:",
-    `  provider: ${provider}`,
-    `  name: ${modelName}`,
+    `  provider: ${JSON.stringify(provider)}`,
+    `  name: ${JSON.stringify(modelName)}`,
     "  authentication:",
     "    type: api-key",
     `    api_key: "${secretReference(secretName)}"`,
@@ -53,13 +53,25 @@ export function buildAfmSource(rawText: string, provider: string, modelName: str
   return `${frontmatter}${body}\n`;
 }
 
+const DRAFT_TIMEOUT_MS = 120_000;
+
+function hasRoleAndInstructions(source: string): boolean {
+  try {
+    const { role, instructions } = parseAfm(source);
+    return role.trim() !== "" && instructions.trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
 type DraftResult = { kind: "draft"; source: string } | { kind: "clarify"; questions: string[] };
 
 function clarifyingQuestions(text: string): string[] | null {
   if (!text.startsWith("{")) return null;
   try {
     const { clarify } = JSON.parse(text) as { clarify?: unknown };
-    return Array.isArray(clarify) && clarify.every((question) => typeof question === "string") ? clarify : null;
+    const asked = Array.isArray(clarify) && clarify.length > 0 && clarify.every((question) => typeof question === "string" && question.trim() !== "");
+    return asked ? clarify : null;
   } catch {
     return null;
   }
@@ -97,8 +109,10 @@ export async function generateDraft(
       "short, concrete questions.\n" +
       `Otherwise, ${fileSpec}\n\n` +
       `Request: ${promptText}`;
-  const text = await completeText(languageModel, instruction);
+  const text = await completeText(languageModel, instruction, AbortSignal.timeout(DRAFT_TIMEOUT_MS));
   const questions = final ? null : clarifyingQuestions(stripCodeFence(text));
   if (questions !== null) return { kind: "clarify", questions };
-  return { kind: "draft", source: buildAfmSource(text, provider, modelName, secretName) };
+  const source = buildAfmSource(text, provider, modelName, secretName);
+  if (!hasRoleAndInstructions(source)) throw new Error("The model's answer could not be used as an agent. Please try again.");
+  return { kind: "draft", source };
 }

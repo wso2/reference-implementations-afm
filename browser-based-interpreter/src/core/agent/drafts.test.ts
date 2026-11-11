@@ -16,6 +16,7 @@
 
 import { type AgentMetadata, parseAfm, validateMetadata } from "@afm/engine";
 import { describe, expect, it, vi } from "vitest";
+import { RequestTimeoutError } from "../chat/failure";
 import { findProvider } from "./catalogs";
 import { modelOf, type FakeEvent, type FakeModel, type FakeRequest } from "../../test-support/test-model";
 import { buildAfmSource, generateDraft, stripCodeFence } from "./drafts";
@@ -84,8 +85,8 @@ describe("buildAfmSource", () => {
   it("embeds the extracted name, quoted, and the model/secret fields", () => {
     const source = buildAfmSource(raw, "anthropic", "claude-sonnet-4-5", "ANTHROPIC_API_KEY");
     expect(source).toContain('name: "SuperMart Manager"');
-    expect(source).toContain("provider: anthropic");
-    expect(source).toContain("name: claude-sonnet-4-5");
+    expect(source).toContain('provider: "anthropic"');
+    expect(source).toContain('name: "claude-sonnet-4-5"');
     expect(source).toContain('api_key: "${env:ANTHROPIC_API_KEY}"');
   });
 
@@ -116,6 +117,16 @@ describe("buildAfmSource", () => {
     const source = buildAfmSource(withColon, "openai", "gpt-4o", "OPENAI_API_KEY");
     expect(source).toContain('name: "Support: Tier 1"');
     assertValidAfm(source);
+  });
+
+  it("writes the provider and model name as quoted text, so odd characters read back exactly", () => {
+    const odd = "my model # not a comment: x\nauthentication: injected";
+    const source = buildAfmSource(raw, "openai", odd, "OPENAI_API_KEY");
+    expect(parseAfm(source).frontmatter.model).toEqual({
+      provider: "openai",
+      name: odd,
+      authentication: { type: "api-key", api_key: "${env:OPENAI_API_KEY}" },
+    });
   });
 
   it("strips a code fence the model wrapped the whole response in", () => {
@@ -211,8 +222,7 @@ describe("generateDraft", () => {
   it.each([
     ["plain", '{"clarify":["Who?","Tone?"]}', ["Who?", "Tone?"]],
     ["fenced", '```json\n{"clarify":["Who?"]}\n```', ["Who?"]],
-    ["empty list", '{"clarify":[]}', []],
-    ["empty/extra questions", '{"clarify":["","1","2","3","4"]}', ["", "1", "2", "3", "4"]],
+    ["more than three", '{"clarify":["1","2","3","4"]}', ["1", "2", "3", "4"]],
     ["extra fields", '{"clarify":["Who?"],"extra":true}', ["Who?"]],
   ])("preserves accepted clarification shapes: %s", async (_name, text, questions) => {
     const test = fixture([{ type: "text-delta", text: String(text) }]);
@@ -222,26 +232,41 @@ describe("generateDraft", () => {
   it.each([
     '{"clarify":["Who?",3]}',
     '{"clarify":null}',
+    '{"clarify":[]}',
+    '{"clarify":["", "Who?"]}',
+    '{"clarify":["  "]}',
     '{"other":[]}',
     '{"clarify":',
     '["Who?"]',
     "",
     "  plain text  ",
-  ])("treats other responses as a draft: %s", async (text) => {
+    "# Role\nOnly a role.",
+    "# Instructions\nOnly instructions.",
+  ])("does not turn an answer that is not an agent into a draft: %j", async (text) => {
     const test = fixture([{ type: "text-delta", text }]);
-    await expect(generateDraft("request", MODEL, false, test.resolve)).resolves.toEqual({
-      kind: "draft",
-      source: buildAfmSource(text, "anthropic", "chosen-model", "ANTHROPIC_API_KEY"),
-    });
+    await expect(generateDraft("request", MODEL, false, test.resolve)).rejects.toThrow("could not be used");
   });
 
-  it("treats even a valid clarification response as a draft on the final request", async () => {
-    const text = '{"clarify":["Another question?"]}';
-    const test = fixture([{ type: "text-delta", text }]);
-    await expect(generateDraft("request", MODEL, true, test.resolve)).resolves.toEqual({
-      kind: "draft",
-      source: buildAfmSource(text, "anthropic", "chosen-model", "ANTHROPIC_API_KEY"),
-    });
+  it("does not turn a clarification into a draft on the final request", async () => {
+    const test = fixture([{ type: "text-delta", text: '{"clarify":["Another question?"]}' }]);
+    await expect(generateDraft("request", MODEL, true, test.resolve)).rejects.toThrow("could not be used");
+  });
+
+  it("gives the model a limited time to answer", async () => {
+    const limit = AbortSignal.abort();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(limit);
+    try {
+      const test = fixture([{ type: "text-delta", text: TEXT }]);
+      await expect(generateDraft("request", MODEL, false, test.resolve)).rejects.toBeInstanceOf(RequestTimeoutError);
+      expect(timeout).toHaveBeenCalledWith(120_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it.each(["length", "content-filter"] as const)("does not turn an answer cut short by %s into a draft", async (reason) => {
+    const test = fixture([{ type: "text-delta", text: TEXT }, { type: "finish", reason }]);
+    await expect(generateDraft("request", MODEL, false, test.resolve)).rejects.toThrow("did not finish");
   });
 
   const defaults: [AgentMetadata["model"], string, string, string][] = [
@@ -282,15 +307,17 @@ describe("generateDraft", () => {
   });
 
   it("uses separate buffers and fresh, unaborted signals for simultaneous calls", async () => {
-    const first = fixture([{ type: "text-delta", text: "first" }]);
-    const second = fixture([{ type: "text-delta", text: "second" }]);
+    const FIRST = TEXT.replace("Fixture Agent", "First");
+    const SECOND = TEXT.replace("Fixture Agent", "Second");
+    const first = fixture([{ type: "text-delta", text: FIRST }]);
+    const second = fixture([{ type: "text-delta", text: SECOND }]);
     const results = await Promise.all([
       generateDraft("one", undefined, false, first.resolve),
       generateDraft("two", MODEL, true, second.resolve),
     ]);
     expect(results).toEqual([
-      { kind: "draft", source: buildAfmSource("first", "openai", firstModelOf("openai"), "OPENAI_API_KEY") },
-      { kind: "draft", source: buildAfmSource("second", "anthropic", "chosen-model", "ANTHROPIC_API_KEY") },
+      { kind: "draft", source: buildAfmSource(FIRST, "openai", firstModelOf("openai"), "OPENAI_API_KEY") },
+      { kind: "draft", source: buildAfmSource(SECOND, "anthropic", "chosen-model", "ANTHROPIC_API_KEY") },
     ]);
     expect(first.stream.mock.calls[0]?.[1]).not.toBe(second.stream.mock.calls[0]?.[1]);
     expect(first.abortedWhenAsked).toEqual([false]);
