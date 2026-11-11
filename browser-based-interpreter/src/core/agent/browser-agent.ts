@@ -88,8 +88,9 @@ function runnableFrontmatter(frontmatter: Mapping): Mapping {
 
 function withResolvedValues(declared: AgentMetadata, resolved: AgentMetadata): AgentMetadata {
   const { model, tools } = declared;
-  const resolvedServers = resolved.tools?.mcp ?? [];
-  const servers = tools?.mcp?.map((server) => resolvedServers.find((found) => found.name === server.name) ?? server);
+  const resolvedServers = [...(resolved.tools?.mcp ?? [])];
+  // The browser loads only the http servers, in the order they are declared, so each one is matched by its place, not its name.
+  const servers = tools?.mcp?.map((server) => (server.transport.type === "http" ? (resolvedServers.shift() ?? server) : server));
   return {
     ...declared,
     model: model === undefined || resolved.model === undefined ? model : { ...resolved.model, url: model.url },
@@ -102,7 +103,7 @@ export function loadForBrowser(content: string, env: Env): BrowserLoaded {
   const { metadata: declared, signIns, stripped } = declare(parsed.frontmatter);
   const runnable = { ...parsed, role: "", instructions: "", frontmatter: runnableFrontmatter(stripped) };
   const loaded = loadParsed(runnable, { env });
-  const resolvedSignIns = signIns.map((signIn) => ({ ...signIn, auth: resolveValues(signIn.auth, env) as Mapping }));
+  const resolvedSignIns = signIns.map((signIn) => ({ ...signIn, name: resolveValues(signIn.name, env), auth: resolveValues(signIn.auth, env) as Mapping }));
   const metadata = withSignIns(loaded.metadata, resolvedSignIns);
   return {
     metadata,

@@ -82,6 +82,11 @@ describe("the browser plan for a file that writes its values as variables", () =
     ]);
   });
 
+  it("blocks credentials for a plain http address when the server's name is a variable too", () => {
+    const plan = planFor(agent("openai", [httpServer("${env:SRV}", "${env:URL}")]), { SRV: "remote", URL: "http://remote.example.com/mcp" });
+    expect(plan.issues).toEqual([expect.objectContaining({ severity: "blocked", code: "tool-credentials-insecure", path: "tools.mcp[0].transport.url" })]);
+  });
+
   it("refuses a custom model address, which the browser cannot use", () => {
     const plan = planFor(agent("${env:PROVIDER}", [secure], ['  url: "https://models.example.com"']), { PROVIDER: "openai" });
     expect(plan.issues).toEqual([expect.objectContaining({ severity: "blocked", code: "model-url-unsupported", path: "model.url" })]);
@@ -140,6 +145,13 @@ describe("loadForBrowser", () => {
     });
     expect(servers[1]?.transport).not.toHaveProperty("authentication");
     expect(plan.issues.map((issue) => [issue.code, issue.path])).toEqual([["stdio-transport-unsupported", "tools.mcp[0].transport"]]);
+  });
+
+  it("keeps a server's sign-in when its name is written as a variable", () => {
+    const file = SIGN_IN_FILE.replace("name: docs", 'name: "${env:DOCS}"');
+    const server = loadForBrowser(file, { ...env, DOCS: "docs" }).metadata.tools?.mcp?.[0];
+    expect(server?.name).toBe("docs");
+    expect(server?.transport).toMatchObject({ authentication: { type: "oauth2", client_id: "client-9" } });
   });
 
   it("puts the key in the model block and leaves Role and Instructions as written", () => {
