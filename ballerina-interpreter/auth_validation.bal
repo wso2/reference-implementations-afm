@@ -523,3 +523,8 @@ isolated function isValidTokenUrl(string url) returns boolean {
     return (scheme == "https" || (scheme == "http" && LOOPBACK_HOSTS.indexOf(host.toLowerAscii()) is int))
         && httpLibraryReads(url);
 }
+
+isolated function isPlainHttpRemote(string url) returns boolean {
+    [string, string]? parts = splitAuthority(url);
+    return parts is [string, string] && parts[0] == "http" && LOOPBACK_HOSTS.indexOf(parts[1].toLowerAscii()) is ();
+}

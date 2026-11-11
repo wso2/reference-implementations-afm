@@ -21,6 +21,7 @@ function createMcpToolKit(HttpTransport transport, ToolFilter? filter, string af
         returns ai:McpBaseToolKit|error {
     ClientAuthentication? auth = transport.authentication;
     string authLocation = location + ".transport.authentication";
+    warnIfPlainHttp(transport.url, auth, location + ".transport.url");
     if auth is ApiKeyAuthentication|OAuth2Authentication {
         HeaderProvider headers = <HeaderProvider>check createHeaderProvider(auth, afmFileDir, authLocation, transport.url);
         return new McpHttpToolKit(transport.url, headers, filter, location);

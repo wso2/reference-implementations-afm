@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/lang.array;
+import ballerina/log;
 
 type HeaderProvider isolated object {
     isolated function getHeaders() returns map<string>|error;
@@ -107,4 +108,19 @@ function createHeaderProvider(ClientAuthentication? auth, string afmFileDir, str
     AssertionSigning? assertionSigning = auth?.assertion_signing;
     JwtSigner? signer = assertionSigning is AssertionSigning ? check new JwtSigner(assertionSigning, afmFileDir) : ();
     return new OAuth2Headers(check new OAuth2TokenProvider(auth, signer, mcpUrl = mcpUrl));
+}
+
+// Only `target` is reported: the URL can carry credentials in its user info or query.
+isolated function plainHttpWarning(string url, ClientAuthentication? auth, string target) returns string? {
+    if auth is () || !isPlainHttpRemote(url) {
+        return ();
+    }
+    return string `${target}: authentication is sent over plain http, which does not protect credentials or tokens on the network; use an https URL`;
+}
+
+function warnIfPlainHttp(string url, ClientAuthentication? auth, string target) {
+    string? warning = plainHttpWarning(url, auth, target);
+    if warning is string {
+        log:printWarn(warning);
+    }
 }
