@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -47,7 +48,13 @@ OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
-GOOGLE_GENAI_USE_VERTEXAI_ENV = "GOOGLE_GENAI_USE_VERTEXAI"
+
+# Variables that make the Google SDK select Vertex AI on its own
+VERTEXAI_SELECTION_ENV_VARS = (
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_GENAI_USE_ENTERPRISE",
+)
+_vertexai_env_lock = threading.Lock()
 
 # Keys accepted under `provider_options`, per provider
 SUPPORTED_PROVIDER_OPTIONS: dict[str, frozenset[str]] = {
@@ -191,7 +198,7 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
             fallback_env_vars=(GEMINI_API_KEY_ENV,),
         )
         # LangChain does not pass `vertexai=False` on to the Google SDK client, which
-        # reads GOOGLE_GENAI_USE_VERTEXAI itself, so hide the variable while it is built.
+        # reads the Vertex AI selection variables itself, so hide them while it is built.
         with _without_vertexai_env():
             return ChatGoogleGenerativeAI(**kwargs)
 
@@ -200,13 +207,17 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
 
 @contextmanager
 def _without_vertexai_env() -> Iterator[None]:
-    """Temporarily remove GOOGLE_GENAI_USE_VERTEXAI so the Developer API is used."""
-    saved = os.environ.pop(GOOGLE_GENAI_USE_VERTEXAI_ENV, None)
-    try:
-        yield
-    finally:
-        if saved is not None:
-            os.environ[GOOGLE_GENAI_USE_VERTEXAI_ENV] = saved
+    """Temporarily remove the Vertex AI selection variables so the Developer API is used."""
+    with _vertexai_env_lock:
+        saved = {
+            name: os.environ.pop(name)
+            for name in VERTEXAI_SELECTION_ENV_VARS
+            if name in os.environ
+        }
+        try:
+            yield
+        finally:
+            os.environ.update(saved)
 
 
 def _create_ollama_model(afm_model: Model) -> ChatOllama:

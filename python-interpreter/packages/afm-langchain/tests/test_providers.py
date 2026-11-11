@@ -16,6 +16,8 @@
 
 import os
 import sys
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -227,23 +229,26 @@ class TestGeminiProvider:
         assert kwargs["vertexai"] is True
         assert "api_key" not in kwargs
 
-    def test_gemini_studio_ignores_vertexai_env_var(self) -> None:
-        """Verify GOOGLE_GENAI_USE_VERTEXAI cannot switch the Developer API path to Vertex AI."""
+    @pytest.mark.parametrize(
+        "env_var", ["GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_ENTERPRISE"]
+    )
+    def test_gemini_studio_ignores_vertexai_env_vars(self, env_var: str) -> None:
+        """Verify the Vertex AI selection variables cannot switch the Developer API path to Vertex AI."""
         afm_model = Model(
             provider="gemini",
             name="gemini-2.5-flash",
             authentication=ClientAuthentication(type="api-key", api_key="dummy"),
         )
 
-        with patch.dict(os.environ, {"GOOGLE_GENAI_USE_VERTEXAI": "true"}):
+        with patch.dict(os.environ, {env_var: "true"}):
             llm = create_model_provider(afm_model)
             # The variable is restored for the rest of the process
-            assert os.environ["GOOGLE_GENAI_USE_VERTEXAI"] == "true"
+            assert os.environ[env_var] == "true"
 
         assert not llm.client._api_client.vertexai
 
-    def test_gemini_studio_keeps_unset_vertexai_env_var_unset(self) -> None:
-        """Verify the Developer API path does not leave GOOGLE_GENAI_USE_VERTEXAI behind."""
+    def test_gemini_studio_keeps_unset_vertexai_env_vars_unset(self) -> None:
+        """Verify the Developer API path does not leave the Vertex AI selection variables behind."""
         afm_model = Model(
             provider="gemini",
             name="gemini-2.5-flash",
@@ -253,6 +258,41 @@ class TestGeminiProvider:
         with patch.dict(os.environ, {}, clear=True):
             create_model_provider(afm_model)
             assert "GOOGLE_GENAI_USE_VERTEXAI" not in os.environ
+            assert "GOOGLE_GENAI_USE_ENTERPRISE" not in os.environ
+
+    @patch("langchain_google_genai.ChatGoogleGenerativeAI")
+    def test_gemini_studio_concurrent_creation_hides_vertexai_env_vars(
+        self, mock_chat_gemini: MagicMock
+    ) -> None:
+        """Verify overlapping model creation never sees the Vertex AI selection variables."""
+        seen: list[bool] = []
+
+        def fake_chat_gemini(**_: object) -> MagicMock:
+            time.sleep(0.05)
+            seen.append("GOOGLE_GENAI_USE_VERTEXAI" in os.environ)
+            return MagicMock()
+
+        mock_chat_gemini.side_effect = fake_chat_gemini
+        afm_model = Model(
+            provider="gemini",
+            name="gemini-2.5-flash",
+            authentication=ClientAuthentication(type="api-key", api_key="dummy"),
+        )
+
+        with patch.dict(os.environ, {"GOOGLE_GENAI_USE_VERTEXAI": "true"}):
+            threads = [
+                threading.Thread(target=create_model_provider, args=(afm_model,))
+                for _ in range(4)
+            ]
+            for thread in threads:
+                thread.start()
+                time.sleep(0.01)
+            for thread in threads:
+                thread.join()
+
+            assert os.environ["GOOGLE_GENAI_USE_VERTEXAI"] == "true"
+
+        assert seen == [False] * 4
 
     def test_gemini_studio_missing_credentials_fails(self) -> None:
         """Verify ProviderError is raised when the AI Studio path has no API key."""
