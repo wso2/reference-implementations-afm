@@ -266,6 +266,28 @@ describe("generateDraft", () => {
     }
   });
 
+  it("stops waiting for a model that goes quiet after it started, once the time is up", async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let started = () => {};
+    const asked = new Promise<void>((resolve) => (started = resolve));
+    const quiet: ModelPort = {
+      async *stream(_request, signal) {
+        started();
+        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      },
+    };
+    try {
+      const drafting = generateDraft("request", MODEL, false, async () => modelOf(quiet));
+      await asked;
+      deadline.abort();
+      await expect(drafting).rejects.toBeInstanceOf(RequestTimeoutError);
+      expect(timeout).toHaveBeenCalledWith(120_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it.each(["length", "content-filter"] as const)("does not turn an answer cut short by %s into a draft", async (reason) => {
     const test = fixture([{ type: "text-delta", text: TEXT }, { type: "finish", reason }]);
     await expect(generateDraft("request", MODEL, false, test.resolve)).rejects.toThrow("did not finish");
