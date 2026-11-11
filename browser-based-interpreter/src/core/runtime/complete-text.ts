@@ -17,6 +17,8 @@
 import { type LanguageModel, runAgentTurn } from "@afm/runtime";
 import { RequestTimeoutError } from "../chat/failure";
 
+const CUT_SHORT: readonly string[] = ["length", "content-filter"];
+
 export async function completeText(model: LanguageModel, prompt: string, signal?: AbortSignal): Promise<string> {
   let text = "";
   const turn = runAgentTurn({
@@ -30,6 +32,7 @@ export async function completeText(model: LanguageModel, prompt: string, signal?
   for await (const event of turn) {
     if (event.type === "text-delta") text += event.text;
     if (event.type === "finish" && event.reason === "aborted") throw new RequestTimeoutError("The model did not answer in time.");
+    if (event.type === "finish" && CUT_SHORT.includes(event.reason)) throw new Error("The model did not finish its answer. Please try again.");
   }
   return text;
 }
