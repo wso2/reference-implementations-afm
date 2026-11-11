@@ -536,6 +536,12 @@ describe("setting the model key", () => {
     expect(preview.ok).toBe(true);
   });
 
+  it("adds the model block when the file has none", () => {
+    const bare = "---\nname: Tester\n---\n\n# Role\nr\n";
+    const next = setModelApiKey(bare, "${env:OPENAI_API_KEY}");
+    expect(getModelApiKey(next)).toBe("${env:OPENAI_API_KEY}");
+  });
+
   it("adds only the key when authentication already exists", () => {
     const withAuth = FILE.replace("  name: gpt-4o", "  name: gpt-4o\n  authentication:\n    type: api-key");
     const next = setModelApiKey(withAuth, "${env:OPENAI_API_KEY}");

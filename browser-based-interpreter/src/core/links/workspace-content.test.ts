@@ -234,6 +234,10 @@ describe("a link to an agent that is not saved here", () => {
     expect(missingAgentId(openingOf(params("agentId=nope"), `#afm=${encoded}`, undefined))).toBeNull();
   });
 
+  it("still says the agent is missing when the shared text next to it cannot be read", () => {
+    expect(missingAgentId(openingOf(params("agentId=nope"), "#afm=!!!not-readable!!!", undefined))).toBe("nope");
+  });
+
   it("says it as a plain statement", () => {
     expect(missingAgentNotice("nope")).toBe("Agent not found `nope`.");
     expect(missingAgentNotice("")).toBe("Agent not found.");

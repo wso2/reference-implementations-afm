@@ -148,7 +148,7 @@ export function getModelApiKey(content: string): string {
 export function setModelApiKey(content: string, value: string): string {
   return edit(content, (doc) => {
     const model = doc.get("model", true);
-    if (isScalar(model) && model.value === null) doc.set("model", doc.createNode({}));
+    if (model === undefined || (isScalar(model) && model.value === null)) doc.set("model", doc.createNode({}));
     else if (!isMap(model)) return false;
     const key = doc.getIn(API_KEY, true);
     if (isScalar(key)) {

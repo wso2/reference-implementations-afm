@@ -63,8 +63,8 @@ export function initialContent(opening: Opening): string {
 }
 
 export function missingAgentId(opening: Opening): string | null {
-  const { draft, agentId, saved, file, inline } = opening;
-  return draft === undefined && agentId !== null && saved === null && file === null && inline === null ? agentId : null;
+  const { draft, agentId, saved, file, decoded } = opening;
+  return draft === undefined && agentId !== null && saved === null && file === null && decoded === null ? agentId : null;
 }
 
 export function missingAgentNotice(agentId: string): string {
