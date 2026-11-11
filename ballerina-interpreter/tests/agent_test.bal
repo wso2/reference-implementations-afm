@@ -21,6 +21,7 @@ import ballerina/io;
 import ballerina/lang.runtime;
 import ballerina/os;
 import ballerina/test;
+import ballerinax/ai.googleapis.vertex;
 
 @test:Config
 function testValidateJsonSchemaNullSchema() returns error? {
@@ -537,6 +538,24 @@ function testResolveVertexAuthServiceAccount() returns error? {
     var result = resolveVertexAuth(credentialsPath);
     check file:remove(credentialsPath);
     test:assertEquals(result, credentialsPath);
+}
+
+@test:Config
+function testResolveVertexAuthAuthorizedUser() returns error? {
+    string credentialsPath = check file:createTemp(".json");
+    check io:fileWriteJson(credentialsPath, {
+        "type": "authorized_user",
+        "client_id": "test-client",
+        "client_secret": "test-secret",
+        "refresh_token": "test-token"
+    });
+    var result = resolveVertexAuth(credentialsPath);
+    check file:remove(credentialsPath);
+    test:assertEquals(result, <vertex:OAuth2RefreshConfig>{
+        clientId: "test-client",
+        clientSecret: "test-secret",
+        refreshToken: "test-token"
+    });
 }
 
 @test:Config

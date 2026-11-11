@@ -162,6 +162,11 @@ const map<string[]> SUPPORTED_PROVIDER_OPTIONS = {
     "gemini": ["project", "location"]
 };
 
+# Rejects `provider_options` keys the provider does not support, and blank values.
+#
+# + providerOptions - The `provider_options` of the model
+# + provider - The lower-cased provider name
+# + return - An error if the options are invalid
 function validateProviderOptions(map<string>? providerOptions, string provider) returns error? {
     string[]? supportedKeys = SUPPORTED_PROVIDER_OPTIONS[provider];
     if providerOptions is () || supportedKeys is () {
@@ -190,6 +195,11 @@ function validateProviderOptions(map<string>? providerOptions, string provider) 
     }
 }
 
+# Creates a Gemini model provider that runs on Vertex AI.
+#
+# + model - The model configuration
+# + name - The model name
+# + return - The model provider, or an error if it cannot be initialized
 function getGeminiModel(Model model, string name) returns ai:ModelProvider|error {
     map<string> providerOptions = model.provider_options ?: {};
     string? project = providerOptions["project"];
@@ -213,15 +223,21 @@ function getGeminiModel(Model model, string name) returns ai:ModelProvider|error
     vertex:VertexAiAuth auth = check resolveVertexAuth(credentialsPath);
 
     string? location = providerOptions["location"];
+    // An empty service URL makes the connector use its default endpoint for the location.
+    string serviceUrl = model.url ?: "";
     vertex:ModelProvider|error vertexModel = location is string ?
-        trap new (auth, project, name, location = location) :
-        trap new (auth, project, name);
+        trap new (auth, project, name, location = location, serviceUrl = serviceUrl) :
+        trap new (auth, project, name, serviceUrl = serviceUrl);
     if vertexModel is error {
         return error(string `Failed to initialize the Vertex AI model provider: ${vertexModel.message()}`, vertexModel);
     }
     return vertexModel;
 }
 
+# Reads a Google credentials file and returns the matching Vertex AI authentication.
+#
+# + credentialsPath - The path of an `authorized_user` or `service_account` credentials file
+# + return - The Vertex AI authentication, or an error if the file is not supported
 function resolveVertexAuth(string credentialsPath) returns vertex:VertexAiAuth|error {
     json|error credsJson = io:fileReadJson(credentialsPath);
     if credsJson is error {
