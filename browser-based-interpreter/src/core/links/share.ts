@@ -15,7 +15,7 @@
 // under the License.
 
 import { splitFrontmatter } from "@afm/engine";
-import { credentialBlocks, isObject } from "../agent/credentials";
+import { credentialBlocks, isObject, type Path } from "../agent/credentials";
 import { settingsTooLong } from "../agent/frontmatter-lines";
 import { encodeInlineAfm } from "./load-paths";
 
@@ -45,9 +45,9 @@ const CREDENTIAL_FIELDS = [
   "assertion",
   "signing_key",
 ];
-const REFERENCE = /^\s*\$\{[^}]+\}\s*$/;
+const VARIABLES = /\$\{[^}]*\}?/g;
 
-export function literalCredentialFields(source: string): string[] {
+export function literalCredentialPaths(source: string): Path[] {
   if (settingsTooLong(source)) return [];
   let frontmatter: Record<string, unknown> | null;
   try {
@@ -57,13 +57,17 @@ export function literalCredentialFields(source: string): string[] {
   }
   if (frontmatter === null) return [];
 
-  const found = new Set<string>();
-  for (const { authentication } of credentialBlocks(frontmatter)) {
+  const found: Path[] = [];
+  for (const { authentication, path } of credentialBlocks(frontmatter)) {
     if (!isObject(authentication)) continue;
     for (const field of CREDENTIAL_FIELDS) {
       const value = authentication[field];
-      if (typeof value === "string" && value.trim() !== "" && !REFERENCE.test(value)) found.add(field);
+      if (typeof value === "string" && value.replace(VARIABLES, "").trim() !== "") found.push([...path, field]);
     }
   }
-  return [...found];
+  return found;
+}
+
+export function literalCredentialFields(source: string): string[] {
+  return [...new Set(literalCredentialPaths(source).map((path) => String(path.at(-1))))];
 }

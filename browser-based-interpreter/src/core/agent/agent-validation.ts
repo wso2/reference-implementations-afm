@@ -15,7 +15,7 @@
 // under the License.
 
 import { type AgentMetadata, agentMetadataSchema, describeError, parseAfm, splitFrontmatter } from "@afm/engine";
-import { literalCredentialFields } from "../links/share";
+import { literalCredentialPaths } from "../links/share";
 import { lineOfPath, pathFromText, SETTINGS_TOO_LONG, settingsRows, settingsTooLong } from "./frontmatter-lines";
 import { declaredAgent } from "./browser-agent";
 import { planForBrowser, type Plan } from "./browser-plan";
@@ -113,14 +113,10 @@ const keyInFile = (field: string) =>
   "Use a `${env:NAME}` reference instead.";
 
 function literalCredentialIssues(content: string): AfmIssue[] {
-  const fields = literalCredentialFields(content);
-  if (fields.length === 0) return [];
-  const issues: AfmIssue[] = [];
-  for (const { line, text } of settingsRows(content)) {
-    const field = fields.find((name) => new RegExp(`^\\s*${name}\\s*:\\s*(?!["']?\\$)\\S`).test(text));
-    if (field !== undefined) issues.push(issue("warning", keyInFile(field), field, line));
-  }
-  return issues;
+  return literalCredentialPaths(content).map((path) => {
+    const field = String(path.at(-1));
+    return issue("warning", keyInFile(field), field, lineOfPath(content, path));
+  });
 }
 
 function variableProblems(content: string): AfmIssue[] {

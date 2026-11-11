@@ -293,6 +293,14 @@ describe("a key written straight into the file", () => {
     expect(issue?.message).toContain("`${env:NAME}`");
   });
 
+  it.each([
+    ["is written on one line", "model:\n  provider: openai\n  name: gpt-4o\n  authentication: {type: api-key, api_key: sk-abc123abc123abc123abc123}\n", 6],
+    ["has its name in quotes", MODEL.replace("api_key:", '"api_key":').replace("${env:OPENAI_API_KEY}", "sk-abc123abc123abc123abc123"), 8],
+  ])("is flagged where it is typed when the block %s", (_label, model, line) => {
+    const issue = collectAfmIssues(file(model)).find((found) => found.field === "api_key");
+    expect(issue).toMatchObject({ severity: "warning", line });
+  });
+
   it("does not stop the agent from running", () => {
     expect(collectAfmIssues(file(typed)).some((found) => found.severity === "error")).toBe(false);
   });

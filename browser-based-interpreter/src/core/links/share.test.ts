@@ -76,6 +76,22 @@ i
     expect(literalCredentialFields(file('    type: api-key\n    api_key: "${env:OPENAI_API_KEY}"'))).toEqual([]);
   });
 
+  it("does not call a variable that is still being typed, or two variables together, a key", () => {
+    expect(literalCredentialFields(file('    type: api-key\n    api_key: "${env:OPENAI_API_KEY"'))).toEqual([]);
+    expect(literalCredentialFields(file('    type: api-key\n    api_key: "${env:A}${env:B}"'))).toEqual([]);
+  });
+
+  it("calls text before or after a variable a key", () => {
+    expect(literalCredentialFields(file('    type: api-key\n    api_key: "sk-${env:OPENAI_API_KEY}"'))).toEqual(["api_key"]);
+    expect(literalCredentialFields(file('    type: api-key\n    api_key: "${env:OPENAI_API_KEY}sk-live-123"'))).toEqual(["api_key"]);
+  });
+
+  it("finds a key in a block written on one line, or under a quoted name", () => {
+    const flow = "    type: api-key\n    api_key: sk-secret";
+    expect(literalCredentialFields(file(flow).replace(/  authentication:\n[^\n]*\n[^\n]*\n/, "  authentication: {type: api-key, api_key: sk-secret}\n"))).toEqual(["api_key"]);
+    expect(literalCredentialFields(file('    type: api-key\n    "api_key": sk-secret'))).toEqual(["api_key"]);
+  });
+
   it("finds a key typed into the model's authentication", () => {
     expect(literalCredentialFields(file("    type: api-key\n    api_key: sk-secret"))).toEqual(["api_key"]);
   });
