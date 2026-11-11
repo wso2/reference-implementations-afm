@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from langchain_core.language_models import BaseChatModel
@@ -45,6 +47,7 @@ OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+GOOGLE_GENAI_USE_VERTEXAI_ENV = "GOOGLE_GENAI_USE_VERTEXAI"
 
 # Keys accepted under `provider_options`, per provider
 SUPPORTED_PROVIDER_OPTIONS: dict[str, frozenset[str]] = {
@@ -180,7 +183,6 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
                 "'provider_options.location' requires 'provider_options.project'.",
                 provider="gemini",
             )
-        # Pin the Developer API so that GOOGLE_GENAI_USE_VERTEXAI cannot switch it
         kwargs["vertexai"] = False
         kwargs["api_key"] = _get_api_key(
             afm_model.authentication,
@@ -188,8 +190,23 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
             "gemini",
             fallback_env_vars=(GEMINI_API_KEY_ENV,),
         )
+        # LangChain does not pass `vertexai=False` on to the Google SDK client, which
+        # reads GOOGLE_GENAI_USE_VERTEXAI itself, so hide the variable while it is built.
+        with _without_vertexai_env():
+            return ChatGoogleGenerativeAI(**kwargs)
 
     return ChatGoogleGenerativeAI(**kwargs)
+
+
+@contextmanager
+def _without_vertexai_env() -> Iterator[None]:
+    """Temporarily remove GOOGLE_GENAI_USE_VERTEXAI so the Developer API is used."""
+    saved = os.environ.pop(GOOGLE_GENAI_USE_VERTEXAI_ENV, None)
+    try:
+        yield
+    finally:
+        if saved is not None:
+            os.environ[GOOGLE_GENAI_USE_VERTEXAI_ENV] = saved
 
 
 def _create_ollama_model(afm_model: Model) -> ChatOllama:

@@ -227,6 +227,33 @@ class TestGeminiProvider:
         assert kwargs["vertexai"] is True
         assert "api_key" not in kwargs
 
+    def test_gemini_studio_ignores_vertexai_env_var(self) -> None:
+        """Verify GOOGLE_GENAI_USE_VERTEXAI cannot switch the Developer API path to Vertex AI."""
+        afm_model = Model(
+            provider="gemini",
+            name="gemini-2.5-flash",
+            authentication=ClientAuthentication(type="api-key", api_key="dummy"),
+        )
+
+        with patch.dict(os.environ, {"GOOGLE_GENAI_USE_VERTEXAI": "true"}):
+            llm = create_model_provider(afm_model)
+            # The variable is restored for the rest of the process
+            assert os.environ["GOOGLE_GENAI_USE_VERTEXAI"] == "true"
+
+        assert not llm.client._api_client.vertexai
+
+    def test_gemini_studio_keeps_unset_vertexai_env_var_unset(self) -> None:
+        """Verify the Developer API path does not leave GOOGLE_GENAI_USE_VERTEXAI behind."""
+        afm_model = Model(
+            provider="gemini",
+            name="gemini-2.5-flash",
+            authentication=ClientAuthentication(type="api-key", api_key="dummy"),
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            create_model_provider(afm_model)
+            assert "GOOGLE_GENAI_USE_VERTEXAI" not in os.environ
+
     def test_gemini_studio_missing_credentials_fails(self) -> None:
         """Verify ProviderError is raised when the AI Studio path has no API key."""
         afm_model = Model(provider="gemini", name="gemini-2.5-flash")
