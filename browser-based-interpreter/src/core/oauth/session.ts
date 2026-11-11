@@ -132,13 +132,16 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
       },
       clientInformation: () => (attempt === undefined ? client : attempt.client) ?? (config.clientId === "" ? undefined : { client_id: config.clientId }),
       saveClientInformation: (information) => {
-        if (attempt === undefined) client = information;
-        else attempt.client = information;
+        if (attempt !== undefined) attempt.client = information;
+        else if (generation === at) client = information;
       },
-      tokens: () => (attempt === undefined ? tokens : undefined),
+      tokens: () => (attempt === undefined && generation === at ? tokens : undefined),
       saveTokens: async (saved) => {
         if (generation !== at) return;
-        if (attempt !== undefined) at = ++generation;
+        if (attempt !== undefined) {
+          at = ++generation;
+          client = attempt.client ?? client;
+        }
         tokens = saved;
         await keepSaved(saved.refresh_token);
         // A sign-out or a newer sign-in came while this was being written: make the saved copy match the session in memory again.
@@ -224,7 +227,6 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
       const at = signOuts;
       await run(flow, { authorizationCode: code, callbackState: state });
       if (signOuts !== at) throw new Error(SIGNED_OUT);
-      client = flow.client ?? client;
     },
 
     declineSignIn(state, iss) {

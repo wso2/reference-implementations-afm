@@ -51,6 +51,7 @@ interface World {
   requests: { url: string; body: URLSearchParams; redirect?: RequestRedirect }[];
   holdToken: Promise<void>;
   holdRegister: Promise<void>;
+  holdDiscovery: Promise<void>;
   tokenAnswer: (body: URLSearchParams) => Response;
   fetchFn: typeof fetch;
 }
@@ -72,6 +73,7 @@ function world(): World {
     requests: [],
     holdToken: Promise.resolve(),
     holdRegister: Promise.resolve(),
+    holdDiscovery: Promise.resolve(),
     tokenAnswer: (body) => {
       if (body.get("grant_type") === "refresh_token") {
         return body.get("refresh_token") === "refresh-1" ? reply({ access_token: `access-${++issued}`, token_type: "Bearer" }) : reply({ error: "invalid_grant" }, 400);
@@ -89,7 +91,10 @@ function world(): World {
       if (url.href.startsWith("https://mcp.example.com/.well-known/oauth-protected-resource")) {
         return w.resource === null ? new Response("", { status: 404 }) : reply(w.resource);
       }
-      if (url.href === `${AS}/.well-known/oauth-authorization-server`) return reply(w.asMetadata);
+      if (url.href === `${AS}/.well-known/oauth-authorization-server`) {
+        await w.holdDiscovery;
+        return reply(w.asMetadata);
+      }
       if (url.href === `${AS}/register`) {
         await w.holdRegister;
         registered += 1;
@@ -599,6 +604,40 @@ describe("a sign-in that replaces the one an older run started from", () => {
     await session.completeSignIn("good-code", second.searchParams.get("state")!);
     const exchange = Object.fromEntries(tokenRequests(w).at(-1)!.body);
     expect(exchange.client_id).toBe(second.searchParams.get("client_id"));
+  });
+});
+
+describe("a renewal or an exchange that a newer sign-in has replaced", () => {
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 10));
+  const refreshRequests = (w: World) => tokenRequests(w).filter((r) => r.body.get("grant_type") === "refresh_token");
+
+  it("does not spend the newer sign-in's refresh token when its discovery was slow", async () => {
+    const { session, w } = await signedIn();
+    let release = () => {};
+    w.holdDiscovery = new Promise<void>((resolve) => (release = resolve));
+    const renewing = session.renew("access-1");
+    await wait();
+    w.holdDiscovery = Promise.resolve();
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    release();
+    expect(await renewing).toBe(false);
+    expect(refreshRequests(w)).toHaveLength(0);
+    expect(session.accessToken()).toBe("access-2");
+  });
+
+  it("does not give its client to a newer sign-in's tokens", async () => {
+    const { session, w } = setup({ clientId: "" });
+    const older = (await startedAt(session)).searchParams.get("state")!;
+    let release = () => {};
+    w.holdToken = new Promise<void>((resolve) => (release = resolve));
+    const completingOlder = session.completeSignIn("good-code", older);
+    await wait();
+    w.holdToken = Promise.resolve();
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    release();
+    await completingOlder;
+    expect(await session.renew("access-1")).toBe(true);
+    expect(Object.fromEntries(refreshRequests(w).at(-1)!.body).client_id).toBe("registered-2");
   });
 });
 
