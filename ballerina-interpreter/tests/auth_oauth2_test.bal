@@ -247,6 +247,34 @@ function testAPresentButInvalidExpiresInIsAnError() returns error? {
 }
 
 @test:Config
+function testAnExcessiveExpiresInIsCappedAtOneYear() returns error? {
+    json[] excessive = [31536001, 9223372036854775807, 1e18, 1.0E300, "31536001", "99999999999999999999"];
+    foreach json expiresIn in excessive {
+        test:assertEquals(check tokenLifetime({expires_in: expiresIn}), MAX_TOKEN_LIFETIME_SECONDS, expiresIn.toString());
+    }
+}
+
+@test:Config
+function testAnExpiresInUpToTheCapIsKept() returns error? {
+    test:assertEquals(check tokenLifetime({expires_in: 31536000}), 31536000d);
+    test:assertEquals(check tokenLifetime({expires_in: 31535999}), 31535999d);
+    test:assertEquals(check tokenLifetime({expires_in: "1.5"}), 1.5d);
+}
+
+@test:Config
+function testACappedTokenIsRenewedAfterOneYear() returns error? {
+    useTokenReplies(tokenReply("t1", {expires_in: 9223372036854775807}), tokenReply("t2"));
+    OAuth2TokenProvider provider = check newProvider(clientCredentials());
+
+    test:assertEquals(check provider.getToken(), "t1");
+    advanceClock(31535939);
+    test:assertEquals(check provider.getToken(), "t1");
+    advanceClock(2);
+    test:assertEquals(check provider.getToken(), "t2");
+    test:assertEquals(tokenRequests.length(), 2);
+}
+
+@test:Config
 function testTokenTypeIsCaseInsensitive() returns error? {
     foreach string tokenType in ["bearer", "BEARER", "Bearer"] {
         useTokenReplies({body: {access_token: "t", token_type: tokenType}});

@@ -20,6 +20,7 @@ import ballerina/time;
 import ballerina/url;
 
 const decimal DEFAULT_TOKEN_LIFETIME_SECONDS = 3600;
+const decimal MAX_TOKEN_LIFETIME_SECONDS = 31536000;
 const decimal TOKEN_REFRESH_MARGIN_SECONDS = 60;
 const decimal TOKEN_REQUEST_TIMEOUT_SECONDS = 30;
 
@@ -221,5 +222,5 @@ isolated function tokenLifetime(map<json> body) returns decimal|error {
     if lifetime is error || lifetime <= 0d {
         return error("token response has an invalid expires_in");
     }
-    return lifetime;
+    return decimal:min(lifetime, MAX_TOKEN_LIFETIME_SECONDS);
 }
