@@ -44,9 +44,13 @@ describe("completeText", () => {
     await expect(completeText(model, "x")).rejects.toThrow("the provider refused");
   });
 
-  it.each(["length", "content-filter"] as const)("fails when the model stopped because of %s, rather than return half an answer", async (reason) => {
+  it.each(["length", "content-filter", "error", "other", "tool-calls"] as const)("fails when the model stopped because of %s, rather than return half an answer", async (reason) => {
     const model = modelSaying([{ type: "text-delta", text: "Half of an" }, { type: "finish", reason }]);
     await expect(completeText(model, "x")).rejects.toThrow("did not finish");
+  });
+
+  it("fails when the answer ends without the model saying it is done", async () => {
+    await expect(completeText(modelSaying([{ type: "text-delta", text: "Half of an" }]), "x")).rejects.toThrow("did not finish");
   });
 
   it("fails as a slow answer when it was stopped", async () => {

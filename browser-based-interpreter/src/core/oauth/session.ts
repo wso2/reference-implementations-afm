@@ -99,74 +99,73 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
   const scope = config.scopes?.join(" ");
   let tokens: OAuthTokens | undefined;
   let client: OAuthClientInformation | undefined;
-  let current: Attempt | undefined;
   let pending: Attempt | undefined;
   let renewing: Promise<boolean> | undefined;
   let metadataUrl: URL | undefined;
   let signOuts = 0;
+  let generation = 0; // changes whenever the signed-in session is replaced: by a sign-out or by a new sign-in
 
   const secureFetch: typeof fetch = (input, init) =>
     isInsecure(String(input)) ? Promise.reject(new Error("Sign-in only talks to https:// addresses (http://localhost is allowed).")) : fetchFn(input, init);
 
-  const provider: OAuthClientProvider = {
-    redirectUrl: config.redirectUri,
-    clientMetadata: {
-      client_name: "AFM",
-      redirect_uris: [config.redirectUri],
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-    },
-    clientInformation: () => (current === undefined ? client : current.client) ?? (config.clientId === "" ? undefined : { client_id: config.clientId }),
-    saveClientInformation: (information) => {
-      if (current === undefined) client = information;
-      else current.client = information;
-    },
-    tokens: () => (current === undefined ? tokens : undefined),
-    saveTokens: async (saved) => {
-      tokens = saved;
-      try {
-        if (saved.refresh_token === undefined) store.remove(refreshKey);
-        else await store.set(refreshKey, saved.refresh_token);
-      } catch {
-        return;
-      }
-    },
-    state: () => current?.state ?? "",
-    saveCodeVerifier: (verifier) => {
-      if (current !== undefined) current.verifier = verifier;
-    },
-    codeVerifier: () => current?.verifier ?? "",
-    validateResourceURL: async (server, resource) => checkedResource(server, resource),
-    validateAuthorizationServerURL: async (_server, authorizationServer) => {
-      if (current !== undefined && current.metadata === undefined) {
-        current.metadata = await checkedAuthorizationServer(String(authorizationServer), secureFetch);
-      }
-    },
-    redirectToAuthorization: (url) => {
-      if (current !== undefined) current.url = url.href;
-    },
-    invalidateCredentials: () => {
-      tokens = undefined;
-    },
-  };
+  async function keepSaved(refreshToken: string | undefined): Promise<void> {
+    try {
+      if (refreshToken === undefined) store.remove(refreshKey);
+      else await store.set(refreshKey, refreshToken);
+    } catch {
+      return;
+    }
+  }
 
-  // A run that started before a sign-out must not save or clear tokens afterwards: a newer sign-in may have saved its own.
-  const run = (extra: { authorizationCode?: string; callbackState?: string } = {}) => {
-    const at = signOuts;
-    const guarded: OAuthClientProvider = {
-      ...provider,
+  // Each run gets its own provider, tied to its own attempt (a renewal has none) and to the session that was current when it started.
+  // What it learns after that session was replaced is old news: it must not touch the newer session.
+  const providerFor = (attempt: Attempt | undefined): OAuthClientProvider => {
+    let at = generation;
+    return {
+      redirectUrl: config.redirectUri,
+      clientMetadata: {
+        client_name: "AFM",
+        redirect_uris: [config.redirectUri],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      },
+      clientInformation: () => (attempt === undefined ? client : attempt.client) ?? (config.clientId === "" ? undefined : { client_id: config.clientId }),
+      saveClientInformation: (information) => {
+        if (attempt === undefined) client = information;
+        else attempt.client = information;
+      },
+      tokens: () => (attempt === undefined ? tokens : undefined),
       saveTokens: async (saved) => {
-        if (signOuts !== at) return;
-        await provider.saveTokens(saved);
-        if (signOuts !== at) forget();
+        if (generation !== at) return;
+        if (attempt !== undefined) at = ++generation;
+        tokens = saved;
+        await keepSaved(saved.refresh_token);
+        // A sign-out or a newer sign-in came while this was being written: make the saved copy match the session in memory again.
+        if (generation !== at) await keepSaved(tokens?.refresh_token);
+      },
+      state: () => attempt?.state ?? "",
+      saveCodeVerifier: (verifier) => {
+        if (attempt !== undefined) attempt.verifier = verifier;
+      },
+      codeVerifier: () => attempt?.verifier ?? "",
+      validateResourceURL: async (server, resource) => checkedResource(server, resource),
+      validateAuthorizationServerURL: async (_server, authorizationServer) => {
+        if (attempt !== undefined && attempt.metadata === undefined) {
+          attempt.metadata = await checkedAuthorizationServer(String(authorizationServer), secureFetch);
+        }
+      },
+      redirectToAuthorization: (url) => {
+        if (attempt !== undefined) attempt.url = url.href;
       },
       invalidateCredentials: () => {
-        if (signOuts === at) tokens = undefined;
+        if (generation === at) tokens = undefined;
       },
     };
-    return authorize(guarded, { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: secureFetch, ...extra });
   };
+
+  const run = (attempt: Attempt | undefined, extra: { authorizationCode?: string; callbackState?: string } = {}) =>
+    authorize(providerFor(attempt), { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: secureFetch, ...extra });
 
   function forget(): void {
     tokens = undefined;
@@ -186,10 +185,10 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
   }
 
   async function refresh(): Promise<boolean> {
-    const at = signOuts;
-    const renewed = await run().then((result) => result === "AUTHORIZED", () => false);
-    if (signOuts === at && !renewed) forget();
-    return signOuts === at && renewed;
+    const at = generation;
+    const renewed = await run(undefined).then((result) => result === "AUTHORIZED", () => false);
+    if (generation === at && !renewed) forget();
+    return generation === at && renewed;
   }
 
   return {
@@ -212,12 +211,7 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
       const attempt: Attempt = { state: bytesToBase64Url(crypto.getRandomValues(new Uint8Array(16))), verifier: "", url: "" };
       const at = signOuts;
       metadataUrl = advertisedMetadataUrl(challenge ?? (await challengeOf(config.resource, secureFetch)) ?? "", config.resource);
-      current = attempt;
-      try {
-        await run();
-      } finally {
-        current = undefined;
-      }
+      await run(attempt);
       if (signOuts !== at) throw new Error(SIGNED_OUT);
       if (attempt.metadata === undefined) throw new Error("The sign-in did not start.");
       pending = attempt;
@@ -228,12 +222,7 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
     async completeSignIn(code, state, iss) {
       const flow = takePending(state, iss);
       const at = signOuts;
-      current = flow;
-      try {
-        await run({ authorizationCode: code, callbackState: state });
-      } finally {
-        current = undefined;
-      }
+      await run(flow, { authorizationCode: code, callbackState: state });
       if (signOuts !== at) throw new Error(SIGNED_OUT);
       client = flow.client ?? client;
     },
@@ -244,6 +233,7 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
 
     signOut() {
       signOuts += 1;
+      generation += 1;
       pending = undefined;
       forget();
     },

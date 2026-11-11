@@ -50,6 +50,7 @@ interface World {
   server: () => Response;
   requests: { url: string; body: URLSearchParams; redirect?: RequestRedirect }[];
   holdToken: Promise<void>;
+  holdRegister: Promise<void>;
   tokenAnswer: (body: URLSearchParams) => Response;
   fetchFn: typeof fetch;
 }
@@ -70,6 +71,7 @@ function world(): World {
     server: () => new Response("", { status: 401, headers: { "www-authenticate": 'Bearer realm="OAuth"' } }),
     requests: [],
     holdToken: Promise.resolve(),
+    holdRegister: Promise.resolve(),
     tokenAnswer: (body) => {
       if (body.get("grant_type") === "refresh_token") {
         return body.get("refresh_token") === "refresh-1" ? reply({ access_token: `access-${++issued}`, token_type: "Bearer" }) : reply({ error: "invalid_grant" }, 400);
@@ -89,6 +91,7 @@ function world(): World {
       }
       if (url.href === `${AS}/.well-known/oauth-authorization-server`) return reply(w.asMetadata);
       if (url.href === `${AS}/register`) {
+        await w.holdRegister;
         registered += 1;
         return reply({ client_id: registered === 1 ? "registered" : `registered-${registered}`, redirect_uris: [config.redirectUri] }, 201);
       }
@@ -517,6 +520,85 @@ describe("an answer that arrives after a sign-out", () => {
     await expect(completing).rejects.toThrow(/signed out/);
     expect(session.accessToken()).toBe("access-1");
     expect(store.values.get(refreshKey)).toBe("refresh-1");
+  });
+});
+
+describe("a sign-in that replaces the one an older run started from", () => {
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it.each([
+    ["renewal that works", () => reply({ access_token: "old-renewed", token_type: "Bearer" })],
+    ["renewal that fails", () => reply({ error: "invalid_grant" }, 400)],
+  ])("is not undone by an older %s", async (_label, answer) => {
+    const { session, w, store } = await signedIn();
+    let release = () => {};
+    w.holdToken = new Promise<void>((resolve) => (release = resolve));
+    const renewing = session.renew("access-1");
+    await wait();
+    const older = w.tokenAnswer;
+    w.tokenAnswer = (body) => (body.get("grant_type") === "refresh_token" ? answer() : older(body));
+    w.holdToken = Promise.resolve();
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    expect(session.accessToken()).toBe("access-2");
+    release();
+    expect(await renewing).toBe(false);
+    expect(session.accessToken()).toBe("access-2");
+    expect(store.values.get(refreshKey)).toBe("refresh-1");
+  });
+
+  it("keeps the newer refresh token when an older one is still being written", async () => {
+    const values = new Map<string, string>();
+    let writes = 0;
+    let firstWriteStarted = () => {};
+    let finishFirstWrite = () => {};
+    const slowFirstWrite = {
+      values,
+      get: (key: string) => values.get(key) ?? null,
+      set: (key: string, value: string) => {
+        writes += 1;
+        if (writes > 1) {
+          values.set(key, value);
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+          firstWriteStarted();
+          finishFirstWrite = () => {
+            values.set(key, value);
+            resolve();
+          };
+        });
+      },
+      remove: (key: string) => {
+        values.delete(key);
+      },
+    };
+    const { session, w } = setup({}, slowFirstWrite);
+    w.tokenAnswer = (body) => reply({ access_token: "a", token_type: "Bearer", refresh_token: body.get("code") === "old-code" ? "refresh-old" : "refresh-new" });
+    const older = (await startedAt(session)).searchParams.get("state")!;
+    const started = new Promise<void>((resolve) => (firstWriteStarted = resolve));
+    const completing = session.completeSignIn("old-code", older);
+    await started;
+    session.signOut();
+    await session.completeSignIn("new-code", (await startedAt(session)).searchParams.get("state")!);
+    finishFirstWrite();
+    await expect(completing).rejects.toThrow(/signed out/);
+    expect(values.get(refreshKey)).toBe("refresh-new");
+  });
+
+  it("keeps each attempt's own client when two attempts overlap", async () => {
+    const { session, w } = setup({ clientId: "" });
+    let release = () => {};
+    w.holdRegister = new Promise<void>((resolve) => (release = resolve));
+    const first = startedAt(session);
+    await wait();
+    session.signOut();
+    w.holdRegister = Promise.resolve();
+    const second = await startedAt(session);
+    release();
+    await expect(first).rejects.toThrow(/signed out/);
+    await session.completeSignIn("good-code", second.searchParams.get("state")!);
+    const exchange = Object.fromEntries(tokenRequests(w).at(-1)!.body);
+    expect(exchange.client_id).toBe(second.searchParams.get("client_id"));
   });
 });
 

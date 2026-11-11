@@ -144,10 +144,12 @@ const MODEL = {
 };
 
 function fixture(events: ModelEvent[] = [{ type: "text-delta", text: TEXT }]) {
+  // like a real model, the answer ends with the model saying why it stopped, unless the test says otherwise
+  const answer: ModelEvent[] = events.at(-1)?.type === "finish" ? events : [...events, { type: "finish", reason: "stop" }];
   const abortedWhenAsked: boolean[] = [];
   const stream = vi.fn(async function* (_request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
     abortedWhenAsked.push(signal.aborted);
-    yield* events;
+    yield* answer;
   });
   const port: ModelPort = { stream };
   const resolve = vi.fn(async (_model: AgentMetadata["model"]) => modelOf(port));
