@@ -51,24 +51,15 @@ describe("inline encode/decode", () => {
 });
 
 describe("fetchAgentFile", () => {
-  const okFetch = (async () => ({
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    text: async () => "remote-content",
-  })) as unknown as typeof fetch;
+  const okFetch = (async () => new Response("remote-content")) as unknown as typeof fetch;
+  const LIMIT = 1024 * 1024;
 
   it("fetches the text of an https link", async () => {
     expect(await fetchAgentFile("https://h/f", okFetch)).toBe("remote-content");
   });
 
   it("throws on a failed fetch", async () => {
-    const badFetch = (async () => ({
-      ok: false,
-      status: 404,
-      statusText: "Not Found",
-      text: async () => "",
-    })) as unknown as typeof fetch;
+    const badFetch = (async () => new Response("", { status: 404, statusText: "Not Found" })) as unknown as typeof fetch;
     await expect(fetchAgentFile("https://h/f", badFetch)).rejects.toThrow(/404/);
   });
 
@@ -78,6 +69,25 @@ describe("fetchAgentFile", () => {
       await expect(fetchAgentFile(url, fetchFn)).rejects.toThrow(/must start with https:\/\//);
     }
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("reads a file of exactly 1 MB and refuses one byte more, whatever the fetch it is given does", async () => {
+    const answering = (text: string) => (async () => new Response(text)) as unknown as typeof fetch;
+    expect(await fetchAgentFile("https://h/f", answering("a".repeat(LIMIT)))).toHaveLength(LIMIT);
+    await expect(fetchAgentFile("https://h/f", answering("a".repeat(LIMIT + 1)))).rejects.toThrow(/larger than 1 MB/);
+  });
+
+  it("stops reading a file that keeps coming and never says how long it is", async () => {
+    let sent = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 64 * 1024;
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+    });
+    const fetchFn = (async () => new Response(endless)) as unknown as typeof fetch;
+    await expect(fetchAgentFile("https://h/f", fetchFn)).rejects.toThrow(/larger than 1 MB/);
+    expect(sent).toBeLessThan(4 * LIMIT);
   });
 });
 

@@ -16,7 +16,7 @@
 
 import { httpsUrl } from "../agent/addresses";
 import { bytesToBase64Url } from "../base64";
-import { MAX_AGENT_FILE_BYTES } from "../runtime/response-limit";
+import { limitBodies, MAX_AGENT_FILE_BYTES } from "../runtime/response-limit";
 
 export function encodeInlineAfm(content: string): string {
   return bytesToBase64Url(new TextEncoder().encode(content));
@@ -82,7 +82,7 @@ export function inlineAfmParam(hash: string): string | null {
 
 export async function fetchAgentFile(url: string, fetchFn: typeof fetch): Promise<string> {
   if (httpsUrl(url) === null) throw new Error("An agent file link must start with https://");
-  const response = await fetchFn(url);
+  const response = await limitBodies(fetchFn, MAX_AGENT_FILE_BYTES)(url);
   if (!response.ok) throw new Error(`Failed to fetch agent file: ${response.status} ${response.statusText}`);
   return await response.text();
 }
