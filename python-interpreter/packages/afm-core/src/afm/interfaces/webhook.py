@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 from ..constants import DEFAULT_HTTP_PORT
 from ..exceptions import AuthenticationError, TemplateEvaluationError
-from ..http_auth import build_httpx_auth
+from ..http_auth import build_httpx_auth, warn_if_plain_http
 from ..templates import compile_template, evaluate_template
 from .base import InterfaceNotFoundError, get_http_path, get_webhook_interface
 
@@ -367,14 +367,16 @@ def create_webhook_app(
                 f"Using auto-generated WebSub callback URL: {callback_url}. "
                 "For production use, set subscription.callback explicitly in the AFM file."
             )
+        auth = build_httpx_auth(
+            subscription.authentication, base_dir=agent.afm.source_dir
+        )
+        warn_if_plain_http(subscription.hub, subscription.authentication, "WebSub hub")
         websub_subscriber = WebSubSubscriber(
             hub=subscription.hub,
             topic=subscription.topic,
             callback=callback_url,
             secret=secret,
-            auth=build_httpx_auth(
-                subscription.authentication, base_dir=agent.afm.source_dir
-            ),
+            auth=auth,
         )
 
     # Create lifespan context manager for startup/shutdown

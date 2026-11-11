@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
@@ -613,3 +614,43 @@ class TestWebhookAppAuthentication:
     def test_no_authentication_means_no_auth(self) -> None:
         app = create_webhook_app(self.agent_for(self.SUBSCRIPTION))
         assert app.state.websub_subscriber.auth is None
+
+    BEARER = "      authentication:\n        type: bearer\n        token: abc\n"
+
+    def hub_warnings(self, caplog) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "afm.http_auth"
+        ]
+
+    def test_authentication_over_plain_http_to_a_remote_hub_is_warned_about(
+        self, caplog
+    ):
+        agent = self.agent_for(
+            self.SUBSCRIPTION.replace("https://hub", "http://hub") + self.BEARER
+        )
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            create_webhook_app(agent)
+
+        assert self.hub_warnings(caplog) == [
+            "WebSub hub: authentication is sent over plain http, which does not "
+            "protect credentials or tokens on the network; use an https URL"
+        ]
+
+    def test_an_https_hub_is_not_warned_about(self, caplog):
+        agent = self.agent_for(self.SUBSCRIPTION + self.BEARER)
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            create_webhook_app(agent)
+
+        assert self.hub_warnings(caplog) == []
+
+    def test_a_plain_http_hub_without_authentication_is_not_warned_about(self, caplog):
+        agent = self.agent_for(self.SUBSCRIPTION.replace("https://hub", "http://hub"))
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            create_webhook_app(agent)
+
+        assert self.hub_warnings(caplog) == []

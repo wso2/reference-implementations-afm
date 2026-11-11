@@ -14,6 +14,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import logging
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -651,3 +652,73 @@ class TestMCPAuthentication:
 
         assert manager.server_names == ["good"]
         assert "Skipping MCP server" in caplog.text
+
+
+class TestMCPPlainHttpWarning:
+    WARNING = (
+        "MCP server 'remote': authentication is sent over plain http, which does "
+        "not protect credentials or tokens on the network; use an https URL"
+    )
+
+    def warnings(self, caplog) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "afm.http_auth"
+        ]
+
+    def test_authentication_over_plain_http_to_a_remote_host_is_warned_about(
+        self, caplog
+    ):
+        server = make_mcp_server(
+            name="remote", url="http://mcp.example.com/mcp", auth_type="bearer"
+        )
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            MCPClient.from_mcp_server(server)
+
+        assert self.warnings(caplog) == [self.WARNING]
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://mcp.example.com/mcp",
+            "http://localhost:8080/mcp",
+            "http://127.0.0.1:8080/mcp",
+        ],
+    )
+    def test_https_and_loopback_urls_are_not_warned_about(self, url, caplog):
+        server = make_mcp_server(name="remote", url=url, auth_type="bearer")
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            MCPClient.from_mcp_server(server)
+
+        assert self.warnings(caplog) == []
+
+    def test_a_server_without_authentication_is_not_warned_about(self, caplog):
+        server = make_mcp_server(name="remote", url="http://mcp.example.com/mcp")
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            MCPClient.from_mcp_server(server)
+
+        assert self.warnings(caplog) == []
+
+    def test_a_server_that_fails_to_build_its_authentication_is_not_warned_about(
+        self, caplog
+    ):
+        server = MCPServer(
+            name="remote",
+            transport=HttpTransport(
+                type="http",
+                url="http://mcp.example.com/mcp",
+                authentication=ApiKeyAuthentication(
+                    api_key="k", header_name="Content-Type"
+                ),
+            ),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            with pytest.raises(MCPAuthenticationError):
+                MCPClient.from_mcp_server(server)
+
+        assert self.warnings(caplog) == []

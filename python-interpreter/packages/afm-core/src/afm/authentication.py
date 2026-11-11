@@ -152,6 +152,16 @@ def _is_valid_token_url(url: str) -> bool:
     ) and _http_library_reads(url)
 
 
+def is_plain_http_remote(url: str) -> bool:
+    """Whether the URL is plain http to a host that is not a loopback host."""
+    parts = _split_authority(url)
+    return (
+        parts is not None
+        and parts[0] == "http"
+        and parts[1].lower() not in _LOOPBACK_HOSTS
+    )
+
+
 def _is_unresolved(value: object, info: ValidationInfo) -> bool:
     context = info.context or {}
     return (

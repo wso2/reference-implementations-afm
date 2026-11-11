@@ -26,7 +26,7 @@ from afm.exceptions import (
     MCPConnectionError,
     MCPError,
 )
-from afm.http_auth import build_httpx_auth
+from afm.http_auth import build_httpx_auth, warn_if_plain_http
 from afm.models import (
     AFMRecord,
     HttpTransport,
@@ -110,6 +110,9 @@ class MCPClient:
                 )
             except AuthenticationError as e:
                 raise MCPAuthenticationError(str(e), server_name=server.name) from None
+            warn_if_plain_http(
+                transport.url, transport.authentication, f"MCP server '{server.name}'"
+            )
 
         return cls(
             name=server.name,

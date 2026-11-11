@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import math
 import re
 import time
@@ -48,8 +49,11 @@ from .authentication import (
     JwtSigning,
     OAuth2Authentication,
     has_control_chars,
+    is_plain_http_remote,
 )
 from .exceptions import AuthenticationError
+
+logger = logging.getLogger(__name__)
 
 MIN_RSA_KEY_BITS = 2048
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600
@@ -357,6 +361,21 @@ def _lifetime_seconds(data: dict[str, Any]) -> float:
     ):
         raise AuthenticationError("token response has an invalid expires_in")
     return float(min(value, MAX_TOKEN_LIFETIME_SECONDS))
+
+
+def warn_if_plain_http(
+    url: str, auth: ClientAuthentication | None, target: str
+) -> None:
+    """Warns when `auth` would be sent over plain http to a host that is not a loopback host.
+
+    Only `target` is logged: the URL can carry credentials in its user info or query.
+    """
+    if auth is not None and is_plain_http_remote(url):
+        logger.warning(
+            "%s: authentication is sent over plain http, which does not protect "
+            "credentials or tokens on the network; use an https URL",
+            target,
+        )
 
 
 def build_httpx_auth(

@@ -19,6 +19,7 @@ import atexit
 import base64
 import datetime
 import json
+import logging
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -28,7 +29,7 @@ from urllib.parse import parse_qs
 import httpx
 import jwt
 import pytest
-from afm.authentication import ClientAuthentication
+from afm.authentication import ClientAuthentication, is_plain_http_remote
 from afm.exceptions import AuthenticationError
 from afm.http_auth import (
     JwtSigner,
@@ -36,6 +37,7 @@ from afm.http_auth import (
     build_httpx_auth,
     canonical_resource_uri,
     form_urlencode,
+    warn_if_plain_http,
 )
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -997,3 +999,85 @@ class TestOAuth2JwtBearerGrant:
         data["assertion_signing"]["signing_key"] = "rsa-2047.pem"
         with pytest.raises(AuthenticationError, match="2048 bits"):
             build_httpx_auth(parse(data), base_dir=KEYS)
+
+
+class TestPlainHttpDestination:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://example.com",
+            "http://example.com:8080/mcp",
+            "HTTP://Example.COM/mcp",
+            "http://localhost.example.com/",
+            "http://127.0.0.1.example.com/",
+            "http://localhost@example.com/",
+            "http://127.0.0.2/",
+            "http://[2001:db8::1]:8080/",
+        ],
+    )
+    def test_plain_http_to_a_remote_host_is_detected(self, url):
+        assert is_plain_http_remote(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com",
+            "HTTPS://example.com/mcp",
+            "http://localhost",
+            "http://LOCALHOST:8080/mcp",
+            "http://127.0.0.1:9000/x",
+            "http://[::1]:8080/x",
+            "http://example.com@localhost/",
+            "ws://example.com",
+            "http://",
+            "http://[::1",
+            "example.com",
+            "",
+        ],
+    )
+    def test_other_urls_are_not_detected(self, url):
+        assert not is_plain_http_remote(url)
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"type": "bearer", "token": "abc"},
+            {"type": "basic", "username": "u", "password": "p"},
+            {"type": "api-key", "api_key": "k"},
+        ],
+    )
+    def test_authentication_over_plain_http_is_warned_about(self, data, caplog):
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            warn_if_plain_http("http://example.com/mcp", parse(data), "MCP server 's'")
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "MCP server 's': authentication is sent over plain http, which does not "
+            "protect credentials or tokens on the network; use an https URL"
+        ]
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://example.com/mcp", "http://localhost:8080/mcp", "http://[::1]/mcp"],
+    )
+    def test_secure_and_loopback_urls_are_not_warned_about(self, url, caplog):
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            warn_if_plain_http(url, parse({"type": "bearer", "token": "abc"}), "x")
+
+        assert caplog.records == []
+
+    def test_without_authentication_nothing_is_warned_about(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            warn_if_plain_http("http://example.com/mcp", None, "x")
+
+        assert caplog.records == []
+
+    def test_the_warning_does_not_contain_the_url_or_the_credentials(self, caplog):
+        url = f"http://user:{SECRET}@mcp.example.com/mcp?key={SECRET}"
+        auth = parse({"type": "bearer", "token": SECRET})
+
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            warn_if_plain_http(url, auth, "MCP server 's'")
+
+        assert len(caplog.records) == 1
+        assert SECRET not in caplog.text
+        assert "mcp.example.com" not in caplog.text
