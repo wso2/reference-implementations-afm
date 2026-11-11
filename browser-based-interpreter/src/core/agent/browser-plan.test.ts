@@ -202,6 +202,18 @@ describe("planForBrowser", () => {
       ]);
     });
 
+    it.each([
+      ["a space before it", " http://mcp.example.com/mcp"],
+      ["a tab inside the scheme", "ht\ttp://mcp.example.com/mcp"],
+      ["a line break inside the scheme", "http\n://mcp.example.com/mcp"],
+    ])("is still blocked with %s, because the browser reads it as plain http", (_label, url) => {
+      const plan = planForBrowser(server(url, bearer));
+      expect(plan.runnable).toBe(false);
+      expect(plan.issues).toEqual([
+        expect.objectContaining({ severity: "blocked", code: "tool-credentials-insecure", path: "tools.mcp[0].transport.url" }),
+      ]);
+    });
+
     it("is let through when it carries no credentials, since there is nothing to read", () => {
       expect(planForBrowser(server("http://mcp.example.com/mcp")).issues).toEqual([]);
     });
@@ -221,6 +233,12 @@ describe("planForBrowser", () => {
     it("blocks an oauth2 sign-in address that is plain http with a variable only after the host", () => {
       const oauth = { type: "oauth2", grant_type: "authorization_code", client_id: "c", authorize_url: "https://a/authorize" };
       const plan = planForBrowser(server("https://mcp.example.com/mcp", { ...oauth, token_url: "http://auth.example.com/token?x=${env:X}" }));
+      expect(plan.issues).toEqual([expect.objectContaining({ code: "oauth-address-insecure", path: "tools.mcp[0].transport.authentication.token_url" })]);
+    });
+
+    it("blocks an oauth2 sign-in address that is plain http behind a space", () => {
+      const oauth = { type: "oauth2", grant_type: "authorization_code", client_id: "c", authorize_url: "https://a/authorize" };
+      const plan = planForBrowser(server("https://mcp.example.com/mcp", { ...oauth, token_url: " http://auth.example.com/token" }));
       expect(plan.issues).toEqual([expect.objectContaining({ code: "oauth-address-insecure", path: "tools.mcp[0].transport.authentication.token_url" })]);
     });
 

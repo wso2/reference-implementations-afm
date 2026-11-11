@@ -128,8 +128,8 @@ function modelAuthIssues(metadata: AgentMetadata): PlanIssue[] {
 const SIGN_IN_ADDRESS_FIELDS = ["authorize_url", "token_url"] as const;
 
 function hostIsKnown(address: string): boolean {
-  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(address);
-  return authority !== null && !authority[1]!.includes("${");
+  const host = parseUrl(address)?.host;
+  return host !== undefined && !host.includes("${");
 }
 
 const isPlainSignInAddress = (address: unknown): boolean =>
