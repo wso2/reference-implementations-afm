@@ -283,6 +283,66 @@ These are the instructions.
         assert result.instructions == "These are the instructions."
 
 
+class TestParseModelProviderOptions:
+    def test_parse_provider_options(self) -> None:
+        content = """---
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+  provider_options:
+    project: my-project
+    location: us-central1
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        result = parse_afm(content)
+        assert result.metadata.model is not None
+        assert result.metadata.model.provider_options == {
+            "project": "my-project",
+            "location": "us-central1",
+        }
+
+    def test_parse_rejects_unknown_model_field(self) -> None:
+        content = """---
+model:
+  provider: gemini
+  projet: my-project
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+        assert "model.projet" in str(exc_info.value)
+
+    def test_parse_rejects_non_string_provider_option(self) -> None:
+        content = """---
+model:
+  provider: gemini
+  provider_options:
+    project: 123456789012
+---
+
+# Role
+Role.
+
+# Instructions
+Instructions.
+"""
+        with pytest.raises(AFMValidationError) as exc_info:
+            parse_afm(content)
+        assert "model.provider_options.project" in str(exc_info.value)
+
+
 class TestParseAfmFile:
     def test_parse_file(self, sample_agent_path: Path) -> None:
         result = parse_afm_file(sample_agent_path)

@@ -23,6 +23,7 @@ type Model record {|
     string name?;
     string provider?;
     string url?;
+    map<string> provider_options?;
     ClientAuthentication authentication?;
 |};
 
