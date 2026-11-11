@@ -89,6 +89,7 @@ interface Attempt {
   verifier: string;
   url: string;
   metadata?: AuthorizationServerMetadata;
+  client?: OAuthClientInformation;
 }
 
 const SIGNED_OUT = "You signed out before the sign-in finished - please sign in again.";
@@ -116,9 +117,10 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
       response_types: ["code"],
       token_endpoint_auth_method: "none",
     },
-    clientInformation: () => client ?? (config.clientId === "" ? undefined : { client_id: config.clientId }),
+    clientInformation: () => (current === undefined ? client : current.client) ?? (config.clientId === "" ? undefined : { client_id: config.clientId }),
     saveClientInformation: (information) => {
-      client = information;
+      if (current === undefined) client = information;
+      else current.client = information;
     },
     tokens: () => (current === undefined ? tokens : undefined),
     saveTokens: async (saved) => {
@@ -149,8 +151,22 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
     },
   };
 
-  const run = (extra: { authorizationCode?: string; callbackState?: string } = {}) =>
-    authorize(provider, { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: secureFetch, ...extra });
+  // A run that started before a sign-out must not save or clear tokens afterwards: a newer sign-in may have saved its own.
+  const run = (extra: { authorizationCode?: string; callbackState?: string } = {}) => {
+    const at = signOuts;
+    const guarded: OAuthClientProvider = {
+      ...provider,
+      saveTokens: async (saved) => {
+        if (signOuts !== at) return;
+        await provider.saveTokens(saved);
+        if (signOuts !== at) forget();
+      },
+      invalidateCredentials: () => {
+        if (signOuts === at) tokens = undefined;
+      },
+    };
+    return authorize(guarded, { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: secureFetch, ...extra });
+  };
 
   function forget(): void {
     tokens = undefined;
@@ -172,7 +188,7 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
   async function refresh(): Promise<boolean> {
     const at = signOuts;
     const renewed = await run().then((result) => result === "AUTHORIZED", () => false);
-    if (signOuts !== at || !renewed) forget();
+    if (signOuts === at && !renewed) forget();
     return signOuts === at && renewed;
   }
 
@@ -195,7 +211,6 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
     async startSignIn(redirect, challenge) {
       const attempt: Attempt = { state: bytesToBase64Url(crypto.getRandomValues(new Uint8Array(16))), verifier: "", url: "" };
       const at = signOuts;
-      client = undefined;
       metadataUrl = advertisedMetadataUrl(challenge ?? (await challengeOf(config.resource, secureFetch)) ?? "", config.resource);
       current = attempt;
       try {
@@ -219,10 +234,8 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
       } finally {
         current = undefined;
       }
-      if (signOuts !== at) {
-        forget();
-        throw new Error(SIGNED_OUT);
-      }
+      if (signOuts !== at) throw new Error(SIGNED_OUT);
+      client = flow.client ?? client;
     },
 
     declineSignIn(state, iss) {

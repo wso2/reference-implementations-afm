@@ -56,6 +56,7 @@ interface World {
 
 function world(): World {
   let issued = 0;
+  let registered = 0;
   const w: World = {
     asMetadata: {
       issuer: AS,
@@ -87,7 +88,10 @@ function world(): World {
         return w.resource === null ? new Response("", { status: 404 }) : reply(w.resource);
       }
       if (url.href === `${AS}/.well-known/oauth-authorization-server`) return reply(w.asMetadata);
-      if (url.href === `${AS}/register`) return reply({ client_id: "registered", redirect_uris: [config.redirectUri] }, 201);
+      if (url.href === `${AS}/register`) {
+        registered += 1;
+        return reply({ client_id: registered === 1 ? "registered" : `registered-${registered}`, redirect_uris: [config.redirectUri] }, 201);
+      }
       if (url.href === `${AS}/token`) {
         await w.holdToken;
         return w.tokenAnswer(body);
@@ -476,6 +480,95 @@ describe("renewing after the server turned an access token down", () => {
     expect(await renewing).toBe(false);
     expect(session.hasSession()).toBe(false);
     expect(store.values.has(refreshKey)).toBe(false);
+  });
+});
+
+describe("an answer that arrives after a sign-out", () => {
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it("does not undo a newer sign-in when it is a renewal", async () => {
+    const { session, w, store } = await signedIn();
+    let release = () => {};
+    w.holdToken = new Promise<void>((resolve) => (release = resolve));
+    const renewing = session.renew("access-1");
+    await wait();
+    session.signOut();
+    w.holdToken = Promise.resolve();
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    expect(session.accessToken()).toBe("access-2");
+    release();
+    expect(await renewing).toBe(false);
+    expect(session.accessToken()).toBe("access-2");
+    expect(store.values.get(refreshKey)).toBe("refresh-1");
+  });
+
+  it("does not undo a newer sign-in when it is a code exchange", async () => {
+    const { session, w, store } = setup();
+    const older = (await startedAt(session)).searchParams.get("state")!;
+    let release = () => {};
+    w.holdToken = new Promise<void>((resolve) => (release = resolve));
+    const completing = session.completeSignIn("good-code", older);
+    await wait();
+    session.signOut();
+    w.holdToken = Promise.resolve();
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    expect(session.accessToken()).toBe("access-1");
+    release();
+    await expect(completing).rejects.toThrow(/signed out/);
+    expect(session.accessToken()).toBe("access-1");
+    expect(store.values.get(refreshKey)).toBe("refresh-1");
+  });
+});
+
+describe("a sign-out while the refresh token is being written", () => {
+  it("leaves no refresh token behind", async () => {
+    const values = new Map<string, string>();
+    let writeStarted = () => {};
+    let finishWrite = () => {};
+    const slowStore = {
+      values,
+      get: (key: string) => values.get(key) ?? null,
+      set: (key: string, value: string) =>
+        new Promise<void>((resolve) => {
+          writeStarted();
+          finishWrite = () => {
+            values.set(key, value);
+            resolve();
+          };
+        }),
+      remove: (key: string) => {
+        values.delete(key);
+      },
+    };
+    const { session } = setup({}, slowStore);
+    const state = (await startedAt(session)).searchParams.get("state")!;
+    const writing = new Promise<void>((resolve) => (writeStarted = resolve));
+    const completing = session.completeSignIn("good-code", state);
+    await writing;
+    session.signOut();
+    finishWrite();
+    await expect(completing).rejects.toThrow(/signed out/);
+    expect(values.has(refreshKey)).toBe(false);
+    expect(session.hasSession()).toBe(false);
+  });
+});
+
+describe("the client a server registered for this sign-in", () => {
+  const lastTokenRequest = (w: World) => Object.fromEntries(tokenRequests(w).at(-1)!.body);
+
+  it("stays the one the current tokens belong to when a new sign-in is started and then given up", async () => {
+    const { session, w } = await signedIn({ clientId: "" });
+    session.declineSignIn((await startedAt(session)).searchParams.get("state")!);
+    expect(await session.renew("access-1")).toBe(true);
+    expect(lastTokenRequest(w)).toMatchObject({ grant_type: "refresh_token", client_id: "registered" });
+  });
+
+  it("is replaced by the new one once the new sign-in has finished", async () => {
+    const { session, w } = await signedIn({ clientId: "" });
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    expect(lastTokenRequest(w)).toMatchObject({ grant_type: "authorization_code", client_id: "registered-2" });
+    expect(await session.renew("access-2")).toBe(true);
+    expect(lastTokenRequest(w)).toMatchObject({ grant_type: "refresh_token", client_id: "registered-2" });
   });
 });
 
