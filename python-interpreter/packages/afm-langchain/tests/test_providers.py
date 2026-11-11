@@ -156,7 +156,7 @@ class TestGeminiProvider:
         kwargs = mock_chat_gemini.call_args[1]
         assert kwargs["model"] == "gemini-2.5-flash"
         assert kwargs["api_key"] == "explicit-gemini-token-789"
-        assert "vertexai" not in kwargs
+        assert kwargs["vertexai"] is False
 
     @patch("langchain_google_genai.ChatGoogleGenerativeAI")
     def test_create_gemini_studio_env_fallback(
@@ -173,6 +173,38 @@ class TestGeminiProvider:
         assert kwargs["api_key"] == "env-gemini-token-101"
 
     @patch("langchain_google_genai.ChatGoogleGenerativeAI")
+    def test_create_gemini_studio_gemini_api_key_fallback(
+        self, mock_chat_gemini: MagicMock
+    ) -> None:
+        """Verify the Developer API path accepts GEMINI_API_KEY when GOOGLE_API_KEY is unset."""
+        afm_model = Model(provider="gemini", name="gemini-2.5-flash")
+
+        with patch.dict(
+            os.environ, {"GEMINI_API_KEY": "env-gemini-token-202"}, clear=True
+        ):
+            create_model_provider(afm_model)
+
+        kwargs = mock_chat_gemini.call_args[1]
+        assert kwargs["api_key"] == "env-gemini-token-202"
+
+    @patch("langchain_google_genai.ChatGoogleGenerativeAI")
+    def test_create_gemini_studio_google_api_key_takes_precedence(
+        self, mock_chat_gemini: MagicMock
+    ) -> None:
+        """Verify GOOGLE_API_KEY is preferred over GEMINI_API_KEY when both are set."""
+        afm_model = Model(provider="gemini", name="gemini-2.5-flash")
+
+        with patch.dict(
+            os.environ,
+            {"GOOGLE_API_KEY": "google-token", "GEMINI_API_KEY": "gemini-token"},
+            clear=True,
+        ):
+            create_model_provider(afm_model)
+
+        kwargs = mock_chat_gemini.call_args[1]
+        assert kwargs["api_key"] == "google-token"
+
+    @patch("langchain_google_genai.ChatGoogleGenerativeAI")
     def test_create_gemini_vertex_adc_fallback(
         self, mock_chat_gemini: MagicMock
     ) -> None:
@@ -185,7 +217,8 @@ class TestGeminiProvider:
                 "location": "us-central1",
             },
         )
-        create_model_provider(afm_model)
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "ignored-env-key"}):
+            create_model_provider(afm_model)
 
         mock_chat_gemini.assert_called_once()
         kwargs = mock_chat_gemini.call_args[1]

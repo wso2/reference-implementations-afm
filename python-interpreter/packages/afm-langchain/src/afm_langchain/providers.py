@@ -44,6 +44,7 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
+GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 
 # Keys accepted under `provider_options`, per provider
 SUPPORTED_PROVIDER_OPTIONS: dict[str, frozenset[str]] = {
@@ -55,6 +56,7 @@ SUPPORTED_PROVIDER_OPTIONS: dict[str, frozenset[str]] = {
 
 
 def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
+    """Create the LangChain chat model for the configured AFM model provider."""
     if afm_model is None:
         return _create_openai_model(None)
 
@@ -76,6 +78,7 @@ def create_model_provider(afm_model: Model | None = None) -> BaseChatModel:
 
 
 def _create_openai_model(afm_model: Model | None) -> ChatOpenAI:
+    """Create an OpenAI chat model."""
     try:
         from langchain_openai import ChatOpenAI
     except ImportError as e:
@@ -106,6 +109,7 @@ def _create_openai_model(afm_model: Model | None) -> ChatOpenAI:
 
 
 def _create_anthropic_model(afm_model: Model) -> ChatAnthropic:
+    """Create an Anthropic chat model."""
     try:
         from langchain_anthropic import ChatAnthropic
     except ImportError as e:
@@ -176,10 +180,13 @@ def _create_gemini_model(afm_model: Model) -> ChatGoogleGenerativeAI:
                 "'provider_options.location' requires 'provider_options.project'.",
                 provider="gemini",
             )
+        # Pin the Developer API so that GOOGLE_GENAI_USE_VERTEXAI cannot switch it
+        kwargs["vertexai"] = False
         kwargs["api_key"] = _get_api_key(
             afm_model.authentication,
             GOOGLE_API_KEY_ENV,
             "gemini",
+            fallback_env_vars=(GEMINI_API_KEY_ENV,),
         )
 
     return ChatGoogleGenerativeAI(**kwargs)
@@ -244,7 +251,9 @@ def _get_api_key(
     auth: ClientAuthentication | None,
     env_var: str,
     provider: str,
+    fallback_env_vars: tuple[str, ...] = (),
 ) -> str:
+    """Resolve an API key from the auth config, then from the environment variables."""
     if auth is not None:
         auth_type = auth.type.lower()
 
@@ -264,13 +273,15 @@ def _get_api_key(
                 if key in auth_dict and auth_dict[key]:
                     return auth_dict[key]
 
-    # Fall back to environment variable
-    api_key = os.environ.get(env_var)
-    if api_key:
-        return api_key
+    # Fall back to environment variables, in order
+    env_vars = (env_var, *fallback_env_vars)
+    for name in env_vars:
+        api_key = os.environ.get(name)
+        if api_key:
+            return api_key
 
     raise ProviderError(
         f"No API key found. Provide authentication in the model config "
-        f"or set the {env_var} environment variable.",
+        f"or set the {' or '.join(env_vars)} environment variable.",
         provider=provider,
     )
