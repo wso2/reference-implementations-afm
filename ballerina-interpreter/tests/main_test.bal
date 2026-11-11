@@ -342,58 +342,6 @@ function testValidateAndExtractInterfacesDuplicateWebChat() {
 }
 
 // ============================================
-// Tool Filtering Tests
-// ============================================
-
-@test:Config
-function testGetFilteredToolsNoFilter() {
-    string[]? result = getFilteredTools(());
-    test:assertTrue(result is ());
-}
-
-@test:Config
-function testGetFilteredToolsEmptyFilter() {
-    ToolFilter filter = {};
-    string[]? result = getFilteredTools(filter);
-    test:assertTrue(result is ());
-}
-
-@test:Config
-function testGetFilteredToolsAllowOnly() {
-    ToolFilter filter = {allow: ["tool1", "tool2"]};
-    string[]? result = getFilteredTools(filter);
-    if result is () {
-        test:assertFail("Expected string[] but got ()");
-    }
-    test:assertEquals(result.length(), 2);
-    test:assertEquals(result[0], "tool1");
-    test:assertEquals(result[1], "tool2");
-}
-
-@test:Config
-function testGetFilteredToolsAllowAndDeny() {
-    ToolFilter filter = {
-        allow: ["tool1", "tool2", "tool3"],
-        deny: ["tool2"]
-    };
-    string[]? result = getFilteredTools(filter);
-    if result is () {
-        test:assertFail("Expected string[] but got ()");
-    }
-    test:assertEquals(result.length(), 2);
-    test:assertTrue(result.indexOf("tool1") is int);
-    test:assertTrue(result.indexOf("tool3") is int);
-    test:assertFalse(result.indexOf("tool2") is int);
-}
-
-@test:Config
-function testGetFilteredToolsDenyOnly() {
-    ToolFilter filter = {deny: ["tool1"]};
-    string[]? result = getFilteredTools(filter);
-    test:assertTrue(result is ());
-}
-
-// ============================================
 // Webhook Template Tests
 // ============================================
 

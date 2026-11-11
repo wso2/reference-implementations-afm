@@ -171,53 +171,6 @@ function testValidateJsonSchemaArrayNotArray() returns error? {
 }
 
 @test:Config
-function testGetFilteredToolsBothAllowAndDeny() returns error? {
-    ToolFilter filter = {
-        allow: ["tool1", "tool2", "tool3"],
-        deny: ["tool2"]
-    };
-    string[]? result = getFilteredTools(filter);
-    test:assertTrue(result is string[]);
-    test:assertEquals((<string[]>result).length(), 2);
-    test:assertEquals((<string[]>result)[0], "tool1");
-    test:assertEquals((<string[]>result)[1], "tool3");
-}
-
-@test:Config
-function testGetFilteredToolsAllowWithMultipleDenied() returns error? {
-    ToolFilter filter = {
-        allow: ["tool1", "tool2", "tool3", "tool4"],
-        deny: ["tool2", "tool4"]
-    };
-    string[]? result = getFilteredTools(filter);
-    test:assertTrue(result is string[]);
-    test:assertEquals((<string[]>result).length(), 2);
-    test:assertEquals((<string[]>result)[0], "tool1");
-    test:assertEquals((<string[]>result)[1], "tool3");
-}
-
-@test:Config
-function testGetFilteredToolsAllDenied() returns error? {
-    ToolFilter filter = {
-        allow: ["tool1", "tool2"],
-        deny: ["tool1", "tool2"]
-    };
-    string[]? result = getFilteredTools(filter);
-    test:assertTrue(result is string[]);
-    test:assertEquals((<string[]>result).length(), 0);
-}
-
-@test:Config
-function testGetFilteredToolsEmptyAllow() returns error? {
-    ToolFilter filter = {
-        allow: []
-    };
-    string[]? result = getFilteredTools(filter);
-    test:assertTrue(result is string[]);
-    test:assertEquals((<string[]>result).length(), 0);
-}
-
-@test:Config
 function testGetCredentialBearer() returns error? {
     ModelAuthentication auth = {token: "my-token-123"};
     test:assertEquals(check getCredential(auth), "my-token-123");

@@ -226,52 +226,6 @@ isolated function extractJsonFromCodeBlock(string response) returns string {
     return response;
 }
 
-function getFilteredTools(ToolFilter? toolFilter) returns string[]? {
-    if toolFilter is () {
-        return (); // No filtering - all tools allowed
-    }
-    
-    string[]? allow = toolFilter.allow;
-    string[]? deny = toolFilter.deny;
-    
-    // If no filters specified, return null (all tools)
-    if allow is () && deny is () {
-        return ();
-    }
-    
-    // If only allow is specified, return it
-    if allow is string[] && deny is () {
-        return allow;
-    }
-    
-    // If only deny is specified, we can't handle it with current API
-    // (would need to fetch all tools first, then filter)
-    if allow is () && deny is string[] {
-        log:printWarn("Deny-only tool filter not fully supported - ignoring deny list");
-        return (); // Return all for now
-    }
-    
-    // If both specified: apply allow first, then remove denied tools
-    if allow is string[] && deny is string[] {
-        string[] filtered = [];
-        foreach string tool in allow {
-            boolean isDenied = false;
-            foreach string deniedTool in deny {
-                if tool == deniedTool {
-                    isDenied = true;
-                    break;
-                }
-            }
-            if !isDenied {
-                filtered.push(tool);
-            }
-        }
-        return filtered;
-    }
-    
-    return ();
-}
-
 isolated function validateJsonSchema(map<json>? jsonSchemaVal, json sampleJson) returns error? {
     if jsonSchemaVal is () {
         return ();

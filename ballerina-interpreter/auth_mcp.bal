@@ -27,7 +27,24 @@ function createMcpToolKit(HttpTransport transport, ToolFilter? filter, string af
     }
 
     http:ClientAuthConfig? clientAuth = check mcpClientAuth(auth, afmFileDir, authLocation);
-    return new ai:McpToolKit(transport.url, permittedTools = getFilteredTools(filter), auth = clientAuth);
+    ai:McpToolKit toolKit = check new (transport.url, permittedTools = filter?.allow, auth = clientAuth);
+    string[]? deny = filter?.deny;
+    return deny is string[] ? new DenyListToolKit(toolKit, deny) : toolKit;
+}
+
+// The library can only filter by an allow list, so the deny list is applied to the tools it returns.
+isolated class DenyListToolKit {
+    *ai:McpBaseToolKit;
+
+    private final ai:ToolConfig[] & readonly tools;
+
+    isolated function init(ai:BaseToolKit toolKit, string[] deny) {
+        self.tools = (from ai:ToolConfig tool in toolKit.getTools()
+            where deny.indexOf(tool.name) is ()
+            select tool).cloneReadOnly();
+    }
+
+    public isolated function getTools() returns ai:ToolConfig[] => self.tools;
 }
 
 function mcpClientAuth(BearerAuthentication|BasicAuthentication|JwtAuthentication? auth, string afmFileDir, string location)
