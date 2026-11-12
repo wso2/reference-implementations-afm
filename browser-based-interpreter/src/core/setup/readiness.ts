@@ -58,7 +58,7 @@ export function needsToRun(input: {
   const items: Need[] = [
     { id: "role", label: "Role", done: input.role.trim() !== "" },
     { id: "instructions", label: "Instructions", done: input.instructions.trim() !== "" },
-    { id: "model", label: "Model", done: (input.metadata.model?.name ?? "") !== "" },
+    { id: "model", label: "Model", done: (input.metadata.model?.name ?? "").trim() !== "" },
   ];
   const done = items.filter((item) => item.done).length;
   return { items, done, allDone: done === items.length };
@@ -116,7 +116,7 @@ export function readiness(input: ReadinessInput): Readiness {
     return { tone: "bad", lead: "Invalid AFM file", fix: "raw", chip: true };
   }
 
-  if ((metadata.model?.name ?? "") === "") {
+  if ((metadata.model?.name ?? "").trim() === "") {
     return { tone: "bad", lead: "Needs a model before it can run - ", subject: "choose one", fix: "model", chip: true };
   }
 

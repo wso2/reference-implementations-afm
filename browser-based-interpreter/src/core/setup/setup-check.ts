@@ -97,7 +97,7 @@ export function issueSentence(kind: FailureKind, who: string, credential: Creden
 
 export function plannedRows(metadata: AgentMetadata): SetupRow[] {
   const provider = findProvider(metadata.model?.provider ?? "");
-  const named = (metadata.model?.name ?? "") !== "";
+  const named = (metadata.model?.name ?? "").trim() !== "";
   const rows: SetupRow[] = [
     {
       id: MODEL_ROW,

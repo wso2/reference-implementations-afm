@@ -68,6 +68,13 @@ const metadata = {
 
 const [arxiv, huggingface, notion] = metadata.tools!.mcp!;
 
+describe("plannedRows with a model name of only spaces", () => {
+  it("asks for a model, like an empty name", () => {
+    const [row] = plannedRows({ name: "A", model: { provider: "openai", name: "  " } } as AgentMetadata);
+    expect(row).toMatchObject({ name: "Choose a model", state: "needs" });
+  });
+});
+
 describe("plannedRows", () => {
   it("has one row for the model and one for each server a browser can reach", () => {
     expect(plannedRows(metadata).map((row) => row.id)).toEqual([

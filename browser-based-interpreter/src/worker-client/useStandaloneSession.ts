@@ -17,7 +17,7 @@
 import type { AgentMetadata } from "@afm/engine";
 import { useReducer, useRef } from "react";
 import type { PendingPermission, UiMessage } from "../core/chat/chat-state";
-import { chatReducer, initialChatState, lastUserIndex, turnsKeptBefore } from "../core/chat/chat-state";
+import { canChangeConversation, chatReducer, initialChatState, lastUserIndex, turnsKeptBefore } from "../core/chat/chat-state";
 import type { AgentModelRef, ImageAttachment, ProbeResult } from "../core/runtime/protocol";
 import { toSeededConversation } from "../core/chat/seed-conversation";
 import { useAgentWorker } from "./useAgentWorker";
@@ -83,11 +83,13 @@ export function useStandaloneSession(hooks: SessionHooks = {}) {
   }
 
   function regenerate(): void {
+    if (!canChangeConversation(state)) return;
     dispatch({ type: "regenerate-start" });
     post({ type: "regenerate" });
   }
 
   function retryReply(): void {
+    if (!canChangeConversation(state)) return;
     const last = state.messages[lastUserIndex(state.messages)];
     if (last?.kind !== "user") return;
     if (state.canContinue) {
@@ -100,6 +102,7 @@ export function useStandaloneSession(hooks: SessionHooks = {}) {
   }
 
   function editMessage(id: number, text: string): void {
+    if (!canChangeConversation(state)) return;
     const original = state.messages.find((message) => message.id === id);
     const images = original?.kind === "user" ? original.images : undefined;
     const keep = turnsKeptBefore(state, id);

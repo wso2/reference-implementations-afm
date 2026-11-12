@@ -107,6 +107,11 @@ type ChatAction =
   | { type: "server"; message: ServerMessage }
   | { type: "permission-dismissed" };
 
+// Editing, retrying or regenerating changes the conversation, so it waits until the agent is ready.
+export function canChangeConversation(state: ChatState): boolean {
+  return state.status === "ready";
+}
+
 export function lastUserIndex(messages: UiMessage[]): number {
   return messages.findLastIndex((message) => message.kind === "user");
 }

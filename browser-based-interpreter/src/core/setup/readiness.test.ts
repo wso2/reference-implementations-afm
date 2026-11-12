@@ -82,6 +82,12 @@ describe("readiness", () => {
     expect(sentence(r)).toBe("Needs a model before it can run - choose one");
   });
 
+  it("treats a model name of only spaces as no model", () => {
+    const metadata = { name: "A", model: { provider: "openai", name: "   " } } as AgentMetadata;
+    expect(readiness(input({ metadata })).fix).toBe("model");
+    expect(needsToRun({ role: "r", instructions: "i", metadata })?.items.find((item) => item.id === "model")?.done).toBe(false);
+  });
+
   it("words a missing role itself rather than repeating the validator", () => {
     const r = readiness(
       input({
