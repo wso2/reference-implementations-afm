@@ -20,7 +20,7 @@ import { buildableAgent } from "../../core/agent/agent-validation";
 import { downloadAgentFile } from "../../core/files/download-agent-file";
 import { appAddress } from "../../core/links/app-address";
 import { normalizeAgentFileUrl } from "../../core/links/load-paths";
-import { buildShareLink, literalCredentialFields, type ShareMethod } from "../../core/links/share";
+import { buildShareLink, canScanForCredentials, literalCredentialFields, type ShareMethod } from "../../core/links/share";
 import { Icon } from "../../ui/Icon";
 import { useCopyFeedback } from "../../ui/hooks";
 
@@ -45,6 +45,44 @@ export function shareChecks(metadata: AgentMetadata | null): { label: string; do
   ];
 }
 
+type KeyNoticeKind = "written" | "unchecked" | "hosted" | "clean";
+
+// What to say about keys. The check reads this file only, so a hosted file is never called clean.
+export function keyNoticeKind(scanned: boolean, writtenIn: string[], hosted: boolean): KeyNoticeKind {
+  if (writtenIn.length > 0) return "written";
+  if (!scanned) return "unchecked";
+  return hosted ? "hosted" : "clean";
+}
+
+function KeyNote({ kind, fields, send }: { kind: KeyNoticeKind; fields: string[]; send: "link" | "file" }) {
+  if (kind === "clean") return <p className="u-hint">Your API key is never included.</p>;
+  if (kind === "hosted") {
+    return (
+      <p className="u-hint">
+        The link holds only the address of the file. Make sure that file has no key written into it.
+      </p>
+    );
+  }
+  if (kind === "unchecked") {
+    return (
+      <p className="u-hint u-warn-note">
+        This file could not be checked for keys. Read through it before you {send === "link" ? "share the link" : "send it"}.
+      </p>
+    );
+  }
+  return send === "link" ? (
+    <p className="u-hint u-warn-note">
+      This file has a key written into it ({fields.join(", ")}), and anyone with the link can read it. Replace it with a{" "}
+      <code>{"${env:NAME}"}</code> reference first.
+    </p>
+  ) : (
+    <p className="u-hint u-warn-note">
+      This file has a key written into it ({fields.join(", ")}). Replace it with a <code>{"${env:NAME}"}</code>{" "}
+      reference before you send it.
+    </p>
+  );
+}
+
 export function SharePanel({ agentSource }: Props) {
   const [method, setMethod] = useState<ShareMethod>("inline");
   const [fileUrl, setFileUrl] = useState("");
@@ -59,6 +97,7 @@ export function SharePanel({ agentSource }: Props) {
   const normalized = fileUrl.trim() === "" ? null : normalizeAgentFileUrl(fileUrl);
   const rawFileUrl = normalized?.ok === true ? normalized.url : null;
   const fileKeys = literalCredentialFields(agentSource);
+  const scanned = canScanForCredentials(agentSource);
   const link = buildShareLink(address, method, agentSource, rawFileUrl);
 
   return (
@@ -138,14 +177,7 @@ export function SharePanel({ agentSource }: Props) {
             >
               {copied ? "Copied" : "Copy link"}
             </button>
-            {fileKeys.length === 0 ? (
-              <p className="u-hint">Your API key is never included.</p>
-            ) : (
-              <p className="u-hint u-warn-note">
-                This file has a key written into it ({fileKeys.join(", ")}), and anyone with the link can read it.
-                Replace it with a <code>{"${env:NAME}"}</code> reference first.
-              </p>
-            )}
+            <KeyNote kind={keyNoticeKind(scanned, fileKeys, method === "url")} fields={fileKeys} send="link" />
           </div>
         </>
       ) : (
@@ -157,14 +189,7 @@ export function SharePanel({ agentSource }: Props) {
           <button className="u-btn primary wide" onClick={() => downloadAgentFile(agentSource)}>
             Download .afm.md
           </button>
-          {fileKeys.length === 0 ? (
-            <p className="u-hint">Your API key is never included.</p>
-          ) : (
-            <p className="u-hint u-warn-note">
-              This file has a key written into it ({fileKeys.join(", ")}). Replace it with a{" "}
-              <code>{"${env:NAME}"}</code> reference before you send it.
-            </p>
-          )}
+          <KeyNote kind={keyNoticeKind(scanned, fileKeys, false)} fields={fileKeys} send="file" />
         </div>
       )}
     </div>

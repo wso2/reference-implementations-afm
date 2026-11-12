@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { AgentMetadata } from "@afm/engine";
-import { SharePanel, shareChecks } from "./SharePanel";
+import { keyNoticeKind, SharePanel, shareChecks } from "./SharePanel";
 
 const done = (checks: ReturnType<typeof shareChecks>) =>
   checks.filter((check) => check.done).map((check) => check.label);
@@ -85,5 +85,35 @@ i
     const html = panel(file("\${env:OPENAI_API_KEY}"));
     expect(html).toContain("Your API key is never included.");
     expect(html).not.toContain("written into it");
+  });
+});
+
+describe("what the share panel says about keys", () => {
+  it("names a key written into the file before anything else", () => {
+    expect(keyNoticeKind(true, ["api_key"], false)).toBe("written");
+    expect(keyNoticeKind(false, ["api_key"], true)).toBe("written");
+  });
+
+  it("does not call a file clean when it could not be checked", () => {
+    expect(keyNoticeKind(false, [], false)).toBe("unchecked");
+    expect(keyNoticeKind(false, [], true)).toBe("unchecked");
+  });
+
+  it("does not promise anything about a file that is hosted somewhere else", () => {
+    expect(keyNoticeKind(true, [], true)).toBe("hosted");
+    expect(keyNoticeKind(true, [], false)).toBe("clean");
+  });
+
+  it("shows the unchecked notice, not the promise, for settings that cannot be read", () => {
+    vi.stubGlobal("window", { location: { origin: "https://afm.example" } });
+    try {
+      const html = renderToStaticMarkup(
+        createElement(SharePanel, { agentSource: "---\nname: [not closed\napi_key: sk-live-1\n---\n\n# Role\nr\n" }),
+      );
+      expect(html).toContain("This file could not be checked for keys.");
+      expect(html).not.toContain("Your API key is never included.");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
