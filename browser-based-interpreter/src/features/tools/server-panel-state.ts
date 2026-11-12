@@ -136,16 +136,26 @@ interface ProbeOptions {
   onDiscovered: (discovered: DiscoveredMcpAuth) => void;
 }
 
+// A probe answers for one address and one way of signing in. The same list is not an answer for another.
+export function probeKey(method: string, url: string): string {
+  return `${method}\n${url.trim()}`;
+}
+
+export function toolsProbedFor(probed: { key: string; tools: ToolInfo[] } | null, key: string): ToolInfo[] | null {
+  return probed !== null && probed.key === key ? probed.tools : null;
+}
+
 export function useServerProbe(options: ProbeOptions) {
   const { url, method, writesMethod, name, live, auth, issue, onProbe, onDiscovered } = options;
   const [probing, setProbing] = useState(false);
-  const [found, setFound] = useState<ToolInfo[] | null>(null);
-  const [probedUrl, setProbedUrl] = useState("");
+  const [probed, setProbed] = useState<{ key: string; tools: ToolInfo[] } | null>(null);
   const [error, setError] = useState<string | null>(issue?.text ?? null);
   const [rejected, setRejected] = useState(issue?.kind === "rejected");
   const probes = useRunTracker();
   const urlRef = useRef(url);
   urlRef.current = url;
+  const key = probeKey(method, url);
+  const found = toolsProbedFor(probed, key);
 
   async function signInFoundOrRefused(superseded: () => boolean): Promise<boolean> {
     let discovered: DiscoveredMcpAuth | null = null;
@@ -167,7 +177,7 @@ export function useServerProbe(options: ProbeOptions) {
 
   async function probe(force = false) {
     if (!writesMethod || url.trim() === "" || name === "") return;
-    if (!force && (!live || url.trim() === probedUrl)) return;
+    if (!force && (!live || found !== null)) return;
     const run = probes.begin("probe");
     const superseded = () => !probes.isCurrent("probe", run) || url.trim() !== urlRef.current.trim();
     setProbing(true);
@@ -193,19 +203,18 @@ export function useServerProbe(options: ProbeOptions) {
     setProbing(false);
     setRejected(result.failure?.kind === "rejected");
     if (result.failure !== undefined) {
+      setProbed(null);
       logDetails(result.failure.message);
       setError(issueSentence(result.failure.kind, displayName(name), credentialOf(server), result.failure.message));
       return;
     }
     const reported = (result.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description }));
-    setFound(reported);
-    setProbedUrl(url.trim());
+    setProbed({ key, tools: reported });
   }
 
   function forget() {
-    setFound(null);
+    setProbed(null);
     setError(null);
-    setProbedUrl("");
   }
 
   function reset() {

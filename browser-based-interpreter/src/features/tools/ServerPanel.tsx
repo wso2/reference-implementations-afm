@@ -157,6 +157,7 @@ export function ServerPanel({
     setTab("url");
     setMethod(entry.auth.type);
     setValues({});
+    setSecretEdits({});
     probe.reset();
     setAllowed([]);
     directoryClient.cancel();

@@ -25,11 +25,13 @@ import {
   directoryValues,
   discoveredValues,
   isSignedIn,
+  probeKey,
   providerFor,
   savedServer,
   seedValues,
   signInNeed,
   signInQuestion,
+  toolsProbedFor,
   waitingNote,
 } from "./server-panel-state";
 
@@ -248,5 +250,30 @@ describe("isSignedIn, from the worker's key store to the screen", () => {
 
   it("is never true for a server that does not use a provider sign-in", () => {
     expect(isSignedIn("bearer", provider, namesAfterSignIn(), { found: [], error: null })).toBe(false);
+  });
+});
+
+describe("a tool list belongs to the address and sign-in method it was listed for", () => {
+  const tools = [{ name: "search" }];
+  const probed = { key: probeKey("none", "https://a.example/mcp"), tools };
+
+  it("is shown for the same address and method, whatever spaces were typed around it", () => {
+    expect(toolsProbedFor(probed, probeKey("none", " https://a.example/mcp "))).toBe(tools);
+  });
+
+  it("is not shown for another address", () => {
+    expect(toolsProbedFor(probed, probeKey("none", "https://b.example/mcp"))).toBeNull();
+  });
+
+  it("is not shown for another sign-in method, so it cannot pass as a sign-in", () => {
+    const method = probeKey("oauth2", "https://a.example/mcp");
+    expect(toolsProbedFor(probed, method)).toBeNull();
+    const provider = { authorizeUrl: "https://a.example/a", tokenUrl: "https://a.example/t", clientId: "c", scopes: [], resource: "https://a.example/mcp" };
+    const answered = { found: toolsProbedFor(probed, method), error: null };
+    expect(isSignedIn("oauth2", provider, [], answered)).toBe(false);
+  });
+
+  it("is not shown when nothing was listed yet", () => {
+    expect(toolsProbedFor(null, probeKey("none", "https://a.example/mcp"))).toBeNull();
   });
 });
