@@ -15,7 +15,14 @@
 // under the License.
 
 import { isLocalHost, parseUrl } from "../agent/addresses";
-import { addMcpServer, type NewMcpServer, removeMcpServer, setServerToolFilter } from "../agent/agent-source-edit";
+import {
+  addMcpServer,
+  getServerToolFilter,
+  type NewMcpServer,
+  putServerToolFilter,
+  removeMcpServer,
+  setServerToolFilter,
+} from "../agent/agent-source-edit";
 import { secretNameOf, secretReference } from "../agent/secret-reference";
 import { type ToolInfo } from "../runtime/protocol";
 import { DIRECTORY_ENTRIES, type DirectoryCategory, type DirectoryEntry } from "./mcp-directory";
@@ -99,7 +106,12 @@ function uniqueName(base: string, taken: string[], separator: string): string {
 
 export function addressNote(url: string): string | null {
   const trimmed = url.trim();
-  if (trimmed === "" || trimmed.includes("${")) return null;
+  if (trimmed === "") return null;
+  if (trimmed.includes("${")) {
+    // What is still a variable cannot be judged, but a scheme written out in front of it can.
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed)?.[1]?.toLowerCase();
+    return scheme === undefined || scheme === "http" || scheme === "https" ? null : `Invalid address \`${trimmed}\`. Start it with \`https://\`.`;
+  }
   const address = parseUrl(trimmed);
   if (address !== null && (address.username !== "" || address.password !== "")) {
     return "An address cannot contain a user name or password. Put credentials in a key box instead.";
@@ -127,6 +139,7 @@ interface ServerSave {
 }
 
 export function prepareServerSave({ content, editing, server, knownSecrets, tools, allowed }: ServerSave) {
+  const kept = editing === null ? null : getServerToolFilter(content, editing);
   let next = editing === null ? content : removeMcpServer(content, editing);
   const taken = [...referencedSecretNames(next), ...knownSecrets];
   const captured = server.auth === undefined ? undefined : captureAuthSecrets(server.name, server.auth.fields, taken);
@@ -142,6 +155,9 @@ export function prepareServerSave({ content, editing, server, knownSecrets, tool
       names.filter((tool) => allowed.includes(tool)),
       names.filter((tool) => !allowed.includes(tool)),
     );
+  } else if (kept !== null) {
+    // Without a tool list to choose from, the tools the file already allowed or denied stay as they were.
+    next = putServerToolFilter(next, server.name, kept);
   }
   return { content: next, secrets: captured?.secrets ?? [] };
 }
@@ -175,6 +191,7 @@ export function captureAuthSecrets(serverName: string, fields: Record<string, st
   const spokenFor = [...taken];
 
   for (const [key, value] of Object.entries(fields)) {
+    if (value.trim() === "") continue;
     if (!isSecretAuthField(key) || secretNameOf(value) !== "") {
       out[key] = value;
       continue;
@@ -205,5 +222,5 @@ export function lacksRequiredField(
   fields: readonly { key: string; required: boolean }[],
   auth: NewMcpServer["auth"],
 ): boolean {
-  return fields.some((field) => field.required && auth?.fields[field.key] === undefined);
+  return fields.some((field) => field.required && (auth?.fields[field.key] ?? "").trim() === "");
 }

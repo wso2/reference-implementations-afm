@@ -334,6 +334,13 @@ describe("addressNote", () => {
     );
   });
 
+  it("still judges the scheme written in front of a variable, and leaves the rest of such an address alone", () => {
+    expect(addressNote("ftp://example.com/${env:PATH}")).toBe("Invalid address `ftp://example.com/${env:PATH}`. Start it with `https://`.");
+    for (const open of ["https://example.com/${env:PATH}", "http://${env:HOST}/mcp", "${env:SCHEME}://example.com/mcp"]) {
+      expect(addressNote(open)).toBeNull();
+    }
+  });
+
   it("allows every 127.x.x.x address on this computer, like the check that refuses credentials over plain http", () => {
     expect(addressNote("http://127.8.9.10:8080/mcp")).toBeNull();
   });
@@ -397,6 +404,12 @@ describe("captureAuthSecrets", () => {
     const { fields, secrets } = captureAuthSecrets("huggingface", { token: "hf_realvalue" }, []);
     expect(fields).toEqual({ token: "${env:HUGGINGFACE_TOKEN}" });
     expect(secrets).toEqual([{ name: "HUGGINGFACE_TOKEN", value: "hf_realvalue" }]);
+  });
+
+  it("does not make a reference or a secret out of a credential that is empty or only spaces", () => {
+    const { fields, secrets } = captureAuthSecrets("acme", { api_key: "   ", header_name: "X-Key" }, []);
+    expect(fields).toEqual({ header_name: "X-Key" });
+    expect(secrets).toEqual([]);
   });
 
   it("leaves the fields that are not credentials exactly as typed", () => {
@@ -594,6 +607,41 @@ describe("a file that still holds a raw credential", () => {
   });
 });
 
+describe("editing a server whose tool list is not available", () => {
+  const filtered = (filter: string) =>
+    FILE.replace(
+      "---\n\n# Role",
+      `tools:\n  mcp:\n    - name: acme\n      tool_filter:\n${filter}\n      transport:\n        type: http\n        url: https://acme.example/mcp\n---\n\n# Role`,
+    );
+  const filterOf = (content: string, name = "acme") => {
+    const parsed = buildableAgent(content);
+    if (!parsed.ok) throw new Error("Invalid fixture result");
+    return parsed.metadata.tools?.mcp?.find((item) => item.name === name)?.tool_filter;
+  };
+
+  it("keeps the allowed and denied tools the file already had", () => {
+    const content = filtered("        allow:\n          - read\n        deny:\n          - delete");
+    expect(filterOf(save({ content, editing: "acme" }).content)).toEqual({ allow: ["read"], deny: ["delete"] });
+  });
+
+  it("keeps a list that only denies tools as it was, without turning it into an allow list", () => {
+    const content = filtered("        deny:\n          - delete");
+    expect(filterOf(save({ content, editing: "acme" }).content)).toEqual({ deny: ["delete"] });
+  });
+
+  it("keeps it when the server is renamed", () => {
+    const content = filtered("        allow:\n          - read");
+    const renamed = save({ content, editing: "acme", server: { name: "acme-2", url: "https://acme.example/mcp" } });
+    expect(filterOf(renamed.content, "acme-2")).toEqual({ allow: ["read"] });
+  });
+
+  it("is replaced by the new choice when the tool list is available", () => {
+    const content = filtered("        allow:\n          - read");
+    const tools = [{ name: "read", description: "" }, { name: "write", description: "" }];
+    expect(filterOf(save({ content, editing: "acme", tools, allowed: ["write"] }).content)).toEqual({ allow: ["write"], deny: ["read"] });
+  });
+});
+
 describe("lacksRequiredField", () => {
   const token = [{ key: "token", required: true }];
   const signIn = [
@@ -612,6 +660,11 @@ describe("lacksRequiredField", () => {
   it("wants every required field of a method, not just one", () => {
     expect(lacksRequiredField(signIn, { type: "oauth2", fields: { authorize_url: "https://a/authorize" } })).toBe(true);
     expect(lacksRequiredField(signIn, { type: "oauth2", fields: { authorize_url: "https://a/authorize", token_url: "https://a/token" } })).toBe(false);
+  });
+
+  it("counts a field that is empty or only spaces as missing", () => {
+    expect(lacksRequiredField(token, { type: "bearer", fields: { token: "" } })).toBe(true);
+    expect(lacksRequiredField(token, { type: "bearer", fields: { token: "   " } })).toBe(true);
   });
 
   it("does not ask for an optional field", () => {
