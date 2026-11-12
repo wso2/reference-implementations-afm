@@ -18,7 +18,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SECRET_INPUT } from "./inputs";
+import { SECRET_INPUT, sendsOnEnter } from "./inputs";
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
 
@@ -54,5 +54,26 @@ describe("the hints on a box that holds a key", () => {
       });
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe("which Enter sends a message", () => {
+  const press = (key: string, shiftKey = false, isComposing = false) => ({ key, shiftKey, nativeEvent: { isComposing } });
+
+  it("sends on Enter", () => {
+    expect(sendsOnEnter(press("Enter"))).toBe(true);
+  });
+
+  it("adds a line on Shift+Enter instead", () => {
+    expect(sendsOnEnter(press("Enter", true))).toBe(false);
+  });
+
+  it("does not send on the Enter that confirms a word being composed", () => {
+    expect(sendsOnEnter(press("Enter", false, true))).toBe(false);
+  });
+
+  it("does not send on any other key", () => {
+    expect(sendsOnEnter(press("a"))).toBe(false);
+    expect(sendsOnEnter(press("Tab"))).toBe(false);
   });
 });

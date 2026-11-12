@@ -154,6 +154,15 @@ describe("when the worker does not start", () => {
     expect(seen).toEqual([{ type: "worker-stopped" }]);
   });
 
+  it("tells the page again that the agent stopped when a draft is asked for after the crash", async () => {
+    const { link, worker, seen } = startedLink();
+    await settle();
+    worker.crash();
+    expect(seen).toEqual([{ type: "worker-stopped" }]);
+    link.post({ type: "generate-draft", id: "r1", prompt: "a helper", model: { provider: "openai", name: "gpt" } as never });
+    expect(seen).toEqual([{ type: "worker-stopped" }, { type: "worker-stopped" }]);
+  });
+
   it("starts a new worker for a key typed after the crash, so the key is not lost", async () => {
     const { link, worker } = startedLink();
     await settle();

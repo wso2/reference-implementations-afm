@@ -147,8 +147,9 @@ export function useStandaloneSession(hooks: SessionHooks = {}) {
   }
 
   function generateDraft(prompt: string, model: AgentModelRef, final?: boolean): void {
-    dispatch({ type: "draft-dismissed" });
-    post({ type: "generate-draft", prompt, model, final });
+    const id = crypto.randomUUID();
+    dispatch({ type: "draft-started", id });
+    post({ type: "generate-draft", id, prompt, model, final });
   }
 
   function probeServer(server: NonNullable<AgentMetadata["tools"]>): Promise<ProbeResult> {

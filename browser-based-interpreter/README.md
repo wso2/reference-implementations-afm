@@ -20,8 +20,6 @@ A web app that runs an [Agent-Flavored Markdown (AFM)](https://wso2.github.io/ag
 
 ## Quick Start
 
-> **Status:** this is the first of four PRs. The app has no entry point yet (`src/main.tsx` comes in the last PR), so `pnpm dev` cannot start it. For now, run `pnpm check` (typecheck and tests).
-
 ```sh
 cd browser-based-interpreter
 pnpm install --frozen-lockfile
@@ -77,6 +75,7 @@ The interpreter (`@afm/engine` and `@afm/runtime`) does the work every AFM runti
 - **Shared agents.** An agent opened from a link or a file shows a screen first: its model, each tool server and its host, and the keys it needs. Its Permissions button lets you select, by name, which of the tools the file lists may run without asking; every other tool asks first, in the chat. Open it in the builder to read it before it runs, and run only agents from people you trust, because the author decides what the agent is told to do.
 - **Signing in.** Pressing Sign in on a tool server first asks you to confirm, and names the site where the sign-in window opens. Type your password only in that window.
 - **Tool approvals.** When a tool needs permission, a small card appears in the chat under the tool call. It shows the tool, the host it goes to and the full arguments, with three choices: Allow, Always allow and Deny. Nothing runs until you decide. "Always allow" selects the tool in Permissions, so it is visible, can be undone there, and is saved with the agent. Stop denies a waiting question.
+- **Pictures.** A picture you attach is redrawn before it is sent, so the camera, date and location details the file carries stay on your device. Only the pixels go to the model.
 - **Prompt injection.** Pages, documents and tool results the agent reads can contain instructions that try to steer it. No model can fully prevent this, so read the arguments on the approval card before you allow a call, and select only the tools an agent needs.
 - **Local storage.** Saved agents, the tools you allowed for them and the theme are kept in this browser's storage. Keys, sign-ins, values, conversations and images are kept in memory and are gone when the tab closes.
 - **Signing out.** Sign out in a tool server's window to remove its sign-in now. Closing the tab removes every key and sign-in.

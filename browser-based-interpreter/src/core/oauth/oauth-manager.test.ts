@@ -340,12 +340,12 @@ describe("a sign-in held by the real worker secret store", () => {
     return signedIn;
   }
 
-  it("keeps the newest refresh token in memory as the server rotates it, and tells the page nothing about it", async () => {
+  it("keeps the newest refresh token in memory as the server rotates it, and tells the page only its name", async () => {
     const { store, manager, posted } = await signedInTab();
     await manager.renewAccessToken(provider, await manager.getAccessToken(provider));
     await manager.renewAccessToken(provider, await manager.getAccessToken(provider));
     expect(store.refreshStore.get(authorizationCodeRefreshKey(provider))).toBe("R2");
-    expect(posted.filter((message) => message.type === "secrets-list")).toEqual([]);
+    expect(posted.at(-1)).toEqual({ type: "secrets-list", names: [authorizationCodeRefreshKey(provider)] });
   });
 
   it("drops it on sign-out, so the next call needs a sign-in again", async () => {

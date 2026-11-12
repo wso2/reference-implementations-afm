@@ -25,7 +25,7 @@ const READY_DEADLINE_MS = 30_000;
 const PROBE_DEADLINE_MS = 30_000;
 
 const RESTARTS_WORKER = new Set<ClientMessage["type"]>(["load", "set-secret"]);
-const ANSWERED_BY_THE_AGENT = new Set<ClientMessage["type"]>(["send", "regenerate", "continue"]);
+const ANSWERED_BY_THE_AGENT = new Set<ClientMessage["type"]>(["send", "regenerate", "continue", "generate-draft"]);
 
 export class WorkerLink {
   readonly oauth = createOAuthSignIns({ post: (message) => this.post(message) });

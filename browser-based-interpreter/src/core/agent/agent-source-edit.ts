@@ -192,14 +192,33 @@ export function getSection(content: string, heading: string): string {
   return start === null ? "" : text.slice(start, end).replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
+// A line that starts with a single # would begin a new section and cut this one short. Inside a section it is
+// written as ##, outside code blocks, so what was typed stays in the box it was typed in.
+export function withoutSectionHeadings(body: string): string {
+  let fence: string | null = null;
+  return body
+    .split("\n")
+    .map((line) => {
+      const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+      if (marker !== undefined) {
+        if (fence === null) fence = marker;
+        else if (marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) fence = null;
+        return line;
+      }
+      return fence === null ? line.replace(/^( {0,3})#(?=\s+\S)/, "$1##") : line;
+    })
+    .join("\n");
+}
+
 export function setSection(content: string, heading: string, body: string): string {
   const text = toLf(content);
   const { start, end, fence } = sectionBounds(text, heading);
   const closing = fence === null ? "" : `\n${fence}`;
+  const written = withoutSectionHeadings(toLf(body));
   const next =
     start === null
-      ? `${text.replace(/\n+$/, "")}${closing}\n\n# ${heading}\n\n${toLf(body)}\n`
-      : `${text.slice(0, start)}\n${toLf(body)}\n\n${text.slice(end)}`;
+      ? `${text.replace(/\n+$/, "")}${closing}\n\n# ${heading}\n\n${written}\n`
+      : `${text.slice(0, start)}\n${written}\n\n${text.slice(end)}`;
   return content.includes("\r\n") ? next.replace(/\n/g, "\r\n") : next;
 }
 

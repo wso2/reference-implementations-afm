@@ -30,3 +30,8 @@ export const SECRET_INPUT = {
   "data-bwignore": "true",
   "data-form-type": "other",
 } as const;
+
+// Enter sends and Shift+Enter adds a line. The Enter that confirms a word being composed (an IME) does neither.
+export function sendsOnEnter(event: { key: string; shiftKey: boolean; nativeEvent: { isComposing: boolean } }): boolean {
+  return event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing;
+}

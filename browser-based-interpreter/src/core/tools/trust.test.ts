@@ -24,6 +24,7 @@ import {
   allowedKeys,
   listedToolKey,
   permissionKey,
+  withEntryKeys,
 } from "./trust";
 import type { AgentMetadata } from "@afm/engine";
 import { namespacedToolName } from "./tool-names";
@@ -124,11 +125,11 @@ describe("trustKeyFor", () => {
   const listed = agent([http("docs", A, ["search_docs"]), http("plain", B)]);
 
   it("is the key of the listed tool a call named", () => {
-    expect(trustKeyFor(listed, A, "docs__search_docs")).toBe(listedToolKey(A, "search_docs"));
+    expect(trustKeyFor(listed, A, "docs__search_docs")).toBe(listedToolKey(A, "search_docs", "docs"));
   });
 
   it("is the shown name on a server whose file lists no tools", () => {
-    expect(trustKeyFor(listed, B, "plain__get_me")).toBe(listedToolKey(B, "get_me"));
+    expect(trustKeyFor(listed, B, "plain__get_me")).toBe(listedToolKey(B, "get_me", "plain"));
   });
 
   it("is nothing for a tool the list does not include, because the engine will not call it", () => {
@@ -165,5 +166,76 @@ describe("allowedKeys", () => {
   it("approves only the tools that were confirmed and are still listed", () => {
     const keys = allowedKeys(metadata, [listedToolKey(A, "x"), listedToolKey(A, "gone")]);
     expect([...keys]).toEqual([permissionKey(A, namespacedToolName("a", "x"))]);
+  });
+});
+
+describe("two entries at one address", () => {
+  const two = agent([http("work", A, ["search"]), http("home", A, ["search"])]);
+
+  it("give a selected tool a key of its own entry", () => {
+    expect(trustKeyFor(two, A, namespacedToolName("work", "search"))).toBe(listedToolKey(A, "search", "work"));
+    expect(trustKeyFor(two, A, namespacedToolName("home", "search"))).toBe(listedToolKey(A, "search", "home"));
+    expect(listedToolKey(A, "search", "work")).not.toBe(listedToolKey(A, "search", "home"));
+  });
+
+  it("let a tool of one entry run without asking, and not the same tool of the other", () => {
+    const allowed = allowedKeys(two, [listedToolKey(A, "search", "work")]);
+    expect(allowed.has(permissionKey(A, namespacedToolName("work", "search")))).toBe(true);
+    expect(allowed.has(permissionKey(A, namespacedToolName("home", "search")))).toBe(false);
+  });
+
+  it("find the tools of each entry on its own", () => {
+    const keys = [listedToolKey(A, "search", "work"), listedToolKey(A, "fetch", "home")];
+    expect(toolsOfServer(keys, A, "work")).toEqual(["search"]);
+    expect(toolsOfServer(keys, A, "home")).toEqual(["fetch"]);
+    expect(toolsOfServer(keys, A)).toEqual(["search", "fetch"]);
+  });
+
+  it("keep a selection only while its entry still allows the tool", () => {
+    const keys = [listedToolKey(A, "search", "work"), listedToolKey(A, "search", "home")];
+    const changed = agent([http("work", A, ["search"]), http("home", A, ["fetch"])]);
+    expect(keepConfirmed(keys, changed)).toEqual([listedToolKey(A, "search", "work")]);
+    expect(keepConfirmed(keys, agent([http("work", A, ["search"])]))).toEqual([listedToolKey(A, "search", "work")]);
+  });
+
+  it("still honour a selection saved before keys carried the entry name, for every entry at the address", () => {
+    const old = listedToolKey(A, "search");
+    expect(toolsOfServer([old], A, "work")).toEqual(["search"]);
+    expect(toolsOfServer([old], A, "home")).toEqual(["search"]);
+    expect(keepConfirmed([old], two)).toEqual([old]);
+    const allowed = allowedKeys(two, [old]);
+    expect(allowed.has(permissionKey(A, namespacedToolName("work", "search")))).toBe(true);
+    expect(allowed.has(permissionKey(A, namespacedToolName("home", "search")))).toBe(true);
+  });
+
+  it("ignore a key whose entry name is not text", () => {
+    expect(toolsOfServer([JSON.stringify([A, "search", 5])], A)).toEqual([]);
+  });
+
+  it("turn a selection saved before keys carried the entry name into one key per entry, so it can be shown and taken back", () => {
+    const old = listedToolKey(A, "search");
+    const migrated = withEntryKeys([old], two);
+    expect(migrated).toEqual([listedToolKey(A, "search", "work"), listedToolKey(A, "search", "home")]);
+    // taking it back for one entry leaves it for the other, and nothing is left that still allows it for the first
+    const left = migrated.filter((key) => key !== listedToolKey(A, "search", "work"));
+    const allowed = allowedKeys(two, left);
+    expect(allowed.has(permissionKey(A, namespacedToolName("work", "search")))).toBe(false);
+    expect(allowed.has(permissionKey(A, namespacedToolName("home", "search")))).toBe(true);
+  });
+
+  it("leave keys that name their entry, and keys for an address the file does not have, as they are", () => {
+    const named = listedToolKey(A, "search", "work");
+    const elsewhere = listedToolKey(B, "search");
+    expect(withEntryKeys([named, elsewhere], two)).toEqual([named, elsewhere]);
+    expect(withEntryKeys(["not a key"], two)).toEqual(["not a key"]);
+    expect(withEntryKeys([listedToolKey(A, "search")], null)).toEqual([listedToolKey(A, "search")]);
+  });
+
+  it("give each key once", () => {
+    const named = listedToolKey(A, "search", "work");
+    expect(withEntryKeys([listedToolKey(A, "search"), named], two)).toEqual([
+      named,
+      listedToolKey(A, "search", "home"),
+    ]);
   });
 });

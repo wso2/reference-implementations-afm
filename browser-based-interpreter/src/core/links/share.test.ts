@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 import { decodeInlineAfm } from "./load-paths";
-import { buildShareLink, literalCredentialFields } from "./share";
+import { buildShareLink, canScanForCredentials, literalCredentialFields } from "./share";
 
 const SOURCE = "---\nname: Demo\n---\n\n# Role\nr\n\n# Instructions\ni\n";
 const ADDRESS = "https://afm.example/";
@@ -138,5 +138,37 @@ describe("literalCredentialFields on a file with a very long settings block", ()
     const started = Date.now();
     expect(literalCredentialFields(long)).toEqual([]);
     expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("canScanForCredentials", () => {
+  const file = (authentication: string) => `---
+name: Demo
+model:
+  provider: openai
+  authentication:
+${authentication}
+---
+
+# Role
+r
+`;
+
+  it("is true for settings that can be read, with or without a key", () => {
+    expect(canScanForCredentials(file('    type: api-key\n    api_key: "${env:OPENAI_API_KEY}"'))).toBe(true);
+    expect(canScanForCredentials(file("    type: api-key\n    api_key: sk-live-1"))).toBe(true);
+  });
+
+  it("is false when the file has no settings at all", () => {
+    expect(canScanForCredentials("# Role\nr\n\n# Instructions\ni\n")).toBe(false);
+  });
+
+  it("is false when the settings do not parse", () => {
+    expect(canScanForCredentials("---\nname: [not closed\n---\n\n# Role\nr\n")).toBe(false);
+  });
+
+  it("is false when the settings are too long to scan", () => {
+    const rows = Array.from({ length: 2500 }, (_, index) => `x${index}: 1`).join("\n");
+    expect(canScanForCredentials(`---\nname: A\n${rows}\n---\n\n# Role\nr\n`)).toBe(false);
   });
 });

@@ -69,6 +69,8 @@ export interface ChatState {
   generatedDraft: string | null;
   clarifyQuestions: string[];
   draftError: string | null;
+  // The id of the draft request that is still waiting for its answer. An answer for any other request is ignored.
+  draftRequest: string | null;
 }
 
 export const initialChatState: ChatState = {
@@ -91,6 +93,7 @@ export const initialChatState: ChatState = {
   generatedDraft: null,
   clarifyQuestions: [],
   draftError: null,
+  draftRequest: null,
 };
 
 const NO_AGENT_DETAILS = { agentName: "", mcpServers: [], planIssues: [], tools: [] };
@@ -99,6 +102,7 @@ type ChatAction =
   | { type: "user-message"; text: string; images?: ImageAttachment[] }
   | { type: "agent-loading"; content: string }
   | { type: "restore-session"; messages: UiMessage[]; agentSource: string; unseen?: boolean }
+  | { type: "draft-started"; id: string }
   | { type: "draft-dismissed" }
   | { type: "agent-cleared" }
   | { type: "regenerate-start" }
@@ -181,8 +185,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         canContinue: false,
         notReady: null,
       };
+    case "draft-started":
+      return { ...state, draftRequest: action.id, generatedDraft: null, clarifyQuestions: [], draftError: null };
     case "draft-dismissed":
-      return { ...state, generatedDraft: null, clarifyQuestions: [], draftError: null };
+      return { ...state, draftRequest: null, generatedDraft: null, clarifyQuestions: [], draftError: null };
     case "agent-cleared":
       return {
         ...initialChatState,
@@ -247,7 +253,12 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
     case "agent-not-ready":
       return { ...state, status: "not-ready", notReady: message.reason };
     case "worker-stopped": {
-      const lost = { savedSecrets: [], pendingPermission: null, canContinue: false };
+      const lost = {
+        savedSecrets: [],
+        pendingPermission: null,
+        canContinue: false,
+        ...(state.draftRequest !== null ? { draftRequest: null, draftError: WORKER_STOPPED } : {}),
+      };
       if (state.status === "no-agent") return { ...state, ...lost, error: WORKER_STOPPED };
       return { ...state, ...lost, status: "not-ready", notReady: WORKER_STOPPED };
     }
@@ -295,12 +306,17 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
     case "oauth-signin-done":
     case "probe-result":
       return state;
+    // An answer counts only for the request that is still waiting. After the agent was changed, the draft was
+    // dismissed or a newer request started, a late answer to an older request would appear in the wrong place.
     case "draft-generated":
-      return { ...state, generatedDraft: message.source, clarifyQuestions: [], draftError: null };
+      if (state.draftRequest !== message.id) return state;
+      return { ...state, draftRequest: null, generatedDraft: message.source, clarifyQuestions: [], draftError: null };
     case "draft-clarify":
-      return { ...state, clarifyQuestions: message.questions, draftError: null };
+      if (state.draftRequest !== message.id) return state;
+      return { ...state, draftRequest: null, clarifyQuestions: message.questions, draftError: null };
     case "draft-generation-error":
-      return { ...state, clarifyQuestions: [], draftError: message.message };
+      if (state.draftRequest !== message.id) return state;
+      return { ...state, draftRequest: null, clarifyQuestions: [], draftError: message.message };
     case "error": {
       const last = state.messages[lastUserIndex(state.messages)];
       return {

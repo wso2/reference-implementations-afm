@@ -68,6 +68,17 @@ export function literalCredentialPaths(source: string): Path[] {
   return found;
 }
 
+// False when the file cannot be searched for written-in keys: it has no settings, its settings do not parse,
+// or they are too long to scan. Such a file has not been checked, so it must not be called clean.
+export function canScanForCredentials(source: string): boolean {
+  if (settingsTooLong(source)) return false;
+  try {
+    return splitFrontmatter(source).frontmatter !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function literalCredentialFields(source: string): string[] {
   return [...new Set(literalCredentialPaths(source).map((path) => String(path.at(-1))))];
 }

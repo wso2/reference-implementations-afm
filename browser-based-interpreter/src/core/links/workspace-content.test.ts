@@ -28,6 +28,8 @@ import {
   originFor,
   receivedSource,
   shownIcon,
+  afterSave,
+  pendingEditToSave,
 } from "./workspace-content";
 import { encodeInlineAfm } from "./load-paths";
 import { previewAgent } from "../agent/agent-validation";
@@ -341,5 +343,46 @@ describe("receivedSource and originFor", () => {
     expect(originFor("text", "text")).toBe("import");
     expect(originFor("text", "text, edited")).toBe("blank");
     expect(originFor(null, "text")).toBe("blank");
+  });
+});
+
+describe("what the workspace does after a save", () => {
+  const saved = { id: "new-id" };
+
+  it("takes the id of a new agent that was stored", () => {
+    expect(afterSave(null, { saved, persisted: true })).toEqual({ id: "new-id", adopt: true });
+  });
+
+  it("keeps the id of an agent that was stored again", () => {
+    expect(afterSave("old-id", { saved: { id: "old-id" }, persisted: true })).toEqual({ id: "old-id", adopt: false });
+  });
+
+  it("gives a new draft no id when it could not be stored, so its address is not opened as a missing agent", () => {
+    expect(afterSave(null, { saved, persisted: false })).toEqual({ id: null, adopt: false });
+  });
+
+  it("keeps the id of a stored agent when saving it again failed", () => {
+    expect(afterSave("old-id", { saved: { id: "old-id" }, persisted: false })).toEqual({ id: "old-id", adopt: false });
+  });
+});
+
+describe("an edit that autosave has not saved yet", () => {
+  const edit = { buildable: true, content: "new", saved: "old", agentId: "a" };
+
+  it("is saved before another agent replaces it", () => {
+    expect(pendingEditToSave(edit, true)).toBe(true);
+    expect(pendingEditToSave({ ...edit, agentId: null }, false)).toBe(true);
+  });
+
+  it("is not saved when nothing changed", () => {
+    expect(pendingEditToSave({ ...edit, content: "old" }, true)).toBe(false);
+  });
+
+  it("is not saved when the file cannot be built, as autosave would not save it", () => {
+    expect(pendingEditToSave({ ...edit, buildable: false }, true)).toBe(false);
+  });
+
+  it("does not bring back an agent that was removed", () => {
+    expect(pendingEditToSave(edit, false)).toBe(false);
   });
 });

@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, expect, it } from "vitest";
-import { createRunTracker, grownHeight } from "./hooks";
+import { createRunTracker, createSerialQueue, grownHeight } from "./hooks";
 
 const MAX_COMPOSER_HEIGHT = 180;
 
@@ -65,5 +65,40 @@ describe("keeping only the newest of overlapping runs", () => {
     const run = runs.begin("model");
     runs.reset();
     expect(runs.isCurrent("model", run)).toBe(false);
+  });
+});
+
+describe("a queue that runs one task after another", () => {
+  it("starts a task only when the one before it has finished", async () => {
+    const enqueue = createSerialQueue();
+    const events: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    enqueue(async () => {
+      events.push("first starts");
+      await gate;
+      events.push("first ends");
+    });
+    enqueue(async () => {
+      events.push("second starts");
+    });
+    await Promise.resolve();
+    expect(events).toEqual(["first starts"]);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["first starts", "first ends", "second starts"]);
+  });
+
+  it("keeps going after a task that fails", async () => {
+    const enqueue = createSerialQueue();
+    const events: string[] = [];
+    enqueue(async () => {
+      throw new Error("no");
+    });
+    enqueue(async () => {
+      events.push("ran");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["ran"]);
   });
 });
