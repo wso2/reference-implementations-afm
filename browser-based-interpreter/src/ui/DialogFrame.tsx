@@ -17,6 +17,7 @@
 import { useEffect, useEffectEvent, useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useModalPage } from "./hooks";
 import { Icon } from "./Icon";
 
 const FOCUSABLE =
@@ -60,10 +61,8 @@ export function DialogFrame({
   const panel = useRef<HTMLDivElement>(null);
   const escape = useEffectEvent(onEscape);
 
+  useModalPage();
   useEffect(() => {
-    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const page = document.getElementById("root");
-    page?.setAttribute("inert", "");
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -71,11 +70,7 @@ export function DialogFrame({
       escape();
     };
     window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      page?.removeAttribute("inert");
-      if (before !== null && before.isConnected) before.focus();
-    };
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
   useEffect(() => {

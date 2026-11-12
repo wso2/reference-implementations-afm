@@ -16,7 +16,9 @@
 
 import { type SelectionBookmark } from "prosemirror-state";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { canTidy, tidyIntoBullets } from "../../core/agent/tidy-bullets";
+import { useModalPage } from "../../ui/hooks";
 import { Icon } from "../../ui/Icon";
 import { type WriteMode, WriteModeSwitch } from "../../ui/ViewControls";
 import { RichText, type RichTextHandle } from "./RichText";
@@ -171,8 +173,15 @@ export function FocusEditor({ title, hint, value, placeholder, onChange, onClose
   const [linking, setLinking] = useState(false);
   const [href, setHref] = useState("");
   const editor = useRef<RichTextHandle>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const savedRange = useRef<SelectionBookmark | null>(null);
   const [formats, setFormats] = useState<Record<string, boolean>>({});
+
+  // The page behind cannot be reached while this is open, and the focus returns to the button that opened it.
+  useModalPage();
+  useEffect(() => {
+    panel.current?.querySelector<HTMLElement>('[role="textbox"], textarea')?.focus();
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -214,9 +223,10 @@ export function FocusEditor({ title, hint, value, placeholder, onChange, onClose
     setLinking(false);
   }
 
-  return (
+  const dialog = (
     <div className="u-focus" onMouseDown={onClose} role="presentation">
       <div
+        ref={panel}
         className="u-focus-panel"
         role="dialog"
         aria-modal="true"
@@ -335,4 +345,6 @@ export function FocusEditor({ title, hint, value, placeholder, onChange, onClose
       </div>
     </div>
   );
+
+  return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 }

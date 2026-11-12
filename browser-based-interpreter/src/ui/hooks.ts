@@ -144,3 +144,17 @@ export function createRunTracker(): RunTracker {
 export function useRunTracker(): RunTracker {
   return useState(createRunTracker)[0];
 }
+
+// While a dialog is open, the page behind it cannot be reached with the keyboard or a screen reader,
+// and the focus goes back to where it was when the dialog closes.
+export function useModalPage(): void {
+  useEffect(() => {
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const page = document.getElementById("root");
+    page?.setAttribute("inert", "");
+    return () => {
+      page?.removeAttribute("inert");
+      if (before !== null && before.isConnected) before.focus();
+    };
+  }, []);
+}
