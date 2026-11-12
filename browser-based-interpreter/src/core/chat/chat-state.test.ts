@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, it, expect } from "vitest";
-import { chatReducer, initialChatState, turnsKeptBefore } from "./chat-state";
+import { canChangeConversation, chatReducer, initialChatState, turnsKeptBefore } from "./chat-state";
 import type { ServerMessage } from "../runtime/protocol";
 import type { ChatState } from "./chat-state";
 
@@ -177,6 +177,14 @@ describe("chatReducer", () => {
     });
   });
 
+  it("remembers which model step each tool call came from, so calls of one step stay together", () => {
+    const call = (id: string): ServerMessage => ({ type: "tool-call", id, name: "search", args: {} });
+    const usage: ServerMessage = { type: "usage", totalTokens: 1, inputTokens: 1, outputTokens: 0, iteration: 1, maxIterations: 10 };
+    let state = chatReducer(initialChatState, { type: "user-message", text: "hi" });
+    for (const message of [call("a"), call("b"), usage, call("c")]) state = chatReducer(state, { type: "server", message });
+    expect(state.messages.flatMap((message) => (message.kind === "tool" ? [message.step] : []))).toEqual([0, 0, 1]);
+  });
+
   it("adds a tool card on call and fills its result (by call id) when it completes", () => {
     let state = chatReducer(initialChatState, {
       type: "server",
@@ -221,6 +229,13 @@ describe("chatReducer", () => {
     state = chatReducer(state, { type: "user-message", text: "b" });
     const ids = state.messages.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("when the conversation can be changed", () => {
+  it("is only when the agent is ready, never while it is answering, connecting or not ready", () => {
+    const can = (status: ChatState["status"]) => canChangeConversation({ ...initialChatState, status });
+    expect([can("ready"), can("streaming"), can("connecting"), can("not-ready"), can("no-agent")]).toEqual([true, false, false, false, false]);
   });
 });
 

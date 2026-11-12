@@ -145,6 +145,16 @@ describe("toSeededConversation", () => {
     });
   });
 
+  it("keeps calls of separate model steps apart, and calls of one step together", () => {
+    const step = (id: number, callId: string, at: number | undefined): UiMessage => ({ kind: "tool", id, callId, name: "run", args: {}, status: "ok", result: "done", step: at });
+    const assistantCalls = (messages: ReturnType<typeof toSeededConversation>) =>
+      messages.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? [m.content.filter((part) => part.type === "tool-call").length] : []));
+    const user: UiMessage = { kind: "user", id: 1, text: "go" };
+    expect(assistantCalls(toSeededConversation([user, step(2, "a", 0), step(3, "b", 0), step(4, "c", 1)]))).toEqual([2, 1]);
+    expect(assistantCalls(toSeededConversation([user, step(2, "a", 0), step(3, "b", 1)]))).toEqual([1, 1]);
+    expect(assistantCalls(toSeededConversation([user, step(2, "a", undefined), step(3, "b", undefined)]))).toEqual([2]);
+  });
+
   it("ignores notice rows, which the model never saw", () => {
     expect(
       toSeededConversation([

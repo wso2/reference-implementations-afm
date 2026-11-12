@@ -23,7 +23,7 @@ const INTERRUPTED = "This tool call was interrupted before it returned a result.
 export function toSeededConversation(messages: UiMessage[]): ModelMessage[] {
   const conversation: ModelMessage[] = [];
   let assistantText: string | null = null;
-  let calls: { id: string; name: string; args: unknown; result: string }[] = [];
+  let calls: { id: string; name: string; args: unknown; result: string; step?: number }[] = [];
 
   function flush(): void {
     if (assistantText === null && calls.length === 0) return;
@@ -59,7 +59,9 @@ export function toSeededConversation(messages: UiMessage[]): ModelMessage[] {
       flush();
       assistantText = message.text;
     } else if (message.kind === "tool") {
-      calls.push({ id: message.callId, name: message.name, args: message.args, result: message.result ?? INTERRUPTED });
+      // Calls of one model step were asked for together. A call from a later step came after the earlier results.
+      if (calls.length > 0 && message.step !== calls.at(-1)?.step) flush();
+      calls.push({ id: message.callId, name: message.name, args: message.args, result: message.result ?? INTERRUPTED, step: message.step });
     }
   }
   flush();

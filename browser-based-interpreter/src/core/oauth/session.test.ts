@@ -584,8 +584,9 @@ describe("a sign-in that replaces the one an older run started from", () => {
     const completing = session.completeSignIn("old-code", older);
     await started;
     session.signOut();
-    await session.completeSignIn("new-code", (await startedAt(session)).searchParams.get("state")!);
+    const completingNew = session.completeSignIn("new-code", (await startedAt(session)).searchParams.get("state")!);
     finishFirstWrite();
+    await completingNew;
     await expect(completing).rejects.toThrow(/signed out/);
     expect(values.get(refreshKey)).toBe("refresh-new");
   });
@@ -623,6 +624,20 @@ describe("a renewal or an exchange that a newer sign-in has replaced", () => {
     expect(await renewing).toBe(false);
     expect(refreshRequests(w)).toHaveLength(0);
     expect(session.accessToken()).toBe("access-2");
+  });
+
+  it("sends no request at all once a newer sign-in has replaced it", async () => {
+    const { session, w } = await signedIn();
+    let release = () => {};
+    w.holdDiscovery = new Promise<void>((resolve) => (release = resolve));
+    const renewing = session.renew("access-1");
+    await wait();
+    w.holdDiscovery = Promise.resolve();
+    await session.completeSignIn("good-code", (await startedAt(session)).searchParams.get("state")!);
+    const before = w.requests.length;
+    release();
+    expect(await renewing).toBe(false);
+    expect(w.requests.length).toBe(before);
   });
 
   it("does not give its client to a newer sign-in's tokens", async () => {
@@ -672,6 +687,53 @@ describe("a sign-out while the refresh token is being written", () => {
     expect(values.has(refreshKey)).toBe(false);
     expect(session.hasSession()).toBe(false);
   });
+});
+
+describe("refresh token writes that are slow", () => {
+  function storeWhereWritesWait() {
+    const values = new Map<string, string>();
+    const waiting: (() => void)[] = [];
+    return {
+      values,
+      waiting,
+      get: (key: string) => values.get(key) ?? null,
+      set: (key: string, value: string) => new Promise<void>((resolve) => waiting.push(() => { values.set(key, value); resolve(); })),
+      remove: (key: string) => {
+        values.delete(key);
+      },
+    };
+  }
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it.each(Array.from({ length: 30 }, (_, seed) => [seed + 1]))(
+    "never leave an old refresh token saved, in whatever order the writes finish (order %i)",
+    async (seed) => {
+      const slow = storeWhereWritesWait();
+      const { session, w } = setup({}, slow);
+      w.tokenAnswer = (body) => reply({ access_token: "a", token_type: "Bearer", refresh_token: `refresh-${body.get("code")}` });
+      const finishing = (code: string, state: string) => session.completeSignIn(code, state).then(() => "signed in", (error: Error) => error.message);
+      const oldResults: Promise<string>[] = [];
+      for (const code of ["one", "two"]) {
+        oldResults.push(finishing(code, (await startedAt(session)).searchParams.get("state")!));
+        await wait();
+        if (code === "two") {
+          slow.waiting.shift()?.();
+          await wait();
+        }
+        session.signOut();
+      }
+      const last = finishing("three", (await startedAt(session)).searchParams.get("state")!);
+      let random = seed;
+      for (let round = 0; round < 40; round += 1) {
+        await wait();
+        random = (random * 48271) % 2147483647;
+        slow.waiting.splice(random % Math.max(slow.waiting.length, 1), 1)[0]?.();
+      }
+      expect(await Promise.all(oldResults)).toEqual([expect.stringContaining("signed out"), expect.stringContaining("signed out")]);
+      expect(await last).toBe("signed in");
+      expect(slow.values.get(refreshKey)).toBe("refresh-three");
+    },
+  );
 });
 
 describe("the client a server registered for this sign-in", () => {

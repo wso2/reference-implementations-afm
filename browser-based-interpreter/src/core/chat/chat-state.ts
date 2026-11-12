@@ -36,6 +36,7 @@ export type UiMessage =
       args: unknown;
       status: "running" | "ok" | "failed";
       result?: string;
+      step?: number;
     }
   | { kind: "notice"; id: number; text: string };
 
@@ -105,6 +106,11 @@ type ChatAction =
   | { type: "rewind"; id: number }
   | { type: "server"; message: ServerMessage }
   | { type: "permission-dismissed" };
+
+// Editing, retrying or regenerating changes the conversation, so it waits until the agent is ready.
+export function canChangeConversation(state: ChatState): boolean {
+  return state.status === "ready";
+}
 
 export function lastUserIndex(messages: UiMessage[]): number {
   return messages.findLastIndex((message) => message.kind === "user");
@@ -257,6 +263,7 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
         name: message.name,
         args: message.args,
         status: "running",
+        step: state.usage?.iteration ?? 0,
       });
     case "tool-result":
       return updateTool(state, message.id, message.ok, message.content);

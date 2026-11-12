@@ -208,18 +208,40 @@ function serverNamed(doc: Document, name: string): YAMLMap | undefined {
   return isSeq(servers) ? (servers.items.find((item) => isMap(item) && item.get("name") === name) as YAMLMap | undefined) : undefined;
 }
 
-export function setServerToolFilter(content: string, serverName: string, allow: string[] | null, deny: string[] = []): string {
+export interface ToolFilter {
+  allow?: string[];
+  deny?: string[];
+}
+
+const listOfText = (value: unknown): string[] | undefined =>
+  Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+
+export function getServerToolFilter(content: string, serverName: string): ToolFilter | null {
+  const doc = readSettings(content);
+  const server = doc === null ? undefined : serverNamed(doc, serverName);
+  const found = server?.toJSON().tool_filter as Record<string, unknown> | null | undefined;
+  if (typeof found !== "object" || found === null) return null;
+  const allow = listOfText(found.allow);
+  const deny = listOfText(found.deny);
+  return { ...(allow === undefined ? {} : { allow }), ...(deny === undefined ? {} : { deny }) };
+}
+
+export function putServerToolFilter(content: string, serverName: string, filter: ToolFilter | null): string {
   return edit(content, (doc) => {
     const server = serverNamed(doc, serverName);
     if (server === undefined) return false;
-    if (allow === null) {
+    if (filter === null) {
       server.delete("tool_filter");
       return;
     }
-    const filter = doc.createNode(deny.length === 0 ? { allow } : { allow, deny });
-    if (server.has("tool_filter")) server.set("tool_filter", filter);
-    else server.items.splice(1, 0, doc.createPair("tool_filter", filter));
+    const node = doc.createNode(filter);
+    if (server.has("tool_filter")) server.set("tool_filter", node);
+    else server.items.splice(1, 0, doc.createPair("tool_filter", node));
   });
+}
+
+export function setServerToolFilter(content: string, serverName: string, allow: string[] | null, deny: string[] = []): string {
+  return putServerToolFilter(content, serverName, allow === null ? null : deny.length === 0 ? { allow } : { allow, deny });
 }
 
 export interface NewMcpServer {
