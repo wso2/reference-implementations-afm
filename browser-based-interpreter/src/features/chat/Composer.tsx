@@ -57,6 +57,7 @@ function useImages() {
   const [dragOver, setDragOver] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; problem: boolean } | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const cleared = useRef(0);
 
   useEffect(() => {
     if (feedback === null || feedback.problem) return;
@@ -66,7 +67,10 @@ function useImages() {
 
   async function addImages(files: File[]) {
     if (files.length === 0) return;
+    const clearedBefore = cleared.current;
     const { attached, skipped } = await pickImages(files, images.length);
+    // The message was sent while the pictures were still being prepared. They belong to no message now.
+    if (cleared.current !== clearedBefore) return;
     if (attached.length > 0) setImages((current) => [...current, ...attached]);
     const text = attachFeedback(
       attached.map((image) => image.name),
@@ -103,6 +107,7 @@ function useImages() {
     onDrop,
     removeImage: (index: number) => setImages((current) => current.filter((_, at) => at !== index)),
     clear: () => {
+      cleared.current += 1;
       setFeedback(null);
       setImages([]);
     },
