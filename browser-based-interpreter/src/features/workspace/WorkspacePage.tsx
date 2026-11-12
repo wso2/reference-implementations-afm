@@ -92,7 +92,14 @@ export function WorkspacePage() {
       if (allow) remember.current(request);
     },
   });
-  const doc = useWorkspaceDocument({ clearAgent: session.clearAgent, onMissingAgent: () => setLeft("start") });
+  const resetSetup = useRef<() => void>(() => {});
+  const doc = useWorkspaceDocument({
+    clearAgent: () => {
+      session.clearAgent();
+      resetSetup.current();
+    },
+    onMissingAgent: () => setLeft("start"),
+  });
   remember.current = (request) => doc.trustRequested(request.serverId, request.name);
   const { content, readable } = doc;
   const activity = useAgentActivity(session.state);
@@ -100,6 +107,7 @@ export function WorkspacePage() {
   const agentIcon = readable.ok ? shownIcon(doc.trusted, readable.metadata.icon_url) : "";
   useRecordedChat(doc.agentId, agentLabel, content, session.state);
   const setup = useSetup(session, readable.ok ? readable.metadata : null, content, doc.agentId);
+  resetSetup.current = setup.reset;
   const run = useRunControl({
     content,
     setContent: doc.setContent,
@@ -245,7 +253,7 @@ export function WorkspacePage() {
           )}
         </aside>
 
-        <div className="u-stage">
+        <div className="u-stage" inert={doc.fileLoading}>
           <EditorPane
             content={content}
             onChange={run.editContent}

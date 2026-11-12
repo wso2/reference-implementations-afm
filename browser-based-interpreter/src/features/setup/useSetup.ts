@@ -95,9 +95,15 @@ export function useSetup(session: Session, metadata: AgentMetadata | null, conte
     }
   }
 
-  function start(): void {
+  // Another agent replaced the open one. What was checked for the old agent says nothing about the new one,
+  // and a check still waiting for its answer must not write it into the new agent's rows.
+  function reset(): void {
     runs.reset();
     setResults({});
+  }
+
+  function start(): void {
+    reset();
     run(rows);
   }
 
@@ -108,6 +114,7 @@ export function useSetup(session: Session, metadata: AgentMetadata | null, conte
     saveValues: (next: Record<string, string>) => setEntered({ agentId, values: { ...typed, ...next } }),
     ready: everyRowReady(rows),
     start,
+    reset,
     recheck: () => run(rows.filter((row) => row.state !== "ready")),
     changed: (id: string) => {
       runs.begin(id);
