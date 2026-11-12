@@ -26,7 +26,7 @@ import {
   countLine,
   filterTools,
   isListed,
-  linkedFileHost,
+  linkedFileAddress,
   serverTools,
   stepLimitAboveDefault,
   withTicks,
@@ -84,19 +84,33 @@ describe("serverTools", () => {
   });
 });
 
-describe("linkedFileHost", () => {
-  it("is the host a ?file= link points at, with its port", () => {
-    expect(linkedFileHost("https://files.example.com/a/b.afm.md")).toBe("files.example.com");
-    expect(linkedFileHost("https://files.example.com:8443/a.afm.md")).toBe("files.example.com:8443");
+describe("linkedFileAddress", () => {
+  it("is the host and path a ?file= link points at, with the port", () => {
+    expect(linkedFileAddress("https://files.example.com/a/b.afm.md")).toBe("files.example.com/a/b.afm.md");
+    expect(linkedFileAddress("https://files.example.com:8443/a.afm.md")).toBe("files.example.com:8443/a.afm.md");
+  });
+
+  it("tells two files on one host apart", () => {
+    expect(linkedFileAddress("https://raw.example.com/org/one.afm.md")).not.toBe(
+      linkedFileAddress("https://raw.example.com/org/two.afm.md"),
+    );
+  });
+
+  it("leaves out the query and the part after #, which can hold secrets", () => {
+    expect(linkedFileAddress("https://files.example.com/a.afm.md?token=abc#frag")).toBe("files.example.com/a.afm.md");
+  });
+
+  it("is just the host for a link with no path", () => {
+    expect(linkedFileAddress("https://files.example.com/")).toBe("files.example.com");
   });
 
   it("is nothing when the agent did not come from a ?file= link", () => {
-    expect(linkedFileHost(null)).toBeNull();
+    expect(linkedFileAddress(null)).toBeNull();
   });
 
   it("is nothing for a link that is not an https address", () => {
-    expect(linkedFileHost("http://files.example.com/a.afm.md")).toBeNull();
-    expect(linkedFileHost("not a url")).toBeNull();
+    expect(linkedFileAddress("http://files.example.com/a.afm.md")).toBeNull();
+    expect(linkedFileAddress("not a url")).toBeNull();
   });
 });
 

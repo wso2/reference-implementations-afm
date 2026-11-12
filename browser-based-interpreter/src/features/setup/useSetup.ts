@@ -42,16 +42,13 @@ import { authorizationCodeRefreshKey, oauthProviderFrom } from "../../core/oauth
 
 type Session = ReturnType<typeof useStandaloneSession>;
 
-export function useSetup(session: Session, metadata: AgentMetadata | null, content: string, agentId: string | null) {
+export function useSetup(session: Session, metadata: AgentMetadata | null, content: string) {
   const [results, setResults] = useState<Record<string, RowResult>>({});
-  const [entered, setEntered] = useState<{ agentId: string | null; values: Record<string, string> }>({
-    agentId,
-    values: {},
-  });
+  // The values stay while the open agent is saved for the first time and gets its id; reset() clears them for another agent.
+  const [typed, setTyped] = useState<Record<string, string>>({});
   const runs = useRunTracker();
 
   const valueNames = useMemo(() => secretsOf(content).settings, [content]);
-  const typed = entered.agentId === agentId ? entered.values : {};
   const values = Object.fromEntries(valueNames.map((name) => [name, Object.hasOwn(typed, name) ? typed[name]! : ""]));
 
   const rows: SetupRow[] = (metadata === null ? [] : [...plannedRows(metadata), ...valuesRow(valueNames, values)]).map(
@@ -95,23 +92,40 @@ export function useSetup(session: Session, metadata: AgentMetadata | null, conte
     }
   }
 
-  // Another agent replaced the open one. What was checked for the old agent says nothing about the new one,
-  // and a check still waiting for its answer must not write it into the new agent's rows.
-  function reset(): void {
+  function clearResults(): void {
     runs.reset();
     setResults({});
   }
 
+  // Another agent replaced the open one. What was checked and typed for the old agent says nothing about the new one,
+  // and a check still waiting for its answer must not write it into the new agent's rows.
+  function reset(): void {
+    clearResults();
+    setTyped({});
+  }
+
   function start(): void {
-    reset();
+    clearResults();
     run(rows);
+  }
+
+  // A value that changes what a server is asked invalidates that server's result, and any check still waiting for it.
+  function saveValues(next: Record<string, string>): void {
+    const after = { ...values, ...next };
+    for (const server of metadata?.tools?.mcp ?? []) {
+      if (JSON.stringify(fillValues(server, values)) === JSON.stringify(fillValues(server, after))) continue;
+      const id = serverRowId(server.name);
+      runs.begin(id);
+      if (results[id] !== undefined) settle(id, changedResult);
+    }
+    setTyped({ ...typed, ...next });
   }
 
   return {
     rows,
     valueNames,
     values,
-    saveValues: (next: Record<string, string>) => setEntered({ agentId, values: { ...typed, ...next } }),
+    saveValues,
     ready: everyRowReady(rows),
     start,
     reset,

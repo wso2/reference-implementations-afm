@@ -99,8 +99,8 @@ export function usePanelFocus(region: RefObject<HTMLElement | null>, top: string
 
     const panel = root.querySelector<HTMLElement>(".u-panel.is-over") ?? root.querySelector<HTMLElement>(".u-panel");
     if (panel === null) return;
-    const opener = active instanceof HTMLElement && active !== document.body && !panel.contains(active) ? active : null;
-    openers.current[depth] = opener;
+    const found = active instanceof HTMLElement && active !== document.body && !panel.contains(active) ? active : null;
+    openers.current[depth] = openerAfter(move, openers.current[depth] ?? null, found);
     openers.current.length = depth + 1;
     if (!panel.contains(document.activeElement)) panel.focus({ preventScroll: true });
   }, [region, top, depth]);
@@ -112,6 +112,12 @@ export function panelToClose(scope: EscapeScope, open: PanelsOpen): PanelTarget 
   if (scope === "left") return open.left ? "left" : null;
   if (scope === "side") return side;
   return side ?? (open.left ? "left" : null);
+}
+
+// When a panel is swapped for another, the control that opened the first may be gone from the page, so no new opener is
+// found. The one stored stays, so closing the second panel can still give the focus back.
+export function openerAfter<T>(move: FocusMove, stored: T | null, found: T | null): T | null {
+  return found ?? (move === "swap" ? stored : null);
 }
 
 export function focusMove(before: PanelSpot, after: PanelSpot): FocusMove {

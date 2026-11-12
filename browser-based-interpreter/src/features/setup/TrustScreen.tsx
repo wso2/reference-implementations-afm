@@ -78,7 +78,7 @@ export function serverTools(metadata: AgentMetadata, trusted: readonly string[] 
       name: server.name,
       url,
       host: url === null ? null : hostOf(url),
-      tools: url === null || listed.length > 0 ? listed : [...new Set(toolsOfServer(trusted, url))],
+      tools: url === null || listed.length > 0 ? listed : [...new Set(toolsOfServer(trusted, url, server.name))],
     };
   });
 }
@@ -93,8 +93,11 @@ export function countLine(ticked: number, listed: number): string {
     : `${ticked} of ${listed} run without asking`;
 }
 
-export function linkedFileHost(fileUrl: string | null): string | null {
-  return httpsUrl(fileUrl ?? "")?.host ?? null;
+// The host and the path, so two files on one host can be told apart. The query and the part after # are left out.
+export function linkedFileAddress(fileUrl: string | null): string | null {
+  const address = httpsUrl(fileUrl ?? "");
+  if (address === null) return null;
+  return address.pathname === "/" ? address.host : `${address.host}${address.pathname}`;
 }
 
 export function stepLimitAboveDefault(metadata: AgentMetadata): number | null {
@@ -155,7 +158,7 @@ export function PermissionsWindow({ servers, ticked, onTick: setTick, onClose: c
   const [query, setQuery] = useState("");
   const listedServers = servers.filter(isListed);
   const listedCount = listedServers.reduce((sum, server) => sum + server.tools.length, 0);
-  const keyOf = (server: ServerTools, tool: string) => listedToolKey(server.url ?? "", tool);
+  const keyOf = (server: ServerTools, tool: string) => listedToolKey(server.url ?? "", tool, server.name);
   const tickedOn = (server: ServerTools) => server.tools.filter((tool) => ticked.has(keyOf(server, tool))).length;
   const total = listedServers.reduce((sum, server) => sum + tickedOn(server), 0);
   const visible = listedServers.map((server) => ({ server, shown: filterTools(server.tools, query) }));
@@ -286,7 +289,7 @@ export function TrustScreen({
   const servers = serverTools(metadata);
   const listedServers = servers.filter(isListed);
   const listedCount = listedServers.reduce((sum, server) => sum + server.tools.length, 0);
-  const fileHost = linkedFileHost(fileUrl);
+  const fileAddress = linkedFileAddress(fileUrl);
   const stepLimit = stepLimitAboveDefault(metadata);
   const setTick = (names: string[], on: boolean) => setTicked((current) => withTicks(current, names, on));
 
@@ -315,9 +318,9 @@ export function TrustScreen({
       onEscape={() => {}}
     >
       <div className="u-tr-list">
-        {fileHost !== null && (
+        {fileAddress !== null && (
           <Row icon={ICONS.link} label="File from">
-            <span className="u-tr-v">{fileHost}</span>
+            <span className="u-tr-v">{fileAddress}</span>
           </Row>
         )}
         <Row icon={ICONS.model} label="Model">

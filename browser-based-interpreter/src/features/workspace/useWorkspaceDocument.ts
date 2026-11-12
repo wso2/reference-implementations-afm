@@ -72,6 +72,8 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
   const [missingAgent, setMissingAgent] = useState<string | null>(() => missingAgentId(initial));
   const [agentId, setAgentId] = useState<string | null>(() => (missingAgent === null ? initial.agentId : null));
   const [saveFailed, setSaveFailed] = useState(false);
+  // Goes up whenever another agent replaces the open one. A screen that holds choices about the old agent starts again.
+  const [documentKey, setDocumentKey] = useState(0);
   const [fileLoading, setFileLoading] = useState(initial.file !== null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [linkedFile, setLinkedFile] = useState<string | null>(null);
@@ -102,6 +104,7 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
     if (nextIdentity === loadedIdentityRef.current) return;
     loadedIdentityRef.current = nextIdentity;
     callbacks.current.flushPendingEdit();
+    setDocumentKey((key) => key + 1);
     setProvenance(provenanceOf(opening));
     setLinkedFile(null);
     const next = initialContent(opening);
@@ -174,7 +177,7 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
     const edit = { buildable: readable.ok, content, saved: savedContent, agentId };
     if (!pendingEditToSave(edit, agentId !== null && findAgent(agentId) !== null)) return;
     if (!readable.ok) return;
-    library.save({
+    const result = library.save({
       id: agentId ?? undefined,
       name: readable.metadata.name ?? "Untitled agent",
       description: readable.metadata.description ?? "",
@@ -182,6 +185,8 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
       origin: originFor(received, content),
       confirmedTools: confirmed,
     });
+    // Storage refused it, so it has nowhere to be kept. The bar says so, as it does for any save that fails.
+    if (!result.persisted) setSaveFailed(true);
   }
 
   const settledContent = useSettled(content, 700);
@@ -194,6 +199,7 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
 
   function replaceWith(source: string) {
     flushPendingEdit();
+    setDocumentKey((key) => key + 1);
     setContent(source);
     setSavedContent(source);
     setAgentId(null);
@@ -208,7 +214,8 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
   }
 
   function startBlank() {
-    setProvenance((current) => ({ ...current, confirmed: null, received: null }));
+    // An agent started here is the person's own, whatever the one it replaces was.
+    setProvenance((current) => ({ ...current, trusted: true, confirmed: null, received: null }));
     replaceWith(EMPTY_TEMPLATE);
   }
 
@@ -238,6 +245,7 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
     setContent,
     readable,
     agentId,
+    documentKey,
     saveFailed,
     fileLoading,
     fileError,

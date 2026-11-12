@@ -40,6 +40,7 @@ interface Props {
   savedAgent: SavedAgent | undefined;
   serverEditing: string | null;
   backToSetup: boolean;
+  documentKey: number;
   trusted: string[] | null;
   onContent: (next: string) => void;
   onApplyServer: (next: string) => void;
@@ -72,6 +73,7 @@ export function OverPanel(props: Props) {
       )}
       {panel === "info" && (
         <InfoPanel
+          key={props.documentKey}
           content={content}
           metadata={metadata}
           saved={savedAgent}

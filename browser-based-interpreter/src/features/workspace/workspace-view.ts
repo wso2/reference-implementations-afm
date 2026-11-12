@@ -89,6 +89,10 @@ export function useAgentActivity(state: ChatState): AgentActivity {
   const userCount = state.messages.filter((message) => message.kind === "user").length;
   const seenUserCount = useRef(userCount);
   const { phase, serverId } = reported;
+  const timer = useRef<number | undefined>(undefined);
+
+  // The timer that ends a leg belongs to the leg, not to the phase it was found in. A later phase must not cancel it.
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   useEffect(() => {
     const next = legAfter(previous.current, { phase, serverId }, userCount > seenUserCount.current);
@@ -96,9 +100,9 @@ export function useAgentActivity(state: ChatState): AgentActivity {
     seenUserCount.current = userCount;
     if (next === null) return;
 
+    window.clearTimeout(timer.current);
     setLeg(next);
-    const timer = window.setTimeout(() => setLeg(null), LEG_MS[next.phase]);
-    return () => window.clearTimeout(timer);
+    timer.current = window.setTimeout(() => setLeg(null), LEG_MS[next.phase]);
   }, [phase, serverId, userCount]);
 
   const running = state.status === "streaming" || state.status === "connecting";

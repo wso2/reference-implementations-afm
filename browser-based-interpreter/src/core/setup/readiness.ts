@@ -26,6 +26,8 @@ export interface Readiness {
   lead: string;
   subject?: string;
   fix?: ReadyFix;
+  // The entry in the file that the fix is about, when it is one server.
+  server?: string;
   chip?: boolean;
 }
 
@@ -107,6 +109,7 @@ export function readiness(input: ReadinessInput): Readiness {
         lead: "Running - ",
         subject: `${nameOf(serverNameByUrl, broken)} did not answer`,
         fix: "tools",
+        server: serverNameByUrl.get(broken),
       };
     }
     return { tone: "ok", lead: "Running - waiting on the model" };

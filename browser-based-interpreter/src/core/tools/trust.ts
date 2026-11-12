@@ -22,15 +22,25 @@ export function permissionKey(serverId: string | undefined, toolName: string): s
   return `${serverId ?? "local"}::${toolName}`;
 }
 
-export function listedToolKey(serverUrl: string, tool: string): string {
-  return JSON.stringify([serverUrl, tool]);
+// A key names the tool, the address and the entry in the file. Two entries can share an address, and selecting a tool
+// of one must not select it for the other. Keys saved without the entry's name (from before) apply to every entry there.
+export function listedToolKey(serverUrl: string, tool: string, serverName?: string): string {
+  return JSON.stringify(serverName === undefined ? [serverUrl, tool] : [serverUrl, tool, serverName]);
 }
 
-function parseKey(key: string): [string, string] | null {
+interface ParsedKey {
+  url: string;
+  tool: string;
+  server: string | null;
+}
+
+function parseKey(key: string): ParsedKey | null {
   try {
     const parsed: unknown = JSON.parse(key);
     if (Array.isArray(parsed) && typeof parsed[0] === "string" && typeof parsed[1] === "string") {
-      return [parsed[0], parsed[1]];
+      const server = parsed[2];
+      if (server !== undefined && typeof server !== "string") return null;
+      return { url: parsed[0], tool: parsed[1], server: server ?? null };
     }
   } catch {
     return null;
@@ -38,26 +48,35 @@ function parseKey(key: string): [string, string] | null {
   return null;
 }
 
-export function toolsOfServer(keys: readonly string[], serverUrl: string): string[] {
+const appliesTo = (parsed: ParsedKey, serverName: string | undefined) =>
+  parsed.server === null || serverName === undefined || parsed.server === serverName;
+
+export function toolsOfServer(keys: readonly string[], serverUrl: string, serverName?: string): string[] {
   const tools: string[] = [];
   for (const key of keys) {
     const parsed = parseKey(key);
-    if (parsed !== null && parsed[0] === serverUrl) tools.push(parsed[1]);
+    if (parsed !== null && parsed.url === serverUrl && appliesTo(parsed, serverName)) tools.push(parsed.tool);
   }
   return tools;
 }
 
 export function keepConfirmed(confirmed: string[], metadata: AgentMetadata | null): string[] {
   if (metadata === null) return confirmed;
-  const allowLists = new Map<string, string[]>();
+  const entries: { url: string; name: string; allow: string[] }[] = [];
   for (const server of metadata.tools?.mcp ?? []) {
-    if (server.transport.type === "http") allowLists.set(server.transport.url, server.tool_filter?.allow ?? []);
+    if (server.transport.type === "http") {
+      entries.push({ url: server.transport.url, name: server.name, allow: server.tool_filter?.allow ?? [] });
+    }
   }
   return confirmed.filter((key) => {
     const parsed = parseKey(key);
     if (parsed === null) return false;
-    const allow = allowLists.get(parsed[0]);
-    return allow !== undefined && (allow.length === 0 || allow.includes(parsed[1]));
+    return entries.some(
+      (entry) =>
+        entry.url === parsed.url &&
+        appliesTo(parsed, entry.name) &&
+        (entry.allow.length === 0 || entry.allow.includes(parsed.tool)),
+    );
   });
 }
 
@@ -67,9 +86,9 @@ export function trustKeyFor(metadata: AgentMetadata | null, serverId: string | u
     if (server.transport.type !== "http" || server.transport.url !== serverId) continue;
     const allow = server.tool_filter?.allow ?? [];
     const listed = allow.find((tool) => namespacedToolName(server.name, tool) === name);
-    if (listed !== undefined) return listedToolKey(serverId, listed);
+    if (listed !== undefined) return listedToolKey(serverId, listed, server.name);
     const shown = displayToolName(name);
-    if (allow.length === 0 && namespacedToolName(server.name, shown) === name) return listedToolKey(serverId, shown);
+    if (allow.length === 0 && namespacedToolName(server.name, shown) === name) return listedToolKey(serverId, shown, server.name);
   }
   return null;
 }
@@ -84,7 +103,7 @@ export function allowedKeys(metadata: AgentMetadata, confirmed: readonly string[
     if (server.transport.type !== "http") continue;
     const url = server.transport.url;
     const allow = server.tool_filter?.allow ?? [];
-    for (const tool of toolsOfServer(confirmed, url)) {
+    for (const tool of toolsOfServer(confirmed, url, server.name)) {
       if (allow.length === 0 || allow.includes(tool)) keys.add(permissionKey(url, namespacedToolName(server.name, tool)));
     }
   }

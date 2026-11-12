@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, expect, it } from "vitest";
-import { focusMove, type PanelsOpen, panelToClose } from "./usePanelKeys";
+import { focusMove, openerAfter, type PanelsOpen, panelToClose } from "./usePanelKeys";
 
 const open = (patch: Partial<PanelsOpen>): PanelsOpen => ({ left: false, side: false, over: false, ...patch });
 
@@ -60,5 +60,21 @@ describe("how the focus moves when a panel opens or closes", () => {
 
   it("leaves the focus alone when nothing changed", () => {
     expect(focusMove({ top: "chat", depth: 1 }, { top: "chat", depth: 1 })).toBe("none");
+  });
+});
+
+describe("which control gets the focus back", () => {
+  it("is the control that opened the panel", () => {
+    expect(openerAfter("enter", "old", "new")).toBe("new");
+    expect(openerAfter("swap", "old", "new")).toBe("new");
+  });
+
+  it("stays the stored one when a swap finds no new opener, so the first button is not forgotten", () => {
+    expect(openerAfter("swap", "old", null)).toBe("old");
+  });
+
+  it("is nothing when a panel opens with no focused control", () => {
+    expect(openerAfter("enter", "old", null)).toBeNull();
+    expect(openerAfter("enter", null, null)).toBeNull();
   });
 });

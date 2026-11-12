@@ -106,7 +106,7 @@ export function WorkspacePage() {
   const agentLabel = (readable.ok ? readable.metadata.name : undefined) ?? "Untitled agent";
   const agentIcon = readable.ok ? shownIcon(doc.trusted, readable.metadata.icon_url) : "";
   useRecordedChat(doc.agentId, agentLabel, content, session.state);
-  const setup = useSetup(session, readable.ok ? readable.metadata : null, content, doc.agentId);
+  const setup = useSetup(session, readable.ok ? readable.metadata : null, content);
   resetSetup.current = setup.reset;
   const run = useRunControl({
     content,
@@ -210,6 +210,7 @@ export function WorkspacePage() {
       >
         {doc.showTrust && readable.ok && (
           <TrustScreen
+            key={doc.documentKey}
             metadata={readable.metadata}
             source={content}
             savedSecrets={session.state.savedSecrets}
@@ -288,6 +289,8 @@ export function WorkspacePage() {
                 setRawRequest((n) => n + 1);
                 return;
               }
+              // Open the server that went quiet, not the one that was open last.
+              if (fix === "tools") setServerEditing(run.ready.server ?? null);
               openSide(fix);
             }}
           />
@@ -334,6 +337,7 @@ export function WorkspacePage() {
               savedAgent={library.agents.find((agent) => agent.id === doc.agentId)}
               serverEditing={serverEditing}
               backToSetup={backToSetup}
+              documentKey={doc.documentKey}
               trusted={doc.confirmedTools ?? null}
               onContent={doc.setContent}
               onApplyServer={doc.applyServer}
