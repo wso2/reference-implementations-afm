@@ -22,7 +22,7 @@ import { ConfirmNote } from "../../ui/ConfirmNote";
 import { withCode } from "../../ui/FileCheckPanel";
 import { Icon } from "../../ui/Icon";
 import { SECRET_INPUT } from "../../ui/inputs";
-import { type useSignIn } from "./server-panel-state";
+import { allShown, type useSignIn } from "./server-panel-state";
 
 export const SIGN_IN_FAILED = "Sign-in failed. Try again.";
 
@@ -153,7 +153,7 @@ export function ServerTools({
         <div className="u-spacer" />
         {found !== null && found.length > 0 && (
           <button className="u-linkish" onClick={onToggleAll}>
-            {allowed.length === found.length ? "Clear" : "Select all"}
+            {allShown(found, allowed) ? "Clear" : "Select all"}
           </button>
         )}
         {checkable && url.trim() !== "" && !probing && (
@@ -305,7 +305,7 @@ export function SignInSection({
                 )}
               </div>
             )}
-            {note?.status === "failed" && (
+            {method === "oauth2" && note?.status === "failed" && (
               <div className="repair" ref={signIn.noteRef}>
                 <p className="repair-what">{note.reason === undefined ? SIGN_IN_FAILED : brief(note.reason)}</p>
               </div>

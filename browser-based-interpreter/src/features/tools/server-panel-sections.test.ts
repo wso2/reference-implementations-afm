@@ -18,14 +18,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AuthFields, ServerTools, SIGN_IN_FAILED, SignInSection } from "./server-panel-sections";
 
-const tools = (found: { name: string; description?: string }[] | null) =>
+const tools = (found: { name: string; description?: string }[] | null, allowed = ["search"]) =>
   renderToStaticMarkup(
     createElement(ServerTools, {
       url: "https://mcp.example.com/mcp",
       probing: false,
       found,
       error: null,
-      allowed: ["search"],
+      allowed,
       waiting: "Check again to list this server's tools.",
       onToggle: () => {},
       onToggleAll: () => {},
@@ -48,6 +48,17 @@ describe("a server's tool list", () => {
   it("says nothing about asking before there are any tools to tick", () => {
     expect(tools(null)).not.toContain("run without asking");
     expect(tools([])).not.toContain("run without asking");
+  });
+
+  it("offers Clear only when every tool on show is ticked", () => {
+    expect(tools([{ name: "search" }, { name: "delete" }], ["search", "delete"])).toContain(">Clear<");
+    expect(tools([{ name: "search" }, { name: "delete" }], ["search"])).toContain(">Select all<");
+  });
+
+  it("offers Select all when the ticked name is one the list on show no longer has", () => {
+    const html = tools([{ name: "new" }], ["old"]);
+    expect(html).toContain(">Select all<");
+    expect(html).not.toContain(">Clear<");
   });
 });
 
@@ -162,5 +173,13 @@ describe("how a server signs in", () => {
 
   it("shows no failure when none happened", () => {
     expect(section(null)).not.toContain(SIGN_IN_FAILED);
+  });
+
+  it("shows a provider sign-in failure only under provider sign-in", () => {
+    for (const method of ["bearer", "api-key"]) {
+      expect(section({ status: "failed" }, method)).not.toContain(SIGN_IN_FAILED);
+      expect(section({ status: "failed", reason: "Failed to fetch" }, method)).not.toContain("Can&#x27;t be reached");
+    }
+    expect(section({ status: "failed" }, "oauth2")).toContain(SIGN_IN_FAILED);
   });
 });

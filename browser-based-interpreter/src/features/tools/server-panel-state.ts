@@ -153,6 +153,12 @@ export function toolsShown(live: boolean, found: ToolInfo[] | null, listed: stri
   return live ? null : listed.map((name) => ({ name }));
 }
 
+// Whether every tool on show is allowed. It looks at the names, not how many, because the allowed names can include
+// ones the list on show no longer has.
+export function allShown(shown: ToolInfo[], allowed: string[]): boolean {
+  return shown.every((tool) => allowed.includes(tool.name));
+}
+
 export function toolsProbedFor(probed: { key: string; tools: ToolInfo[] } | null, key: string): ToolInfo[] | null {
   return probed !== null && probed.key === key ? probed.tools : null;
 }
@@ -238,7 +244,15 @@ export function useServerProbe(options: ProbeOptions) {
     setProbing(false);
   }
 
-  return { probing, found, error, rejected, probe, forget, reset };
+  // A credential was typed or cleared. A secret is not part of the key, so this is how the list found with the old one
+  // goes: it is dropped, and a check still running for the old one is out of date, so it cannot bring the list back.
+  function credentialEdited() {
+    probes.begin("probe");
+    reset();
+    setRejected(false);
+  }
+
+  return { probing, found, error, rejected, probe, forget, reset, credentialEdited };
 }
 
 export function signInQuestion(provider: OAuthProviderRef): { title: string; text: string } {

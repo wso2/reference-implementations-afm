@@ -17,7 +17,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { attachFeedback, Composer } from "./Composer";
+import { attachFeedback, canSend, Composer } from "./Composer";
 
 const composer = (disabled: boolean) =>
   renderToStaticMarkup(
@@ -59,6 +59,26 @@ describe("the line about attached images", () => {
     const html = composer(false);
     expect(html).toContain('<span class="visually-hidden" role="status"></span>');
     expect(html).not.toContain("composer-attach-status");
+  });
+});
+
+describe("when a message can be sent", () => {
+  const free = { disabled: false, streaming: false, preparing: false };
+
+  it("needs some text or a picture", () => {
+    expect(canSend("hello", 0, free)).toBe(true);
+    expect(canSend("", 1, free)).toBe(true);
+    expect(canSend("   ", 0, free)).toBe(false);
+  });
+
+  it("waits while pictures are still being prepared, so none is left behind", () => {
+    expect(canSend("hello", 0, { ...free, preparing: true })).toBe(false);
+    expect(canSend("", 2, { ...free, preparing: true })).toBe(false);
+  });
+
+  it("waits while the agent answers or cannot be used", () => {
+    expect(canSend("hello", 0, { ...free, streaming: true })).toBe(false);
+    expect(canSend("hello", 0, { ...free, disabled: true })).toBe(false);
   });
 });
 

@@ -55,10 +55,16 @@ function BlockedImage(props: ComponentPropsWithoutRef<"img">) {
 
 // A link inside the reply, such as a footnote and its way back, moves within the reply. Following it as an address would
 // change the address of the page, which the app reads. Any other link opens in a new tab, without access to the app.
+// Like a real jump, it also moves the keyboard focus to the target, so the next Tab continues from there.
 export function jumpWithin(from: Element, id: string): void {
   const reply = from.closest(".md");
-  const target = Array.from(reply?.querySelectorAll("[id]") ?? []).find((element) => element.id === id);
-  target?.scrollIntoView({ block: "nearest" });
+  const target = Array.from(reply?.querySelectorAll("[id]") ?? []).find((element) => element.id === id) as
+    | HTMLElement
+    | undefined;
+  if (target === undefined) return;
+  target.scrollIntoView({ block: "nearest" });
+  if (target.tabIndex < 0 && !target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
 }
 
 function SafeLink(props: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {

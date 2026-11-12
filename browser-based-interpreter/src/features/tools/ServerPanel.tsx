@@ -36,6 +36,7 @@ import { ServerDetail } from "./ServerDetail";
 import { ServerDirectory } from "./ServerDirectory";
 import { ConnectHead, PanelFoot, ServerTools, SignInSection } from "./server-panel-sections";
 import {
+  allShown,
   authBlockFor,
   discoveredValues,
   isSignedIn,
@@ -161,6 +162,7 @@ export function ServerPanel({
     setSecretEdits({});
     probe.reset();
     setAllowed([]);
+    signIn.clearNote();
     directoryClient.cancel();
     if (entry.auth.type === "none") setPendingDirectoryProbe(true);
     if (entry.auth.type === "oauth2") void directoryClient.lookUp({ ...entry, auth: entry.auth });
@@ -250,6 +252,7 @@ export function ServerPanel({
             <SignInSection
               method={method}
               onMethod={(id) => {
+                if (id !== method) signIn.clearNote();
                 setMethod(id);
                 directoryClient.cancel();
               }}
@@ -266,8 +269,14 @@ export function ServerPanel({
               saved={secretStored}
               rejected={probe.rejected}
               clientIdState={directoryClient.state}
-              onValue={(key, value) => setValues((current) => ({ ...current, [key]: value }))}
-              onSecretEdit={(key, value) => setSecretEdits((current) => ({ ...current, [key]: value }))}
+              onValue={(key, value) => {
+                setValues((current) => ({ ...current, [key]: value }));
+                directoryClient.cancel();
+              }}
+              onSecretEdit={(key, value) => {
+                setSecretEdits((current) => ({ ...current, [key]: value }));
+                probe.credentialEdited();
+              }}
               onSecretBlur={() => hasTypedSecret && void probe.probe(true)}
             />
 
@@ -280,7 +289,7 @@ export function ServerPanel({
               waiting={waitingNote(url, probe.probing, probe.error, need, editing !== null && !listed)}
               onToggle={toggle}
               onToggleAll={() => {
-                if (tools) setAllowed(allowed.length === tools.length ? [] : tools.map((tool) => tool.name));
+                if (tools) setAllowed(allShown(tools, allowed) ? [] : tools.map((tool) => tool.name));
               }}
               onCheckAgain={() => void probe.probe(true)}
               checkable

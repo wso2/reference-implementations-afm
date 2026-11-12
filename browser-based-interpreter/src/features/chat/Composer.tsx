@@ -45,6 +45,16 @@ function nameList(names: string[]): string {
   return `${names.slice(0, LISTED).join(", ")} and ${names.length - LISTED} more`;
 }
 
+// Sending waits while pictures are still being prepared, so a picture the person just chose is not left behind.
+export function canSend(
+  text: string,
+  imageCount: number,
+  block: { disabled: boolean; streaming: boolean; preparing: boolean },
+): boolean {
+  if (block.disabled || block.streaming || block.preparing) return false;
+  return text.trim().length > 0 || imageCount > 0;
+}
+
 export function attachFeedback(attached: string[], skipped: SkippedImage[]): string | null {
   const sentences: string[] = [];
   if (attached.length > 0) sentences.push(`Attached ${nameList(attached)}.`);
@@ -62,6 +72,7 @@ function useImages() {
   // cannot both take the free places.
   const [enqueue] = useState(createSerialQueue);
   const staged = useRef(0);
+  const [preparing, setPreparing] = useState(0);
 
   useEffect(() => {
     if (feedback === null || feedback.problem) return;
@@ -72,19 +83,24 @@ function useImages() {
   function addImages(files: File[]) {
     if (files.length === 0) return;
     const clearedBefore = cleared.current;
+    setPreparing((count) => count + 1);
     enqueue(async () => {
-      // The message was sent before this selection began, or while its pictures were still being prepared.
-      // They belong to no message now.
-      if (cleared.current !== clearedBefore) return;
-      const { attached, skipped } = await pickImages(files, staged.current);
-      if (cleared.current !== clearedBefore) return;
-      staged.current += attached.length;
-      if (attached.length > 0) setImages((current) => [...current, ...attached]);
-      const text = attachFeedback(
-        attached.map((image) => image.name),
-        skipped,
-      );
-      setFeedback(text === null ? null : { text, problem: skipped.length > 0 });
+      try {
+        // The message was sent before this selection began, or while its pictures were still being prepared.
+        // They belong to no message now.
+        if (cleared.current !== clearedBefore) return;
+        const { attached, skipped } = await pickImages(files, staged.current);
+        if (cleared.current !== clearedBefore) return;
+        staged.current += attached.length;
+        if (attached.length > 0) setImages((current) => [...current, ...attached]);
+        const text = attachFeedback(
+          attached.map((image) => image.name),
+          skipped,
+        );
+        setFeedback(text === null ? null : { text, problem: skipped.length > 0 });
+      } finally {
+        setPreparing((count) => count - 1);
+      }
     });
   }
 
@@ -109,7 +125,8 @@ function useImages() {
   return {
     images,
     dragOver,
-    status: feedback?.text ?? "",
+    preparing: preparing > 0,
+    status: preparing > 0 ? "Preparing pictures…" : (feedback?.text ?? ""),
     onPicked,
     onDragOver,
     onDragLeave: () => setDragOver(false),
@@ -176,11 +193,11 @@ export function Composer({ onSend, onStop, streaming, disabled, placeholder }: P
   const ref = useAutosize(text, MAX_HEIGHT);
   const picker = useImages();
   const { images, status } = picker;
+  const sendable = canSend(text, images.length, { disabled, streaming, preparing: picker.preparing });
 
   function submit() {
-    const trimmed = text.trim();
-    if ((trimmed.length === 0 && images.length === 0) || disabled || streaming) return;
-    onSend(trimmed, images.length > 0 ? images : undefined);
+    if (!sendable) return;
+    onSend(text.trim(), images.length > 0 ? images : undefined);
     picker.clear();
     setText("");
   }
@@ -191,8 +208,6 @@ export function Composer({ onSend, onStop, streaming, disabled, placeholder }: P
       submit();
     }
   }
-
-  const empty = text.trim().length === 0 && images.length === 0;
 
   return (
     <div className="xc-dock" onDragOver={picker.onDragOver} onDragLeave={picker.onDragLeave} onDrop={picker.onDrop}>
@@ -233,9 +248,9 @@ export function Composer({ onSend, onStop, streaming, disabled, placeholder }: P
             </button>
           ) : (
             <button
-              className={`xc-send ${disabled || empty ? "off" : ""}`}
+              className={`xc-send ${sendable ? "" : "off"}`}
               onClick={submit}
-              disabled={disabled || empty}
+              disabled={!sendable}
               aria-label="Send"
             >
               <Icon weight={2.3} path="m5 12 7-7 7 7M12 19V5" />

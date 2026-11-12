@@ -18,9 +18,25 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
-import { Markdown } from "./Markdown";
+import { jumpWithin, Markdown } from "./Markdown";
 
 const shown = (text: string) => renderToStaticMarkup(createElement(Markdown, { text }));
+
+// A stand-in for the page: this suite runs without a browser, so it records what a jump does to an element.
+function target(id: string, tabIndex: number, withTabindex = false) {
+  const calls: string[] = [];
+  const element = {
+    id,
+    tabIndex,
+    hasAttribute: (name: string) => name === "tabindex" && withTabindex,
+    setAttribute: (name: string, value: string) => calls.push(`set ${name}=${value}`),
+    scrollIntoView: () => calls.push("scroll"),
+    focus: (options: unknown) => calls.push(`focus ${JSON.stringify(options)}`),
+  };
+  return { element, calls };
+}
+const insideReply = (elements: unknown[]) =>
+  ({ closest: () => ({ querySelectorAll: () => elements }) }) as unknown as Element;
 
 describe("a model reply is shown without giving anything away", () => {
   it("never loads a picture a reply points at, and names the host instead", () => {
@@ -116,6 +132,39 @@ describe("footnotes and links in a reply", () => {
     const html = shown("see [docs](https://example.com/a)");
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it("moves the keyboard to the footnote, so the next Tab continues from there", () => {
+    const note = target("user-content-fn-1", -1);
+    jumpWithin(insideReply([note.element]), "user-content-fn-1");
+    expect(note.calls).toEqual(["scroll", "set tabindex=-1", 'focus {"preventScroll":true}']);
+  });
+
+  it("moves the keyboard back to the reference on the way back, without a tab stop it did not need", () => {
+    const reference = target("user-content-fnref-1", 0);
+    jumpWithin(insideReply([reference.element]), "user-content-fnref-1");
+    expect(reference.calls).toEqual(["scroll", 'focus {"preventScroll":true}']);
+  });
+
+  it("does not change a target that is already focusable by script", () => {
+    const note = target("user-content-fn-2", -1, true);
+    jumpWithin(insideReply([note.element]), "user-content-fn-2");
+    expect(note.calls).toEqual(["scroll", 'focus {"preventScroll":true}']);
+  });
+
+  it("goes to the target with that id and leaves the others alone", () => {
+    const other = target("user-content-fn-1", -1);
+    const wanted = target("user-content-fn-2", -1);
+    jumpWithin(insideReply([other.element, wanted.element]), "user-content-fn-2");
+    expect(other.calls).toEqual([]);
+    expect(wanted.calls).toContain("scroll");
+  });
+
+  it("does nothing when the target is not in the reply", () => {
+    const other = target("elsewhere", -1);
+    expect(() => jumpWithin(insideReply([other.element]), "user-content-fn-9")).not.toThrow();
+    expect(other.calls).toEqual([]);
+    expect(() => jumpWithin({ closest: () => null } as unknown as Element, "x")).not.toThrow();
   });
 
   it("does not hand the renderer's own node to the page", () => {

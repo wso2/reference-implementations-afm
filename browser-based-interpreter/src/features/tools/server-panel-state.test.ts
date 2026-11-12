@@ -21,6 +21,7 @@ import { authorizationCodeRefreshKey } from "../../core/oauth/session";
 import { type ServerMessage } from "../../core/runtime/protocol";
 import { createWorkerSecretStore } from "../../core/secrets/worker-secret-store";
 import {
+  allShown,
   authBlockFor,
   directoryValues,
   discoveredValues,
@@ -320,5 +321,17 @@ describe("the tools shown for a server", () => {
 
   it("are nothing yet for a server that was not listed or has a new address", () => {
     expect(toolsShown(true, null, ["a"])).toBeNull();
+  });
+});
+
+describe("whether every tool on show is allowed", () => {
+  it("is true when each name on show is allowed, and false when one is not", () => {
+    expect(allShown([{ name: "a" }, { name: "b" }], ["a", "b"])).toBe(true);
+    expect(allShown([{ name: "a" }, { name: "b" }], ["a"])).toBe(false);
+  });
+
+  it("looks at the names, not how many: an allowed name that is not on show does not count", () => {
+    expect(allShown([{ name: "new" }], ["old"])).toBe(false);
+    expect(allShown([{ name: "new" }], ["old", "new"])).toBe(true);
   });
 });
