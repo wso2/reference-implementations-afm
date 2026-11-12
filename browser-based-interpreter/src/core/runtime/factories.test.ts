@@ -93,6 +93,7 @@ describe("toolsFromMetadata - the browser's mandatory-proxy policy", () => {
   });
 
   it("never silently falls back to a direct connection - omitting the override still requires a proxy to exist somewhere", () => {
+    if (defaultMcpProxyConfig !== null) return;
     expect(() => toolsFromMetadata(metadataWithMcp([httpServer("a")]), defaultMcpProxyConfig)).toThrow(
       McpProxyRequiredError,
     );

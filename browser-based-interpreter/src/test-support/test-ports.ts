@@ -79,7 +79,7 @@ export function sourceOf(port: FakeToolPort, guard: ToolGuard, label?: string): 
             description: item.description,
             inputSchema: jsonSchema(item.inputSchema as never),
             run: (args, options) =>
-              port.execute({ id: options.toolCallId, name: `${prefix}${item.name}`, args, serverId: item.serverId }, options.abortSignal ?? new AbortController().signal),
+              port.execute({ id: options.toolCallId, name: item.name, args, serverId: item.serverId }, options.abortSignal ?? new AbortController().signal),
           }),
         ]),
       );
