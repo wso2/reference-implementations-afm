@@ -93,6 +93,7 @@ interface Attempt {
 }
 
 const SIGNED_OUT = "You signed out before the sign-in finished - please sign in again.";
+const REPLACED = "A newer sign-in replaced this renewal.";
 
 export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, store: KeyValueStore, fetchFn: typeof fetch): AuthorizationCodeSession {
   const refreshKey = authorizationCodeRefreshKey(config);
@@ -108,14 +109,18 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
   const secureFetch: typeof fetch = (input, init) =>
     isInsecure(String(input)) ? Promise.reject(new Error("Sign-in only talks to https:// addresses (http://localhost is allowed).")) : fetchFn(input, init);
 
-  async function keepSaved(refreshToken: string | undefined): Promise<void> {
-    try {
-      if (refreshToken === undefined) store.remove(refreshKey);
-      else await store.set(refreshKey, refreshToken);
-    } catch {
-      return;
-    }
-  }
+  // Saves run one at a time, and each one saves what the session holds when it runs, so a late save can never leave an old token behind.
+  let saving: Promise<void> = Promise.resolve();
+  const keepSaved = (): Promise<void> =>
+    (saving = saving.then(async () => {
+      try {
+        const refreshToken = tokens?.refresh_token;
+        if (refreshToken === undefined) store.remove(refreshKey);
+        else await store.set(refreshKey, refreshToken);
+      } catch {
+        return;
+      }
+    }));
 
   // Each run gets its own provider, tied to its own attempt (a renewal has none) and to the session that was current when it started.
   // What it learns after that session was replaced is old news: it must not touch the newer session.
@@ -143,9 +148,7 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
           client = attempt.client ?? client;
         }
         tokens = saved;
-        await keepSaved(saved.refresh_token);
-        // A sign-out or a newer sign-in came while this was being written: make the saved copy match the session in memory again.
-        if (generation !== at) await keepSaved(tokens?.refresh_token);
+        await keepSaved();
       },
       state: () => attempt?.state ?? "",
       saveCodeVerifier: (verifier) => {
@@ -167,12 +170,18 @@ export function createAuthorizationCodeSession(config: AuthorizationCodeConfig, 
     };
   };
 
-  const run = (attempt: Attempt | undefined, extra: { authorizationCode?: string; callbackState?: string } = {}) =>
-    authorize(providerFor(attempt), { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: secureFetch, ...extra });
+  // A renewal sends nothing once a newer sign-in or a sign-out has replaced the session it started from.
+  const run = (attempt: Attempt | undefined, extra: { authorizationCode?: string; callbackState?: string } = {}) => {
+    const startedAt = generation;
+    const sendUnlessReplaced: typeof fetch = (input, init) =>
+      attempt === undefined && generation !== startedAt ? Promise.reject(new Error(REPLACED)) : secureFetch(input, init);
+    return authorize(providerFor(attempt), { serverUrl: config.resource, resourceMetadataUrl: metadataUrl, scope, fetchFn: sendUnlessReplaced, ...extra });
+  };
 
   function forget(): void {
     tokens = undefined;
     store.remove(refreshKey);
+    void keepSaved();
   }
 
   function takePending(state: string, iss: string | undefined): Attempt {
