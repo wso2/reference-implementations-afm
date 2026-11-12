@@ -17,6 +17,7 @@
 import { type AgentMetadata } from "@afm/engine";
 import { useRef, useState } from "react";
 import { useThemeContext } from "../../app/contexts";
+import { withEntryKeys } from "../../core/tools/trust";
 import { ConfirmNote } from "../../ui/ConfirmNote";
 import { Icon } from "../../ui/Icon";
 import { type useStandaloneSession } from "../../worker-client/useStandaloneSession";
@@ -94,7 +95,8 @@ function PermissionsRow({ metadata, trusted, onChange }: PermissionsRowProps) {
 
 function PermissionsEditor({ metadata, trusted, onChange, onClose }: PermissionsRowProps & { onClose: () => void }) {
   const [servers] = useState(() => (metadata === null ? [] : serverTools(metadata, trusted ?? [])));
-  const current = new Set(trusted ?? []);
+  // A selection saved in the older form is shown, and taken back, like any other.
+  const current = new Set(withEntryKeys(trusted ?? [], metadata));
   return (
     <PermissionsWindow
       servers={servers}

@@ -60,6 +60,23 @@ export function toolsOfServer(keys: readonly string[], serverUrl: string, server
   return tools;
 }
 
+// Keys saved before the entry's name was part of the key name only the tool and the address. Each becomes one key per
+// entry at that address, so the Permissions window can show it as selected and take it back. Other keys stay as they are.
+export function withEntryKeys(keys: readonly string[], metadata: AgentMetadata | null): string[] {
+  const entries: { url: string; name: string }[] = [];
+  for (const server of metadata?.tools?.mcp ?? []) {
+    if (server.transport.type === "http") entries.push({ url: server.transport.url, name: server.name });
+  }
+  const result = new Set<string>();
+  for (const key of keys) {
+    const parsed = parseKey(key);
+    const at = parsed === null || parsed.server !== null ? [] : entries.filter((entry) => entry.url === parsed.url);
+    if (parsed === null || at.length === 0) result.add(key);
+    else for (const entry of at) result.add(listedToolKey(parsed.url, parsed.tool, entry.name));
+  }
+  return [...result];
+}
+
 export function keepConfirmed(confirmed: string[], metadata: AgentMetadata | null): string[] {
   if (metadata === null) return confirmed;
   const entries: { url: string; name: string; allow: string[] }[] = [];

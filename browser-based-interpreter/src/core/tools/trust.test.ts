@@ -24,6 +24,7 @@ import {
   allowedKeys,
   listedToolKey,
   permissionKey,
+  withEntryKeys,
 } from "./trust";
 import type { AgentMetadata } from "@afm/engine";
 import { namespacedToolName } from "./tool-names";
@@ -209,5 +210,32 @@ describe("two entries at one address", () => {
 
   it("ignore a key whose entry name is not text", () => {
     expect(toolsOfServer([JSON.stringify([A, "search", 5])], A)).toEqual([]);
+  });
+
+  it("turn a selection saved before keys carried the entry name into one key per entry, so it can be shown and taken back", () => {
+    const old = listedToolKey(A, "search");
+    const migrated = withEntryKeys([old], two);
+    expect(migrated).toEqual([listedToolKey(A, "search", "work"), listedToolKey(A, "search", "home")]);
+    // taking it back for one entry leaves it for the other, and nothing is left that still allows it for the first
+    const left = migrated.filter((key) => key !== listedToolKey(A, "search", "work"));
+    const allowed = allowedKeys(two, left);
+    expect(allowed.has(permissionKey(A, namespacedToolName("work", "search")))).toBe(false);
+    expect(allowed.has(permissionKey(A, namespacedToolName("home", "search")))).toBe(true);
+  });
+
+  it("leave keys that name their entry, and keys for an address the file does not have, as they are", () => {
+    const named = listedToolKey(A, "search", "work");
+    const elsewhere = listedToolKey(B, "search");
+    expect(withEntryKeys([named, elsewhere], two)).toEqual([named, elsewhere]);
+    expect(withEntryKeys(["not a key"], two)).toEqual(["not a key"]);
+    expect(withEntryKeys([listedToolKey(A, "search")], null)).toEqual([listedToolKey(A, "search")]);
+  });
+
+  it("give each key once", () => {
+    const named = listedToolKey(A, "search", "work");
+    expect(withEntryKeys([listedToolKey(A, "search"), named], two)).toEqual([
+      named,
+      listedToolKey(A, "search", "home"),
+    ]);
   });
 });
