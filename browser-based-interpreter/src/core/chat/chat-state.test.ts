@@ -177,6 +177,14 @@ describe("chatReducer", () => {
     });
   });
 
+  it("remembers which model step each tool call came from, so calls of one step stay together", () => {
+    const call = (id: string): ServerMessage => ({ type: "tool-call", id, name: "search", args: {} });
+    const usage: ServerMessage = { type: "usage", totalTokens: 1, inputTokens: 1, outputTokens: 0, iteration: 1, maxIterations: 10 };
+    let state = chatReducer(initialChatState, { type: "user-message", text: "hi" });
+    for (const message of [call("a"), call("b"), usage, call("c")]) state = chatReducer(state, { type: "server", message });
+    expect(state.messages.flatMap((message) => (message.kind === "tool" ? [message.step] : []))).toEqual([0, 0, 1]);
+  });
+
   it("adds a tool card on call and fills its result (by call id) when it completes", () => {
     let state = chatReducer(initialChatState, {
       type: "server",

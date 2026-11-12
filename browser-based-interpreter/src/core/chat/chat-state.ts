@@ -36,6 +36,7 @@ export type UiMessage =
       args: unknown;
       status: "running" | "ok" | "failed";
       result?: string;
+      step?: number;
     }
   | { kind: "notice"; id: number; text: string };
 
@@ -257,6 +258,7 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
         name: message.name,
         args: message.args,
         status: "running",
+        step: state.usage?.iteration ?? 0,
       });
     case "tool-result":
       return updateTool(state, message.id, message.ok, message.content);
