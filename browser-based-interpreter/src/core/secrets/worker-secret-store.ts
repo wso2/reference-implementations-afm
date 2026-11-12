@@ -32,16 +32,24 @@ export function createWorkerSecretStore(emit: (message: ServerMessage) => void):
   const approvals = new Map<string, Set<string>>();
   const providers = new Map<string, string>();
 
-  function postNames(): void {
-    emit({ type: "secrets-list", names: Object.keys(values) });
-  }
-
   // Sign-in refresh tokens live here, apart from the keys a person entered, so one can never stand in for the other.
   const refreshTokens = new Map<string, string>();
+
+  // The page learns the names only, never a value. A sign-in's name is how the screens know a person is signed in.
+  function postNames(): void {
+    emit({ type: "secrets-list", names: [...new Set([...Object.keys(values), ...refreshTokens.keys()])] });
+  }
+
   const refreshStore: KeyValueStore = {
     get: (key) => refreshTokens.get(key) ?? null,
-    set: (key, value) => void refreshTokens.set(key, value),
-    remove: (key) => void refreshTokens.delete(key),
+    set: (key, value) => {
+      refreshTokens.set(key, value);
+      postNames();
+    },
+    remove: (key) => {
+      refreshTokens.delete(key);
+      postNames();
+    },
   };
 
   return {

@@ -65,13 +65,15 @@ describe("the worker secret store", () => {
       expect(JSON.stringify(messages)).not.toContain("secret-");
     });
 
-    it("keeps an OAuth refresh token in memory, and does not list it among the saved keys", () => {
-      const { store, lastNames } = setup();
+    it("keeps an OAuth refresh token in memory, and tells the page only that it is there", () => {
+      const { store, lastNames, messages } = setup();
       store.refreshStore.set("afm.oauth.x.refresh", "rt-1");
       expect(store.refreshStore.get("afm.oauth.x.refresh")).toBe("rt-1");
-      expect(lastNames()).toBeUndefined();
+      expect(lastNames()).toEqual(["afm.oauth.x.refresh"]);
+      expect(JSON.stringify(messages)).not.toContain("rt-1");
       store.refreshStore.remove("afm.oauth.x.refresh");
       expect(store.refreshStore.get("afm.oauth.x.refresh")).toBeNull();
+      expect(lastNames()).toEqual([]);
     });
 
     it("keeps a refresh token apart from a key a person entered, even under the same name", () => {
@@ -82,7 +84,7 @@ describe("the worker secret store", () => {
       expect(store.refreshStore.get("afm.oauth.x.refresh")).toBe("rt-1");
       store.remove("afm.oauth.x.refresh");
       expect(store.refreshStore.get("afm.oauth.x.refresh")).toBe("rt-1");
-      expect(lastNames()).toEqual([]);
+      expect(lastNames()).toEqual(["afm.oauth.x.refresh"]);
     });
   });
 
