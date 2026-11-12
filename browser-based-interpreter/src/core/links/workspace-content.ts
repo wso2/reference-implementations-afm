@@ -75,6 +75,25 @@ export function autosaveDue(settled: string, current: string, saved: string): bo
   return settled === current && settled !== saved;
 }
 
+// What the workspace does after a save. A save that did not reach storage gives the draft no id and no address:
+// nothing could open that id again, so the draft would be taken for a missing agent.
+export function afterSave(
+  agentId: string | null,
+  result: { saved: { id: string }; persisted: boolean },
+): { id: string | null; adopt: boolean } {
+  return { id: result.persisted ? result.saved.id : agentId, adopt: result.persisted && agentId === null };
+}
+
+// An edit that autosave has not reached yet must be saved before the document is replaced by another one.
+// An agent that was removed in the meantime stays removed.
+export function pendingEditToSave(
+  edit: { buildable: boolean; content: string; saved: string; agentId: string | null },
+  stillInLibrary: boolean,
+): boolean {
+  if (!edit.buildable || edit.content === edit.saved) return false;
+  return edit.agentId === null || stillInLibrary;
+}
+
 export function openedFromLink(opening: Opening): boolean {
   return opening.draft === undefined && (opening.file !== null || opening.inline !== null);
 }

@@ -110,7 +110,8 @@ export function AgentsLibraryProvider({ children }: { children: ReactNode }) {
     agents,
     save: (agent) => {
       const result = saveAgent(agent);
-      setAgents(result.agents);
+      // A save that did not reach storage must not show up in the library: it would be gone after a reload.
+      if (result.persisted) setAgents(result.agents);
       return result;
     },
     remove: (id) => setAgents(removeAgent(id)),

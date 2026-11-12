@@ -23,6 +23,7 @@ import { type ChatState } from "../../core/chat/chat-state";
 import { logDetails } from "../../core/chat/failure";
 import { fetchAgentFile } from "../../core/links/load-paths";
 import {
+  afterSave,
   autosaveDue,
   EMPTY_TEMPLATE,
   identityFor,
@@ -33,9 +34,11 @@ import {
   type Opening,
   openingOf,
   originFor,
+  pendingEditToSave,
   receivedSource,
 } from "../../core/links/workspace-content";
 import { agentFileFetch } from "../../core/runtime/factories";
+import { findAgent } from "../../core/storage/stores";
 import { keepConfirmed, trustKeyFor, withTrusted } from "../../core/tools/trust";
 import { useSettled } from "../../ui/hooks";
 
@@ -75,8 +78,8 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
   const [provenance, setProvenance] = useState(() => provenanceOf(initial));
   const { trusted, confirmed, received } = provenance;
   const loadedIdentityRef = useRef(identityFor(initial));
-  const callbacks = useRef({ clearAgent, onMissingAgent });
-  callbacks.current = { clearAgent, onMissingAgent };
+  const callbacks = useRef({ clearAgent, onMissingAgent, flushPendingEdit });
+  callbacks.current = { clearAgent, onMissingAgent, flushPendingEdit };
   const readable = useMemo(() => buildableAgent(content), [content]);
 
   function updateConfirmed(update: (current: string[] | null) => string[] | null) {
@@ -98,6 +101,7 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
     const nextIdentity = identityFor(opening);
     if (nextIdentity === loadedIdentityRef.current) return;
     loadedIdentityRef.current = nextIdentity;
+    callbacks.current.flushPendingEdit();
     setProvenance(provenanceOf(opening));
     setLinkedFile(null);
     const next = initialContent(opening);
@@ -154,14 +158,30 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
       origin,
       confirmedTools: tools,
     });
+    const after = afterSave(agentId, result);
     if (result.persisted) setSavedContent(source);
     setSaveFailed(!result.persisted);
-    if (agentId === null) {
+    if (after.adopt) {
       setAgentId(result.saved.id);
       loadedIdentityRef.current = result.saved.id;
       setSearchParams({ agentId: result.saved.id }, { replace: true });
     }
-    return { id: result.saved.id, persisted: result.persisted };
+    return { id: after.id, persisted: result.persisted };
+  }
+
+  // Autosave waits for 700 ms without typing. Opening another agent in that time would drop the edit.
+  function flushPendingEdit() {
+    const edit = { buildable: readable.ok, content, saved: savedContent, agentId };
+    if (!pendingEditToSave(edit, agentId !== null && findAgent(agentId) !== null)) return;
+    if (!readable.ok) return;
+    library.save({
+      id: agentId ?? undefined,
+      name: readable.metadata.name ?? "Untitled agent",
+      description: readable.metadata.description ?? "",
+      source: content,
+      origin: originFor(received, content),
+      confirmedTools: confirmed,
+    });
   }
 
   const settledContent = useSettled(content, 700);
@@ -173,6 +193,7 @@ export function useWorkspaceDocument({ clearAgent, onMissingAgent }: Options) {
   }, [settledContent, content, savedContent]);
 
   function replaceWith(source: string) {
+    flushPendingEdit();
     setContent(source);
     setSavedContent(source);
     setAgentId(null);
