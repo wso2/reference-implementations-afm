@@ -53,7 +53,11 @@ export const RichText = forwardRef<RichTextHandle, Props>(function RichText(prop
   const box = useRef<HTMLDivElement>(null);
   const editor = useRef<EditorView | null>(null);
   const latest = useRef(props);
-  latest.current = props;
+  // Updated after each commit, not while rendering: a render that React starts and drops must not
+  // change which callback the editor calls. This effect comes first so the ones below see the new props.
+  useLayoutEffect(() => {
+    latest.current = props;
+  });
   const lastEmitted = useRef(props.value);
 
   function decorate(view: EditorView): void {
