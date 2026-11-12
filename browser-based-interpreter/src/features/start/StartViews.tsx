@@ -170,12 +170,14 @@ export function useImport(onUseSource: (source: string, fromOutside?: boolean) =
   }
 
   async function openLink() {
+    const run = imports.begin("import");
     const normalized = normalizeAgentFileUrl(link.trim());
     if (!normalized.ok) {
+      // This import replaces the one that is waiting, so that one must not open its file when it arrives.
+      setFetching(false);
       setImportError(normalized.error);
       return;
     }
-    const run = imports.begin("import");
     setFetching(true);
     setImportError(null);
     try {
@@ -301,7 +303,7 @@ export function useWriter(
 
   // The session knows whether a request is still waiting. That stays true if this screen is closed and opened again,
   // and it ends when the answer comes or the agent stops.
-  const writing = state.drafting;
+  const writing = state.draftRequest !== null;
 
   const provider = findProvider(providerId);
   const keySaved = provider !== undefined && state.savedSecrets.includes(provider.secretName);

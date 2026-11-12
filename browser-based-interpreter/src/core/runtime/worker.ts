@@ -200,11 +200,11 @@ scope.addEventListener("message", (event) => {
         .then((result) => {
           emit(
             result.kind === "clarify"
-              ? { type: "draft-clarify", questions: result.questions }
-              : { type: "draft-generated", source: result.source },
+              ? { type: "draft-clarify", id: message.id, questions: result.questions }
+              : { type: "draft-generated", id: message.id, source: result.source },
           );
         })
-        .catch((error) => emit({ type: "draft-generation-error", message: describeError(error) }));
+        .catch((error) => emit({ type: "draft-generation-error", id: message.id, message: describeError(error) }));
       break;
     default: {
       // Fails to compile when a client message has no handler above.

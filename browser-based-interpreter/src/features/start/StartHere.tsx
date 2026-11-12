@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type ChatState } from "../../core/chat/chat-state";
 import { type AgentModelRef } from "../../core/runtime/protocol";
 import { DialogFrame } from "../../ui/DialogFrame";
@@ -76,6 +76,17 @@ export function StartHere({
     if (view !== "import") cancelImport();
   }, [view]);
 
+  // What the person typed (the description, the model, the key) is gone when this screen closes, so a draft that is
+  // still being written, or questions about it, cannot be answered afterwards. Closing ends that draft.
+  const dismissDraft = useRef(onDismissDraft);
+  dismissDraft.current = onDismissDraft;
+  useEffect(() => () => dismissDraft.current(), []);
+
+  function restart() {
+    onDismissDraft();
+    setView("prompt");
+  }
+
   const stage = stageOf(view, {
     writing,
     hasDraft: state.generatedDraft !== null,
@@ -86,10 +97,7 @@ export function StartHere({
     const action = escapeAction(stage);
     if (action === "close") onBlank();
     else if (action === "back") setView("menu");
-    else if (action === "restart") {
-      onDismissDraft();
-      setView("prompt");
-    }
+    else if (action === "restart") restart();
   }
 
   const actions = dialog ? "u-dlg-actions" : "u-panel-foot";
@@ -97,13 +105,14 @@ export function StartHere({
   function frame(
     which: StartStage,
     content: ReactNode,
-    sheet: { slide?: boolean; back?: boolean },
+    sheet: { slide?: boolean; back?: boolean; restart?: boolean },
     narrow = false,
   ) {
     if (!dialog) {
       return (
         <SetupColumn slide={sheet.slide}>
           {sheet.back === true && <BackLink onClick={() => setView("menu")} />}
+          {sheet.restart === true && <BackLink onClick={restart} />}
           <h3 className="u-setup-title">{START_TITLES[which]}</h3>
           {START_SUBTITLES[which] !== undefined && <p className="u-setup-note">{START_SUBTITLES[which]}</p>}
           {content}
@@ -168,7 +177,7 @@ export function StartHere({
     return frame(
       "questions",
       <QuestionsView questions={state.clarifyQuestions} writer={writer} actions={actions} />,
-      {},
+      { restart: true },
       true,
     );
   }

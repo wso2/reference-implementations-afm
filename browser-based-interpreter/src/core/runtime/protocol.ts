@@ -53,7 +53,7 @@ export type ClientMessage =
   | { type: "oauth-signin-code"; id: string; code: string; state: string; iss?: string }
   | { type: "oauth-signin-error"; id: string; error: string; state: string; iss?: string }
   | { type: "oauth-sign-out"; provider: OAuthProviderRef }
-  | { type: "generate-draft"; prompt: string; model: AgentModelRef; final?: boolean }
+  | { type: "generate-draft"; id: string; prompt: string; model: AgentModelRef; final?: boolean }
   | { type: "probe-server"; id: string; server: AgentMetadata["tools"] }
   | { type: "probe-model"; id: string; model: AgentModelRef };
 
@@ -97,9 +97,9 @@ export type ServerMessage =
   | { type: "permission-request"; id: string; name: string; args: unknown; serverId?: string }
   | { type: "oauth-authorize-url"; id: string; url: string }
   | { type: "oauth-signin-done"; id: string; ok: boolean; error?: string }
-  | { type: "draft-generated"; source: string }
-  | { type: "draft-clarify"; questions: string[] }
-  | { type: "draft-generation-error"; message: string }
+  | { type: "draft-generated"; id: string; source: string }
+  | { type: "draft-clarify"; id: string; questions: string[] }
+  | { type: "draft-generation-error"; id: string; message: string }
   | ({ type: "probe-result"; id: string } & ProbeResult)
   | { type: "error"; message: string; kept?: boolean }
   | { type: "rejected"; message: string };

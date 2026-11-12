@@ -159,7 +159,7 @@ describe("when the worker does not start", () => {
     await settle();
     worker.crash();
     expect(seen).toEqual([{ type: "worker-stopped" }]);
-    link.post({ type: "generate-draft", prompt: "a helper", model: { provider: "openai", name: "gpt" } as never });
+    link.post({ type: "generate-draft", id: "r1", prompt: "a helper", model: { provider: "openai", name: "gpt" } as never });
     expect(seen).toEqual([{ type: "worker-stopped" }, { type: "worker-stopped" }]);
   });
 

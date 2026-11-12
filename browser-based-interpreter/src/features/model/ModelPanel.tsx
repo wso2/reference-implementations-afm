@@ -54,7 +54,11 @@ export function ModelPanel({ content, savedSecrets, issue, onApply, onSaveKey, o
   const chip = keyChip({ rejected, saved, typed: key.trim() !== "" });
 
   function pickProvider(option: ProviderOption) {
-    if (option.id !== provider) setModel("");
+    // A key typed for one provider is not a key for another.
+    if (option.id !== provider) {
+      setModel("");
+      setKey("");
+    }
     setProvider(option.id);
   }
 
