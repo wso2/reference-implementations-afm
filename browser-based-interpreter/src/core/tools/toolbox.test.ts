@@ -105,3 +105,30 @@ describe("the toolbox", () => {
     expect(two.close).toHaveBeenCalledOnce();
   });
 });
+
+describe("a server that was down", () => {
+  it("is tried again later, and a clash found then is reported each time instead of being forgotten", async () => {
+    vi.useFakeTimers();
+    try {
+      let answers = 0;
+      const guard = createToolGuard(allow);
+      const late: ToolSource = {
+        label: "late",
+        tools: async () => {
+          answers += 1;
+          if (answers === 1) throw new Error("down");
+          return { s__go: guard({ name: "s__go", inputSchema: anySchema, run: async () => "go" }) };
+        },
+        close: async () => {},
+      };
+      const toolbox = createToolbox([late, source("other", ["s__go"])]);
+      expect(Object.keys((await toolbox.tools()).tools)).toEqual(["s__go"]);
+      vi.advanceTimersByTime(31_000);
+      await expect(toolbox.tools()).rejects.toBeInstanceOf(ToolNameError);
+      vi.advanceTimersByTime(31_000);
+      await expect(toolbox.tools()).rejects.toBeInstanceOf(ToolNameError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

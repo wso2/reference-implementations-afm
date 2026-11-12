@@ -59,6 +59,7 @@ interface LoadOptions {
 export class AgentSession {
   private loaded: BrowserLoaded | null = null;
   private allowed = new Set<string>();
+  private confirmed: readonly string[] = [];
   private model: LanguageModel | null = null;
   private tools: Toolbox | null = null;
   private history: ModelMessage[] = [];
@@ -75,6 +76,13 @@ export class AgentSession {
     this.endTurn();
     const number = ++this.loadCount;
     const current = (): boolean => number === this.loadCount;
+    // Until the new agent is ready nothing of the old one may answer, and the latest trust list is kept for it.
+    void this.tools?.close().catch(() => {});
+    this.loaded = null;
+    this.model = null;
+    this.tools = null;
+    this.allowed = new Set();
+    this.confirmed = confirmedTools ?? [];
     let stage = "file";
     try {
       this.step("file", READING, "active");
@@ -107,13 +115,11 @@ export class AgentSession {
       stage = "tools";
       const guard = createToolGuard(this.permission);
       const tools = createToolbox(this.deps.createTools(loaded.metadata, guard));
-      const previousTools = this.tools;
       this.loaded = loaded;
-      this.allowed = allowedKeys(loaded.metadata, confirmedTools ?? []);
+      this.allowed = allowedKeys(loaded.metadata, this.confirmed);
       this.model = model;
       this.tools = tools;
       this.history = seedHistory ?? [];
-      void previousTools?.close().catch(() => {});
       this.deps.emit({
         type: "loaded",
         name: loaded.metadata.name ?? "AFM Agent",
@@ -229,8 +235,8 @@ export class AgentSession {
   };
 
   trust(confirmedTools?: readonly string[]): void {
-    if (this.loaded === null) return;
-    this.allowed = allowedKeys(this.loaded.metadata, confirmedTools ?? []);
+    this.confirmed = confirmedTools ?? [];
+    if (this.loaded !== null) this.allowed = allowedKeys(this.loaded.metadata, this.confirmed);
   }
 
   cancel(): void {

@@ -51,6 +51,16 @@ interface ToolSpec<INPUT> {
 
 export type ToolGuard = <INPUT>(spec: ToolSpec<INPUT>) => Tool<INPUT, ToolOutput>;
 
+// A stopped call ends at once, even when the tool itself never answers, so it cannot hold up the calls after it.
+function untilStopped(signal: AbortSignal | undefined, run: Promise<string | ToolOutput>): Promise<string | ToolOutput> {
+  if (signal === undefined) return run;
+  return new Promise((resolve, reject) => {
+    const stop = (): void => resolve(CANCELLED);
+    signal.addEventListener("abort", stop, { once: true });
+    run.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
+}
+
 export function createToolGuard(permission: PermissionBroker): ToolGuard {
   let queue: Promise<unknown> = Promise.resolve();
 
@@ -61,7 +71,7 @@ export function createToolGuard(permission: PermissionBroker): ToolGuard {
       const call = { id: options.toolCallId, name: spec.name, args: input, serverId: spec.serverId };
       if ((await permission.request(call, signal)) === "deny") return signal.aborted ? CANCELLED : DENIED;
       if (signal.aborted) return CANCELLED;
-      const result = await spec.run(input, options);
+      const result = await untilStopped(options.abortSignal, spec.run(input, options));
       const { ok, content } = typeof result === "string" ? { ok: true, content: result } : result;
       return { ok, content: clip(content) };
     } catch (error) {

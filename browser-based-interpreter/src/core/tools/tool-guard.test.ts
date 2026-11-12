@@ -86,14 +86,41 @@ describe("the tool guard", () => {
   it("lets a permission question end when the run is stopped, as cancelled and not as denied", async () => {
     const controller = new AbortController();
     const run = vi.fn(async () => "ran");
+    let ask = () => {};
+    const asked = new Promise<void>((resolve) => (ask = resolve));
     const { fn, guard } = guardedTool(run, {
-      request: (_call, signal) =>
-        new Promise((resolve) => signal.addEventListener("abort", () => resolve("deny"), { once: true })),
+      request: (_call, signal) => {
+        ask();
+        return new Promise((resolve) => signal.addEventListener("abort", () => resolve("deny"), { once: true }));
+      },
     });
     const pending = execute({ t: guard(fn) }, "t", {}, controller.signal);
+    await asked;
     controller.abort();
     expect((await pending).content).toBe("Tool call was cancelled - the user stopped the run.");
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("lets a stopped tool call end even when the tool never answers, so later calls are not stuck behind it", async () => {
+    const controller = new AbortController();
+    let started = () => {};
+    const running = new Promise<void>((resolve) => (started = resolve));
+    const guard = createToolGuard(allow);
+    const stuck = guard({
+      name: "t",
+      inputSchema: anySchema,
+      run: async () => {
+        started();
+        await new Promise(() => {});
+        return "never";
+      },
+    });
+    const later = guard({ name: "t", inputSchema: anySchema, run: async () => "later" });
+    const first = execute({ t: stuck }, "t", {}, controller.signal);
+    await running;
+    controller.abort();
+    expect((await first).content).toBe("Tool call was cancelled - the user stopped the run.");
+    expect(await execute({ t: later }, "t")).toEqual({ ok: true, content: "later" });
   });
 
   it("records a tool that fails because the run was stopped as cancelled, not as a failure of the tool", async () => {

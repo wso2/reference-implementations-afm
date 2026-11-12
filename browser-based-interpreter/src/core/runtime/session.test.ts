@@ -336,6 +336,27 @@ describe("AgentSession", () => {
     expect(emitted.at(-1)).toEqual({ type: "turn-finished", reason: "aborted" });
   });
 
+  it("does not start a turn on the old agent while a new one is still loading", async () => {
+    let release = () => {};
+    const secondReady = new Promise<void>((resolve) => (release = resolve));
+    let created = 0;
+    const { session, emitted } = makeSession({
+      createModel: async () => {
+        created += 1;
+        if (created === 2) await secondReady;
+        return replyingModel();
+      },
+    });
+    await session.load(VALID);
+    const loadingNew = session.load(VALID.replace("Tester", "Other"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await session.send("question");
+    expect(emitted.findLast((message) => message.type === "rejected")).toEqual({ type: "rejected", message: "No agent loaded yet." });
+    release();
+    await loadingNew;
+    expect(emitted.some((message) => message.type === "text-delta")).toBe(false);
+  });
+
   it("errors when sending before loading", async () => {
     const { session, emitted } = makeSession();
     await session.send("hi");
@@ -936,6 +957,32 @@ i
     expect(asked).toEqual([]);
     session.trust([]);
     await session.send("again");
+    expect(asked).toEqual([`${DOCS}::docs__echo`]);
+  });
+
+  it("applies a trust change that arrives while the agent is still loading", async () => {
+    let release = () => {};
+    const modelReady = new Promise<void>((resolve) => (release = resolve));
+    const calling = callingEcho();
+    const asked: string[] = [];
+    const { session } = makeSession({
+      createModel: async () => {
+        await modelReady;
+        return calling();
+      },
+      createTools: () => serverTools(DOCS),
+      permission: {
+        request: vi.fn(async (call: { serverId?: string; name: string }) => {
+          asked.push(`${call.serverId}::${call.name}`);
+          return "deny" as const;
+        }),
+      },
+    });
+    const loading = session.load(listing(DOCS, ["echo"]), { confirmedTools: [listedToolKey(DOCS, "echo")] });
+    session.trust([]);
+    release();
+    await loading;
+    await session.send("go");
     expect(asked).toEqual([`${DOCS}::docs__echo`]);
   });
 
