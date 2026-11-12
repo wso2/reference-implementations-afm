@@ -23,7 +23,7 @@ type Model record {|
     string name?;
     string provider?;
     string url?;
-    ClientAuthentication authentication?;
+    ModelAuthentication authentication?;
 |};
 
 enum TransportType {
@@ -46,9 +46,62 @@ type StdioTransport record {|
 
 type Transport HttpTransport|StdioTransport;
 
-type ClientAuthentication record {
-    string 'type;
-};
+type BearerAuthentication record {|
+    "bearer" 'type = "bearer";
+    string token;
+|};
+
+type BasicAuthentication record {|
+    "basic" 'type = "basic";
+    string username;
+    string password;
+|};
+
+type ApiKeyAuthentication record {|
+    "api-key" 'type = "api-key";
+    string api_key;
+    string header_name?;
+|};
+
+type JwtAlgorithm "RS256"|"RS384"|"RS512"|"HS256"|"HS384"|"HS512";
+
+type JwtSigning record {|
+    string issuer;
+    string|string[] audience;
+    string signing_key;
+    JwtAlgorithm algorithm = "RS256";
+    string key_id?;
+    string subject?;
+    map<json> custom_claims?;
+    int expiry_seconds = 300;
+|};
+
+type JwtAuthentication record {|
+    "jwt" 'type = "jwt";
+    *JwtSigning;
+|};
+
+type AssertionSigning record {|
+    *JwtSigning;
+    string subject;
+|};
+
+type OAuth2Authentication record {|
+    "oauth2" 'type = "oauth2";
+    CLIENT_CREDENTIALS|JWT_BEARER grant_type;
+    string token_url;
+    string client_id?;
+    string client_secret?;
+    AssertionSigning assertion_signing?;
+    string[] scopes?;
+    "client_secret_basic"|"client_secret_post"|"none" token_endpoint_auth_method = "client_secret_basic";
+    string 'resource?;
+    map<string> extra_params?;
+|};
+
+type ModelAuthentication BearerAuthentication|ApiKeyAuthentication;
+
+type ClientAuthentication BearerAuthentication|BasicAuthentication|ApiKeyAuthentication|JwtAuthentication|OAuth2Authentication;
 
 type ToolFilter record {|
     string[] allow?;

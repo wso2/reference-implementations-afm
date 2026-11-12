@@ -5,11 +5,13 @@ on:
     branches: [main, dev]
     paths:
       - "python-interpreter/**"
+      - "templates/**"
       - ".github/workflows/python-interpreter.yml"
   pull_request:
     branches: [main, dev]
     paths:
       - "python-interpreter/**"
+      - "templates/**"
       - ".github/workflows/python-interpreter.yml"
 
 jobs:

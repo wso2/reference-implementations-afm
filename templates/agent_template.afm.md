@@ -29,7 +29,7 @@ model:
   provider: "openai"                     # Model provider (openai, anthropic, etc.)
   name: "gpt-4-turbo"                    # Model identifier
   url: "https://api.openai.com/v1/chat/completions"
-  authentication:
+  authentication:                        # Only "bearer" or "api-key" (without header_name)
     type: "api-key"
     api_key: "${env:MODEL_API_KEY}"
 
@@ -70,7 +70,7 @@ interfaces:
       topic: "https://example.com/events/agent"
       callback: "${env:CALLBACK_URL}"
       secret: "${env:WEBHOOK_SECRET}"
-      authentication:
+      authentication:                    # Any of the five types, see the MCP examples below
         type: "bearer"
         token: "${env:WEBHOOK_AUTH_TOKEN}"
     exposure:
@@ -114,6 +114,62 @@ tools:
         deny:
           - "delete"
           - "drop_table"
+
+    # MCP Server with JWT authentication (the runtime signs a new JWT for every request)
+    - name: "signed_requests_server"
+      transport:
+        type: "http"
+        url: "${env:SIGNED_MCP_URL}"
+        authentication:
+          type: "jwt"
+          issuer: "my-agent"
+          audience: "https://mcp.example.com"
+          signing_key: "${env:JWT_HMAC_SECRET}"   # HS*: the secret; RS*: path to an unencrypted PEM key file
+          algorithm: "HS256"                      # Optional, RS256 by default
+          expiry_seconds: 300                     # Optional, 300 by default
+
+    # API key and OAuth2 authentication use the same schema. Both interpreters support them on an MCP server
+    # (the Ballerina interpreter speaks MCP protocol version 2025-03-26 to such a server).
+    #
+    # - name: "api_key_server"
+    #   transport:
+    #     type: "http"
+    #     url: "${env:API_KEY_MCP_URL}"
+    #     authentication:
+    #       type: "api-key"
+    #       api_key: "${env:MCP_API_KEY}"
+    #       header_name: "X-API-Key"                # Optional, "Authorization" by default
+    #
+    # - name: "oauth2_server"
+    #   transport:
+    #     type: "http"
+    #     url: "${env:OAUTH2_MCP_URL}"
+    #     authentication:
+    #       type: "oauth2"
+    #       grant_type: "client_credentials"
+    #       token_url: "https://identity.example.com/oauth/token"
+    #       client_id: "${env:OAUTH_CLIENT_ID}"
+    #       client_secret: "${env:OAUTH_CLIENT_SECRET}"
+    #       scopes: ["tools"]
+    #       # token_endpoint_auth_method: "client_secret_post"   # Optional, "client_secret_basic" by default
+    #       # resource: "https://mcp.example.com"                # Optional, the MCP server URL by default
+    #
+    # - name: "oauth2_jwt_bearer_server"            # OAuth2 JWT bearer grant (RFC 7523)
+    #   transport:
+    #     type: "http"
+    #     url: "${env:OAUTH2_JWT_MCP_URL}"
+    #     authentication:
+    #       type: "oauth2"
+    #       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer"
+    #       token_url: "https://identity.example.com/oauth/token"
+    #       token_endpoint_auth_method: "none"      # No client authentication
+    #       assertion_signing:
+    #         issuer: "my-agent"
+    #         subject: "my-service-account"          # Required: the "sub" claim of the assertion
+    #         audience: "https://identity.example.com/oauth/token"
+    #         signing_key: "./keys/private.pem"      # Relative to this file
+    #         custom_claims:
+    #           scope: "api:read"
 
     # MCP Server without authentication
     - name: "public_tools"

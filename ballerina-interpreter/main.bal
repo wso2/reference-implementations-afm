@@ -87,12 +87,15 @@ function runAgentFromAFM(AFMRecord afm, int port, string afmFileDir) returns err
         websub:Listener ln = check new websub:Listener(
             httpListener is () ? port : httpListener);
         websubListener = ln;
-        check attachWebhookService(ln, agent, webhookInterface, httpExposure);
+        check attachWebhookService(ln, agent, webhookInterface, httpExposure, afmFileDir);
         log:printInfo(string `Attached webhook interface at path: ${httpExposure.path}`);
     }
 
     if websubListener is websub:Listener {
-        check websubListener.start();
+        error? started = websubListener.start();
+        if started is error {
+            return webhookStartError(started);
+        }
         runtime:registerListener(websubListener);
         log:printInfo(string `WebSub server started on port ${port}`);
     } else if httpListener is http:Listener {

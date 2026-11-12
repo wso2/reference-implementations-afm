@@ -1,0 +1,40 @@
+{
+  "claims": {
+    "iss": "golden",
+    "aud": "llm-api",
+    "iat": 1700000000,
+    "exp": 4102444800
+  },
+  "tokens": [
+    {
+      "algorithm": "HS256",
+      "key": "0123456789abcdef0123456789abcdef",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2xkZW4iLCJhdWQiOiJsbG0tYXBpIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.2UQ0vAAz6BPhfbzVczMBAKi1OZwkfZ5LSlLBRB_jhL0"
+    },
+    {
+      "algorithm": "HS384",
+      "key": "0123456789abcdef0123456789abcdef0123456789abcdef",
+      "token": "eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2xkZW4iLCJhdWQiOiJsbG0tYXBpIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.-aIlFSDpk1AxXKuLLE_hWJ2oBhLoP7eBsv3na_ZrAPUbfxFFE_ZXG1MqnljSzhn6"
+    },
+    {
+      "algorithm": "HS512",
+      "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2xkZW4iLCJhdWQiOiJsbG0tYXBpIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.IRD1jRbuxD6hoZRvai5E7n_WyJvvNaiH9dTR4X9GLscGEAsTSr_jFFgwnmaWercW2bQJ2C-nCVx5-VLFtLjfog"
+    },
+    {
+      "algorithm": "RS256",
+      "key": "keys/rsa-2048-cert.pem",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2xkZW4iLCJhdWQiOiJsbG0tYXBpIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.t9PUie8NEz_-69EH4IWuyF4wHO5SCBOOvqzjGA_2x-jnMszcsngQ9tKD3LJCRkl7t3d4t3BbdET_TP70A7j5l8-PzdbcAgh8r_hryqQfl6F330s9NfsrmtvLbJNrufiWprHVo0CmEjAxuV3EJDaZ32OTMBuP3P5aNPWk3Kjz-kZmiCjfDRtMha8GSlkBKkVE0JU6NNnHSNLyiaVuRFsEt4R2rgKQ3ROxulr3qr2n2wD91Z9pJAf9U3vqLhGsp2ihb--rjGtRL2fzr1YD8dcerx4rjQ6hQXv-_PMQb0utocsKB51RhcU3G_x7a2iSUsW6bg4XOldE0phGHfhBgmeRCA"
+    },
+    {
+      "algorithm": "RS384",
+      "key": "keys/rsa-2048-cert.pem",
+      "token": "eyJhbGciOiJSUzM4NCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2xkZW4iLCJhdWQiOiJsbG0tYXBpIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.TD0YrPKCCzEhkqQw2P_dw3PUoGwfIG43pLUeYBZ89VwothCpE7wLifpUG6sKv6FY488x1ICLnwR8l8bypBF2oak7WHztZSxRtNdvfC9o2Psp70w4fG6B0j93nf0dt-kufg294iSU7UVVRCfvqfNwbdNqVCI9tjLJTPnIsAzFaiSvpPN7Pu6UI9N6FbPI5a0EEL-1TtNR3BXTrS-4c0ttNpTJzL7WN7miiG1wz7BIM_Q17dQCU0jG3pZGaV7Plw_ECyAgKH7j5vwvxfbzlvkKDDHHhea1vapKiY_5laXGXv0nIgHlr2Z-He-7u28FKJO_Xrqf341NyYj7tsTkRAjuXw"
+    },
+    {
+      "algorithm": "RS512",
+      "key": "keys/rsa-2048-cert.pem",
+      "token": "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2xkZW4iLCJhdWQiOiJsbG0tYXBpIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.dTqd8peVRUT3lSCZxUHMZCvV0xLIRTWK4B-Xs3wbqGkyOSKbrB_Bjc-JFel-25dNLerPSi-ewhn5NBe1dcTM-Yp_1i6KKjPOj05k_2FIE9WK9CU4VPV4ftbxbe5pWIxqL5w3t08xHyz3AYkVKDB28XUsKj7O1DDSq6rY6pDGDvSOM9p4095hrK8Zd7-xbuQxy5zyxo6Y0cr6xDkFS34R9CHwBoOmRxem62C2rHH05cZnTXLra6IwHftOY56CnrFgBRKzvl4-7I8esRVgm4UFqDw5p_oCro2Y1uyhklC6bVjEaTVIGfvIFCQgRI3EURy3a-TJI2ECgdcDh5YKDlHkjA"
+    }
+  ]
+}

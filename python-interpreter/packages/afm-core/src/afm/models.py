@@ -18,9 +18,15 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .authentication import (
+    ApiKeyAuthentication,
+    BearerAuthentication,
+    ClientAuthentication,
+)
 
 
 class Provider(BaseModel):
@@ -30,43 +36,35 @@ class Provider(BaseModel):
     url: str | None = None
 
 
-class ClientAuthentication(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    type: str
-    token: str | None = None
-    username: str | None = None
-    password: str | None = None
-    api_key: str | None = None
-
-    @model_validator(mode="after")
-    def validate_type_fields(self) -> Self:
-        match self.type.lower():
-            case "bearer":
-                if self.token is None:
-                    raise ValueError("type 'bearer' requires 'token' field")
-            case "basic":
-                if self.username is None or self.password is None:
-                    raise ValueError(
-                        "type 'basic' requires 'username' and 'password' fields"
-                    )
-            case "api-key":
-                if self.api_key is None:
-                    raise ValueError("type 'api-key' requires 'api_key' field")
-        return self
-
-
 class Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: str | None = None
     provider: str | None = None
     url: str | None = None
     authentication: ClientAuthentication | None = None
 
+    @field_validator("authentication")
+    @classmethod
+    def _check_authentication(
+        cls, auth: ClientAuthentication | None
+    ) -> ClientAuthentication | None:
+        if auth is None:
+            return auth
+        if not isinstance(auth, (BearerAuthentication, ApiKeyAuthentication)):
+            raise ValueError(
+                "model authentication must be of type 'bearer' or 'api-key'"
+            )
+        if isinstance(auth, ApiKeyAuthentication) and auth.header_name is not None:
+            raise ValueError(
+                "'header_name' must not be set for model authentication; "
+                "the model service determines how the credential is sent"
+            )
+        return auth
+
 
 class HttpTransport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["http"] = "http"
     url: str
@@ -142,7 +140,7 @@ class Exposure(BaseModel):
 
 
 class Subscription(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     protocol: str
     hub: str | None = None
@@ -218,7 +216,7 @@ class SkillInfo(BaseModel):
 
 
 class AgentMetadata(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     spec_version: str | None = None
     name: str | None = None

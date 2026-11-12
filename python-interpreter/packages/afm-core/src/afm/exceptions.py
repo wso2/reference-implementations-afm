@@ -35,6 +35,10 @@ class AFMValidationError(AFMError):
         super().__init__(message)
 
 
+class AuthenticationError(AFMError):
+    pass
+
+
 class VariableResolutionError(AFMError):
     def __init__(self, variable: str, reason: str):
         self.variable = variable

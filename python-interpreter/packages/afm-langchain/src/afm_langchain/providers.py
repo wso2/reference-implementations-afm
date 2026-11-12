@@ -21,8 +21,13 @@ from typing import TYPE_CHECKING
 
 from langchain_core.language_models import BaseChatModel
 
+from afm.authentication import (
+    ApiKeyAuthentication,
+    BearerAuthentication,
+    ClientAuthentication,
+)
 from afm.exceptions import ProviderError
-from afm.models import ClientAuthentication, Model
+from afm.models import Model
 
 if TYPE_CHECKING:
     from langchain_anthropic import ChatAnthropic
@@ -118,32 +123,22 @@ def _get_api_key(
     env_var: str,
     provider: str,
 ) -> str:
-    if auth is not None:
-        auth_type = auth.type.lower()
-
-        if auth_type == "bearer" and auth.token:
+    match auth:
+        case BearerAuthentication():
             return auth.token
-        elif auth_type == "api-key" and auth.api_key:
+        case ApiKeyAuthentication():
             return auth.api_key
-        elif auth_type == "basic":
+        case None:
+            api_key = os.environ.get(env_var)
+            if api_key:
+                return api_key
             raise ProviderError(
-                "Basic authentication is not supported for LLM providers. "
-                "Use 'bearer' or 'api-key' authentication type.",
+                f"No API key found. Provide authentication in the model config "
+                f"or set the {env_var} environment variable.",
                 provider=provider,
             )
-        else:
-            auth_dict = auth.model_dump(exclude_none=True)
-            for key in ["token", "api_key", "key", "apiKey"]:
-                if key in auth_dict and auth_dict[key]:
-                    return auth_dict[key]
-
-    # Fall back to environment variable
-    api_key = os.environ.get(env_var)
-    if api_key:
-        return api_key
-
-    raise ProviderError(
-        f"No API key found. Provide authentication in the model config "
-        f"or set the {env_var} environment variable.",
-        provider=provider,
-    )
+        case _:
+            raise ProviderError(
+                "Model authentication must be of type 'bearer' or 'api-key'.",
+                provider=provider,
+            )

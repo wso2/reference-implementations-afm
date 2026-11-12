@@ -18,6 +18,7 @@ from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
 from .exceptions import AFMParseError, AFMValidationError
 from .models import AFMRecord, AgentMetadata
@@ -25,6 +26,23 @@ from .variables import resolve_variables, validate_http_variables
 
 # Delimiter for YAML frontmatter
 FRONTMATTER_DELIMITER = "---"
+
+_INPUT_FREE_ERRORS = frozenset(
+    {
+        "missing",
+        "extra_forbidden",
+        "string_type",
+        "int_type",
+        "int_parsing",
+        "bool_type",
+        "bool_parsing",
+        "list_type",
+        "dict_type",
+        "literal_error",
+        "model_type",
+        "model_attributes_type",
+    }
+)
 
 
 def extract_raw_frontmatter(content: str) -> tuple[dict | None, str]:
@@ -76,7 +94,7 @@ def parse_afm(content: str, *, resolve_env: bool = True) -> AFMRecord:
     if resolve_env:
         content = resolve_variables(content)
     lines = content.splitlines()
-    metadata, body_start = _extract_frontmatter(lines)
+    metadata, body_start = _extract_frontmatter(lines, defer_unresolved=not resolve_env)
     role, instructions = _extract_role_and_instructions(lines, body_start)
     afm_record = AFMRecord(
         metadata=metadata,
@@ -95,7 +113,9 @@ def parse_afm_file(file_path: str | Path, *, resolve_env: bool = True) -> AFMRec
     return record
 
 
-def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
+def _extract_frontmatter(
+    lines: list[str], *, defer_unresolved: bool
+) -> tuple[AgentMetadata, int]:
     content = "\n".join(lines)
     try:
         raw, body = extract_raw_frontmatter(content)
@@ -113,17 +133,28 @@ def _extract_frontmatter(lines: list[str]) -> tuple[AgentMetadata, int]:
         return AgentMetadata(), body_start
 
     try:
-        metadata = AgentMetadata.model_validate(raw)
+        metadata = AgentMetadata.model_validate(
+            raw, context={"defer_unresolved": defer_unresolved}
+        )
     except ValidationError as e:
         errors = e.errors()
         if errors:
             first_error = errors[0]
             field = ".".join(str(loc) for loc in first_error.get("loc", []))
-            msg = first_error.get("msg", "Invalid value")
-            raise AFMValidationError(msg, field=field)
+            raise AFMValidationError(_error_message(first_error), field=field) from None
         raise AFMValidationError(str(e))
 
     return metadata, body_start
+
+
+def _error_message(error: ErrorDetails) -> str:
+    if "authentication" not in error["loc"]:
+        return error["msg"]
+    if error["type"] == "value_error":
+        return error["msg"].removeprefix("Value error, ")
+    if error["type"] in _INPUT_FREE_ERRORS:
+        return error["msg"]
+    return "Invalid value"
 
 
 def _extract_role_and_instructions(

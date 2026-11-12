@@ -5,11 +5,13 @@ on:
     branches: [main, dev]
     paths:
       - 'ballerina-interpreter/**'
+      - 'templates/**'
       - '.github/workflows/ballerina-interpreter.yml'
   pull_request:
     branches: [main, dev]
     paths:
       - 'ballerina-interpreter/**'
+      - 'templates/**'
       - '.github/workflows/ballerina-interpreter.yml'
 
 jobs:

@@ -30,9 +30,9 @@ from .models import (
 )
 
 if TYPE_CHECKING:
+    from .authentication import ClientAuthentication
     from .models import (
         AFMRecord,
-        ClientAuthentication,
         Exposure,
         JSONSchema,
         Signature,
@@ -213,10 +213,17 @@ def _auth_contains_http_variable(
     if auth is None:
         return False
 
-    # Check all fields in the authentication object
-    for value in auth.model_dump().values():
-        if isinstance(value, str) and contains_http_variable(value):
-            return True
+    return _value_contains_http_variable(auth.model_dump())
+
+
+def _value_contains_http_variable(value: Any) -> bool:
+    """Recursively check a value for http: variables."""
+    if isinstance(value, str):
+        return contains_http_variable(value)
+    if isinstance(value, dict):
+        return any(_value_contains_http_variable(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_value_contains_http_variable(item) for item in value)
     return False
 
 
