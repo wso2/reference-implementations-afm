@@ -15,6 +15,7 @@
 // under the License.
 
 import { describe, it, expect } from "vitest";
+import type { Node as ProseNode } from "prosemirror-model";
 import { TextSelection } from "prosemirror-state";
 import type { EditorState, Transaction } from "prosemirror-state";
 import { undo, redo } from "prosemirror-history";
@@ -30,6 +31,7 @@ import {
   pastedSlice,
   safeHref,
   serializeMarkdown,
+  softBreak,
 } from "./rich-text";
 
 const samples = [
@@ -549,5 +551,74 @@ describe("pasting", () => {
       if (node.type.name === "heading") levels.push(node.attrs.level);
     });
     expect(levels).toEqual([2, 2, 3, 2]);
+  });
+});
+
+describe("a table with cells that span rows", () => {
+  const { doc, table, table_row: row, table_header: header, table_cell: cell } = editorSchema.nodes;
+  const text = (value: string) => editorSchema.text(value);
+  const made = (rows: ProseNode[]) => doc!.create(null, [table!.create(null, rows)]);
+
+  it("keeps the cells after a cell that reaches into the next row in their own columns", () => {
+    const pasted = made([
+      row!.create(null, [header!.create(null, [text("A")]), header!.create(null, [text("B")])]),
+      row!.create(null, [cell!.create({ rowspan: 2 }, [text("x")]), cell!.create(null, [text("1")])]),
+      row!.create(null, [cell!.create(null, [text("2")])]),
+    ]);
+    const saved = serializeMarkdown(pasted);
+    expect(saved).toBe("| A | B |\n| --- | --- |\n| x | 1 |\n|  | 2 |");
+    const again = parseMarkdown(saved).firstChild!;
+    expect(again.child(2).child(0).textContent).toBe("");
+    expect(again.child(2).child(1).textContent).toBe("2");
+  });
+
+  it("handles a cell that spans rows and columns", () => {
+    const pasted = made([
+      row!.create(null, [header!.create(null, [text("A")]), header!.create(null, [text("B")]), header!.create(null, [text("C")])]),
+      row!.create(null, [cell!.create({ rowspan: 2, colspan: 2 }, [text("big")]), cell!.create(null, [text("1")])]),
+      row!.create(null, [cell!.create(null, [text("2")])]),
+    ]);
+    expect(serializeMarkdown(pasted)).toBe("| A | B | C |\n| --- | --- | --- |\n| big |  | 1 |\n|  |  | 2 |");
+  });
+
+  it("leaves a table without spans as it was", () => {
+    const value = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+    expect(serializeMarkdown(parseMarkdown(value))).toBe(value);
+  });
+
+  it("does not fail on a row that has fewer cells than the first row", () => {
+    expect(() => serializeMarkdown(parseMarkdown("| a | b |\n| --- | --- |\n| 1 |"))).not.toThrow();
+  });
+});
+
+describe("Shift+Enter", () => {
+  const applied = (value: string, at: number) => {
+    const start = createEditorState(value);
+    const state = start.apply(start.tr.setSelection(TextSelection.create(start.doc, at)));
+    let next: EditorState = state;
+    const handled = softBreak(state, (tr) => {
+      next = state.apply(tr);
+    });
+    return { handled, next };
+  };
+
+  it("adds a new line inside a code block", () => {
+    const { handled, next } = applied("```\nab\n```", 2);
+    expect(handled).toBe(true);
+    expect(next.doc.firstChild!.type.name).toBe("code_block");
+    expect(next.doc.firstChild!.textContent).toBe("a\nb");
+  });
+
+  it("adds a line break inside a paragraph", () => {
+    const { handled, next } = applied("ab", 2);
+    expect(handled).toBe(true);
+    expect(next.doc.firstChild!.childCount).toBe(3);
+    expect(next.doc.firstChild!.child(1).type.name).toBe("hard_break");
+  });
+
+  it("does nothing inside a table cell", () => {
+    const { handled, next } = applied("| a | b |\n| --- | --- |\n| 1 | 2 |", 4);
+    expect(handled).toBe(true);
+    expect(serializeMarkdown(next.doc)).toBe("| a | b |\n| --- | --- |\n| 1 | 2 |");
   });
 });

@@ -38,7 +38,7 @@ export interface Token {
   text: string;
 }
 
-const FENCE = /^---[ \t]*$/;
+const FENCE = /^---[ \t]*\r?$/;
 const CODE_FENCE = /^[ \t]*(?:```|~~~)/;
 const VARIABLE = /\$\{[^}\n]*\}/g;
 
@@ -46,7 +46,7 @@ const YAML = new RegExp(
   [
     "(?<comment>(?:^|[ \\t])#.*)",
     "(?<variable>\\$\\{[^}\\n]*\\})",
-    "(?<key>^[ \\t]*(?:-[ \\t]+)?[A-Za-z_][A-Za-z0-9_.\\-]*(?=[ \\t]*:(?:[ \\t]|$)))",
+    "(?<key>^[ \\t]*(?:-[ \\t]+)?[A-Za-z_][A-Za-z0-9_.\\-]*(?=[ \\t]*:(?:[ \\t\\r]|$)))",
     "(?<url>https?://\\S+)",
     "(?<string>\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\n]|'')*')",
     "(?<literal>\\b(?:true|false|null|yes|no)\\b)",
@@ -63,7 +63,8 @@ const MARKDOWN = new RegExp(
     "(?<variable>\\$\\{[^}\\n]*\\})",
     "(?<code>`[^`\\n]+`)",
     "(?<emphasis>\\*\\*[^*\\n]+\\*\\*|__[^_\\n]+__)",
-    "(?<link>\\[[^\\]\\n]*\\]\\([^)\\n]*\\))",
+    // The lengths are bounded so a long line of unmatched brackets is scanned in a short time, not once to its end from each bracket.
+    "(?<link>\\[[^\\]\\n]{0,300}\\]\\([^)\\n]{0,2000}\\))",
     "(?<italic>\\*[^*\\n]+\\*|(?<![A-Za-z0-9_])_[^_\\n]+_(?![A-Za-z0-9_]))",
     "(?<url>https?://\\S+)",
   ].join("|"),

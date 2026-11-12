@@ -15,7 +15,7 @@
 // under the License.
 
 import { plural } from "../../core/plural";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { type AfmIssue } from "../../core/agent/agent-validation";
 import { FileCheckPanel, withCode } from "../../ui/FileCheckPanel";
 import { Icon } from "../../ui/Icon";
@@ -55,6 +55,7 @@ export function IssuePill({ issues }: { issues: readonly AfmIssue[] }) {
   const { items, leaving } = useLingering(issues);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const listId = useId();
 
   useDismiss(open, wrap, () => setOpen(false));
 
@@ -70,11 +71,6 @@ export function IssuePill({ issues }: { issues: readonly AfmIssue[] }) {
 
   return (
     <div className="u-pill-wrap" ref={wrap}>
-      {open && (
-        <div className="u-pill-pop">
-          <FileCheckPanel issues={ordered} />
-        </div>
-      )}
       <div className={`u-pill${calm ? " is-warn" : ""}${leaving ? " is-leaving" : ""}`}>
         <span className="u-pill-dot" aria-hidden="true">
           <Mark />
@@ -83,11 +79,22 @@ export function IssuePill({ issues }: { issues: readonly AfmIssue[] }) {
           <span className="u-pill-in">
             <span className="u-pill-lead">{plural(ordered.length, "problem")}</span>
             {first.line !== null && <span className="u-pill-line">Line {first.line}</span>}
-            <button className="u-pill-msg" title={first.message} aria-expanded={open} onClick={() => setOpen(!open)}>
+            <button
+              className="u-pill-msg"
+              title={first.message}
+              aria-expanded={open}
+              aria-controls={open ? listId : undefined}
+              onClick={() => setOpen(!open)}
+            >
               {withCode(first.message)}
             </button>
             {more > 0 && (
-              <button className="u-pill-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+              <button
+                className="u-pill-more"
+                aria-expanded={open}
+                aria-controls={open ? listId : undefined}
+                onClick={() => setOpen(!open)}
+              >
                 {open ? "Hide" : `+${more} more`}
               </button>
             )}
@@ -97,6 +104,12 @@ export function IssuePill({ issues }: { issues: readonly AfmIssue[] }) {
       <span className="visually-hidden" role="status">
         {leaving ? "" : issueAnnouncement(ordered)}
       </span>
+      {/* After the buttons that open it, so a screen reader that reads on from them reaches the list. The style puts it above. */}
+      {open && (
+        <div className="u-pill-pop" id={listId}>
+          <FileCheckPanel issues={ordered} />
+        </div>
+      )}
     </div>
   );
 }

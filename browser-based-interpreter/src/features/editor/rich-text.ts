@@ -218,17 +218,33 @@ function alignmentRule(align: string | null): string {
 }
 
 function writeTable(state: MarkdownSerializerState, table: DocumentNode) {
+  // Markdown has no spans. A cell that reaches down into the next rows leaves an empty cell in each of them,
+  // so the cells after it stay in their own columns when the table is read again.
+  const coveredRows: number[] = [];
   table.forEach((row, _, rowIndex) => {
     if (rowIndex > 0) state.write("\n");
     state.write("|");
     const rule: string[] = [];
+    let column = 0;
+    const fillCovered = () => {
+      for (; (coveredRows[column] ?? 0) > 0; column++) {
+        coveredRows[column] = coveredRows[column]! - 1;
+        state.write("  |");
+      }
+    };
     row.forEach((cell) => {
+      fillCovered();
       state.write(" ");
       state.renderInline(cell, false);
       state.write(" |");
-      for (let span = 0; span < cell.attrs.colspan; span++) rule.push(alignmentRule(cell.attrs.align));
+      for (let span = 0; span < cell.attrs.colspan; span++) {
+        rule.push(alignmentRule(cell.attrs.align));
+        coveredRows[column + span] = cell.attrs.rowspan - 1;
+      }
       for (let span = 1; span < cell.attrs.colspan; span++) state.write("  |");
+      column += cell.attrs.colspan;
     });
+    fillCovered();
     if (rowIndex === 0) {
       state.write("\n");
       state.write(`| ${rule.join(" | ")} |`);
@@ -456,6 +472,13 @@ export function activeFormats(state: EditorState): Record<string, boolean> {
   };
 }
 
+// A new line inside a code block, a line break inside text, and nothing inside a table cell.
+export const softBreak: EditorCommand = chainCommands(newlineInCode, (state, dispatch) => {
+  if (isInTable(state)) return true;
+  dispatch?.(state.tr.replaceSelectionWith(editorSchema.nodes.hard_break!.create()).scrollIntoView());
+  return true;
+});
+
 export function createEditorState(value: string): EditorState {
   const nodes = editorSchema.nodes;
   return EditorState.create({
@@ -481,11 +504,7 @@ export function createEditorState(value: string): EditorState {
         "Mod-y": redo,
         Backspace: undoInputRule,
         Enter: chainCommands(nextCellOrNewRow, newlineInCode, splitListItem(nodes.list_item!), baseKeymap.Enter!),
-        "Shift-Enter": (state, dispatch) => {
-          if (isInTable(state)) return true;
-          dispatch?.(state.tr.replaceSelectionWith(nodes.hard_break!.create()).scrollIntoView());
-          return true;
-        },
+        "Shift-Enter": softBreak,
         Tab: chainCommands(nextCellOrNewRow, sinkListItem(nodes.list_item!)),
         "Shift-Tab": chainCommands(goToNextCell(-1), liftListItem(nodes.list_item!)),
       }),

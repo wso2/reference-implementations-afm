@@ -102,7 +102,7 @@ const TOOLS: Tool[][] = [
   [
     {
       key: "clear",
-      label: "Plain text",
+      label: "Clear inline formatting",
       command: { kind: "clear" },
       icon: <path d="M4 7h16M7 7l1.5 12h7L17 7M10 11v4M14 11v4" />,
     },

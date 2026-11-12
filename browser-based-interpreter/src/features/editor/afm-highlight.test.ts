@@ -157,3 +157,39 @@ describe("highlightAfm", () => {
     ).toBe("\n\n\n");
   });
 });
+
+describe("a file with Windows line ends", () => {
+  const crlf = "---\r\nname: A\r\ntools:\r\n  mcp: []\r\n---\r\n# Role\r\nr\r\n";
+
+  it("is highlighted as settings, with its opening and closing fences", () => {
+    const tokens = highlightAfm(crlf);
+    expect(tokens.filter((token) => token.kind === "delimiter").map((token) => token.text)).toEqual(["---\r", "---\r"]);
+    expect(kindOf(tokens, "name")).toBe("root-key");
+    expect(kindOf(tokens, "tools")).toBe("root-key");
+  });
+
+  it("keeps every character, so the editor shows exactly what is in the file", () => {
+    expect(highlightAfm(crlf).map((token) => token.text).join("")).toBe(crlf);
+  });
+});
+
+describe("a very long line", () => {
+  it("of brackets with no end is read in a short time", () => {
+    const line = "[".repeat(150_000);
+    const started = Date.now();
+    const tokens = highlightAfm(`# Role\n${line}\n`);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(tokens.map((token) => token.text).join("")).toBe(`# Role\n${line}\n`);
+  });
+
+  it("of link starts with no end is read in a short time", () => {
+    const line = "[a](".repeat(40_000);
+    const started = Date.now();
+    highlightAfm(`${line}\n`);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("still colours an ordinary link", () => {
+    expect(kindOf(highlightAfm("see [the docs](https://example.com/a) now"), "[the docs](https://example.com/a)")).toBe("link");
+  });
+});

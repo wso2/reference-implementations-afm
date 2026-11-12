@@ -30,6 +30,7 @@ import {
   setModelField,
   setSection,
   setServerToolFilter,
+  withoutSectionHeadings,
 } from "./agent-source-edit";
 import { buildableAgent, previewAgent } from "./agent-validation";
 
@@ -947,5 +948,31 @@ describe("settings that fold or repeat a lot", () => {
     const file = `---\nname: A\nbase: &a v\nprompt: >-\n  one\n  two\nlist: [${refs}]\n---\n# Role\nr\n`;
     expect(() => setFrontmatterValue(file, "name", "B")).not.toThrow();
     expect(setFrontmatterValue(file, "name", "B")).toContain("name: B\n");
+  });
+});
+
+describe("a heading typed into Role or Instructions", () => {
+  it("stays in the box it was typed in, as a second-level heading", () => {
+    const typed = setSection(FILE, "Role", "You are a tester\n# Next\nmore");
+    expect(getSection(typed, "Role")).toBe("You are a tester\n## Next\nmore");
+    expect(getSection(typed, "Instructions")).toBe("Be brief");
+  });
+
+  it("does not cut the section short, so the box keeps what was typed", () => {
+    const typed = setSection(FILE, "Role", "# Next");
+    expect(getSection(typed, "Role")).toBe("## Next");
+  });
+
+  it("leaves deeper headings, text with a hash in it, and code blocks alone", () => {
+    const body = "## Two\n### Three\nissue #12 is open\n#nospace\n```\n# not a heading here\n```";
+    expect(withoutSectionHeadings(body)).toBe(body);
+  });
+
+  it("changes a heading written with extra spaces or a tab", () => {
+    expect(withoutSectionHeadings("   #  Next\n#\tTab")).toBe("   ##  Next\n##\tTab");
+  });
+
+  it("keeps working after a code block closes", () => {
+    expect(withoutSectionHeadings("~~~\n# a\n~~~\n# b")).toBe("~~~\n# a\n~~~\n## b");
   });
 });
