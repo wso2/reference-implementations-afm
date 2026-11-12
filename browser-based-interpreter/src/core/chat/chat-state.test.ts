@@ -483,3 +483,46 @@ describe("the questions the worker never kept", () => {
     expect(chatReducer(initialChatState, { type: "restore-session", messages, agentSource: "x" }).unsent).toEqual([]);
   });
 });
+
+describe("writing a draft agent file", () => {
+  const started = () => chatReducer(initialChatState, { type: "draft-started" });
+  const answer = (state: ChatState, message: ServerMessage) => chatReducer(state, { type: "server", message });
+
+  it("waits for the answer, and clears the last result when a new request starts", () => {
+    const old = answer(started(), { type: "draft-generated", source: "old" });
+    expect(old.generatedDraft).toBe("old");
+    const again = chatReducer(old, { type: "draft-started" });
+    expect(again).toMatchObject({ drafting: true, generatedDraft: null, clarifyQuestions: [], draftError: null });
+  });
+
+  it.each([
+    [{ type: "draft-generated", source: "---\nname: A\n---" } as ServerMessage, { generatedDraft: "---\nname: A\n---" }],
+    [{ type: "draft-clarify", questions: ["Who?"] } as ServerMessage, { clarifyQuestions: ["Who?"] }],
+    [{ type: "draft-generation-error", message: "No" } as ServerMessage, { draftError: "No" }],
+  ])("ends the waiting with %j", (message, expected) => {
+    expect(answer(started(), message)).toMatchObject({ drafting: false, ...expected });
+  });
+
+  it("ignores an answer that arrives after the agent was changed", () => {
+    const cleared = chatReducer(started(), { type: "agent-cleared" });
+    expect(cleared.drafting).toBe(false);
+    expect(answer(cleared, { type: "draft-generated", source: "late" }).generatedDraft).toBeNull();
+    expect(answer(cleared, { type: "draft-clarify", questions: ["Late?"] }).clarifyQuestions).toEqual([]);
+    expect(answer(cleared, { type: "draft-generation-error", message: "late" }).draftError).toBeNull();
+  });
+
+  it("ignores an answer after the draft was dismissed", () => {
+    const dismissed = chatReducer(started(), { type: "draft-dismissed" });
+    expect(answer(dismissed, { type: "draft-generated", source: "late" }).generatedDraft).toBeNull();
+  });
+
+  it("ends the waiting with an error when the worker stops", () => {
+    const stopped = answer(started(), { type: "worker-stopped" });
+    expect(stopped.drafting).toBe(false);
+    expect(stopped.draftError).toBe("Agent stopped. Enter your keys again.");
+  });
+
+  it("does not show a draft error when the worker stops while nothing was being written", () => {
+    expect(answer(initialChatState, { type: "worker-stopped" }).draftError).toBeNull();
+  });
+});

@@ -69,6 +69,7 @@ export interface ChatState {
   generatedDraft: string | null;
   clarifyQuestions: string[];
   draftError: string | null;
+  drafting: boolean;
 }
 
 export const initialChatState: ChatState = {
@@ -91,6 +92,7 @@ export const initialChatState: ChatState = {
   generatedDraft: null,
   clarifyQuestions: [],
   draftError: null,
+  drafting: false,
 };
 
 const NO_AGENT_DETAILS = { agentName: "", mcpServers: [], planIssues: [], tools: [] };
@@ -99,6 +101,7 @@ type ChatAction =
   | { type: "user-message"; text: string; images?: ImageAttachment[] }
   | { type: "agent-loading"; content: string }
   | { type: "restore-session"; messages: UiMessage[]; agentSource: string; unseen?: boolean }
+  | { type: "draft-started" }
   | { type: "draft-dismissed" }
   | { type: "agent-cleared" }
   | { type: "regenerate-start" }
@@ -181,8 +184,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         canContinue: false,
         notReady: null,
       };
+    case "draft-started":
+      return { ...state, drafting: true, generatedDraft: null, clarifyQuestions: [], draftError: null };
     case "draft-dismissed":
-      return { ...state, generatedDraft: null, clarifyQuestions: [], draftError: null };
+      return { ...state, drafting: false, generatedDraft: null, clarifyQuestions: [], draftError: null };
     case "agent-cleared":
       return {
         ...initialChatState,
@@ -247,7 +252,12 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
     case "agent-not-ready":
       return { ...state, status: "not-ready", notReady: message.reason };
     case "worker-stopped": {
-      const lost = { savedSecrets: [], pendingPermission: null, canContinue: false };
+      const lost = {
+        savedSecrets: [],
+        pendingPermission: null,
+        canContinue: false,
+        ...(state.drafting ? { drafting: false, draftError: WORKER_STOPPED } : {}),
+      };
       if (state.status === "no-agent") return { ...state, ...lost, error: WORKER_STOPPED };
       return { ...state, ...lost, status: "not-ready", notReady: WORKER_STOPPED };
     }
@@ -295,12 +305,17 @@ function applyServerMessage(state: ChatState, message: ServerMessage): ChatState
     case "oauth-signin-done":
     case "probe-result":
       return state;
+    // An answer counts only for the request that is still waiting. After the agent was changed
+    // or the draft was dismissed, a late answer would otherwise appear in the wrong place.
     case "draft-generated":
-      return { ...state, generatedDraft: message.source, clarifyQuestions: [], draftError: null };
+      if (!state.drafting) return state;
+      return { ...state, drafting: false, generatedDraft: message.source, clarifyQuestions: [], draftError: null };
     case "draft-clarify":
-      return { ...state, clarifyQuestions: message.questions, draftError: null };
+      if (!state.drafting) return state;
+      return { ...state, drafting: false, clarifyQuestions: message.questions, draftError: null };
     case "draft-generation-error":
-      return { ...state, clarifyQuestions: [], draftError: message.message };
+      if (!state.drafting) return state;
+      return { ...state, drafting: false, clarifyQuestions: [], draftError: message.message };
     case "error": {
       const last = state.messages[lastUserIndex(state.messages)];
       return {

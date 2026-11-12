@@ -147,7 +147,7 @@ export function useStandaloneSession(hooks: SessionHooks = {}) {
   }
 
   function generateDraft(prompt: string, model: AgentModelRef, final?: boolean): void {
-    dispatch({ type: "draft-dismissed" });
+    dispatch({ type: "draft-started" });
     post({ type: "generate-draft", prompt, model, final });
   }
 
