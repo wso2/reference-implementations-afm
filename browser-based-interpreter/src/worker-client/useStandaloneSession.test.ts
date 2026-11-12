@@ -179,3 +179,18 @@ it("tells the chat when the worker fails, and starts a new worker for the next c
   expect(worker.posted).toHaveLength(before);
   cleanup();
 });
+
+it("tells the chat again that the agent stopped when a message is sent to a worker that has already stopped", async () => {
+  const worker = new FakeWorker();
+  h.start.mockResolvedValue(worker);
+  const session = useStandaloneSession();
+  const cleanup = h.effects[0]!() as () => void;
+  await tick();
+  worker.emit({ type: "worker-ready" });
+  worker.error();
+  h.dispatch.mockClear();
+  session.send("hello");
+  expect(h.dispatch).toHaveBeenCalledWith({ type: "server", message: { type: "worker-stopped" } });
+  expect(worker.posted.some((message) => message.type === "send")).toBe(false);
+  cleanup();
+});

@@ -28,6 +28,7 @@ export interface ToolSource {
 interface ToolBox {
   tools: ToolSet;
   info: ToolInfo[];
+  failed: string[];
 }
 
 const RETRY_INCOMPLETE_MS = 30_000;
@@ -43,12 +44,12 @@ export function createToolbox(sources: ToolSource[]) {
     const results = await Promise.allSettled(sources.map((source) => source.tools()));
     const tools: ToolSet = {};
     const owner = new Map<string, ToolSource>();
-    let down = false;
+    const failed: string[] = [];
     for (const [index, source] of sources.entries()) {
       const result = results[index]!;
       if (result.status === "rejected") {
         if (result.reason instanceof ToolNameError) throw result.reason;
-        down = true;
+        failed.push(source.label);
         continue;
       }
       for (const [name, item] of Object.entries(result.value)) {
@@ -65,9 +66,9 @@ export function createToolbox(sources: ToolSource[]) {
         tools[name] = item;
       }
     }
-    incomplete = down;
+    incomplete = failed.length > 0;
     const info = Object.entries(tools).map(([name, item]) => ({ name, description: item.description, serverId: owner.get(name)?.serverId }));
-    return { tools, info };
+    return { tools, info, failed };
   }
 
   return {

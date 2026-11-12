@@ -106,6 +106,15 @@ describe("the toolbox", () => {
   });
 });
 
+describe("the servers that did not answer", () => {
+  it("are named next to the tools of the others, and nothing is named when every server answered", async () => {
+    const box = await createToolbox([source("up", ["up__x"]), failing("down")]).tools();
+    expect(Object.keys(box.tools)).toEqual(["up__x"]);
+    expect(box.failed).toEqual(["down"]);
+    expect((await createToolbox([source("up", ["up__x"])]).tools()).failed).toEqual([]);
+  });
+});
+
 describe("a server that was down", () => {
   it("is tried again later, and a clash found then is reported each time instead of being forgotten", async () => {
     vi.useFakeTimers();

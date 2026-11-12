@@ -25,6 +25,7 @@ const READY_DEADLINE_MS = 30_000;
 const PROBE_DEADLINE_MS = 30_000;
 
 const RESTARTS_WORKER = new Set<ClientMessage["type"]>(["load", "set-secret"]);
+const ANSWERED_BY_THE_AGENT = new Set<ClientMessage["type"]>(["send", "regenerate", "continue"]);
 
 export class WorkerLink {
   readonly oauth = createOAuthSignIns({ post: (message) => this.post(message) });
@@ -76,7 +77,11 @@ export class WorkerLink {
   }
 
   post(message: ClientMessage): void {
-    if (this.failed && !(RESTARTS_WORKER.has(message.type) && this.revive())) return;
+    if (this.failed && !(RESTARTS_WORKER.has(message.type) && this.revive())) {
+      // The chat already shows this command as started, so tell it again that the agent stopped instead of leaving it waiting.
+      if (this.active && ANSWERED_BY_THE_AGENT.has(message.type)) this.onMessage({ type: "worker-stopped" });
+      return;
+    }
     if (this.worker === null || !this.ready) {
       this.outbox.push(message);
       return;

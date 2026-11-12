@@ -143,8 +143,8 @@ describe("AgentSession", () => {
     });
 
     await session.load(VALID);
-    expect(emitted.map((m) => m.type)).toEqual(["loaded", "tools-listed"]);
-    expect(emitted.at(-1)).toEqual({ type: "tools-listed", tools: [] });
+    expect(emitted.map((m) => m.type)).toEqual(["loaded", "tools-listed", "notice"]);
+    expect(emitted[1]).toEqual({ type: "tools-listed", tools: [] });
   });
 
   it("streams a reply and finishes when a message is sent", async () => {
@@ -355,6 +355,27 @@ describe("AgentSession", () => {
     release();
     await loadingNew;
     expect(emitted.some((message) => message.type === "text-delta")).toBe(false);
+  });
+
+  it("tells the person which tool servers did not answer, and still lets the agent run", async () => {
+    const { session, emitted } = makeSession({
+      createTools: () => () => [
+        { label: "docs", tools: async () => Promise.reject(new Error("down")), close: async () => {} },
+        { label: "notes", tools: async () => Promise.reject(new Error("down")), close: async () => {} },
+      ],
+    });
+    await session.load(VALID);
+    expect(emitted.findLast((message) => message.type === "notice")).toEqual({
+      type: "notice",
+      text: "These tool servers did not answer: 'docs', 'notes'. The agent runs without their tools for now.",
+    });
+    expect(emitted.some((message) => message.type === "agent-not-ready")).toBe(false);
+  });
+
+  it("says nothing when every tool server answered", async () => {
+    const { session, emitted } = makeSession();
+    await session.load(VALID);
+    expect(emitted.some((message) => message.type === "notice")).toBe(false);
   });
 
   it("errors when sending before loading", async () => {

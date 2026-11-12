@@ -148,9 +148,13 @@ export class AgentSession {
 
   private async reportTools(tools: Toolbox, current: () => boolean): Promise<void> {
     try {
-      const { info } = await tools.tools();
+      const { info, failed } = await tools.tools();
       if (!current()) return;
       this.deps.emit({ type: "tools-listed", tools: info });
+      if (failed.length > 0) {
+        const names = failed.map((name) => `'${name}'`).join(", ");
+        this.deps.emit({ type: "notice", text: `These tool servers did not answer: ${names}. The agent runs without their tools for now.` });
+      }
     } catch (error) {
       if (error instanceof ToolNameError && current()) this.refuse("tools", error);
     }
@@ -193,7 +197,7 @@ export class AgentSession {
     try {
       // Stop must work while a tool server is still answering: an aborted turn ends at once, with no tools.
       const stopped = new Promise<Awaited<ReturnType<Toolbox["tools"]>>>((resolve) =>
-        controller.signal.addEventListener("abort", () => resolve({ tools: {}, info: [] }), { once: true }),
+        controller.signal.addEventListener("abort", () => resolve({ tools: {}, info: [], failed: [] }), { once: true }),
       );
       const { tools: toolSet } = await Promise.race([tools.tools(), stopped]);
       for await (const event of runAgentTurn({
