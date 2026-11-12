@@ -70,7 +70,7 @@ i
   it("warns about a key written into the file, because anyone with the link can read it", () => {
     const html = panel(file("sk-typed-in"));
     expect(html).toContain("This file has a key written into it (api_key), and anyone with the link can read it.");
-    expect(html).not.toContain("Your API key is never included.");
+    expect(html).not.toContain("keys saved in this app are never included");
   });
 
   it("opens on the recommended way, with a link ready to copy", () => {
@@ -83,7 +83,7 @@ i
 
   it("says no key is included when the file only refers to one", () => {
     const html = panel(file("\${env:OPENAI_API_KEY}"));
-    expect(html).toContain("Your API key is never included.");
+    expect(html).toContain("No key is written into the settings, and keys saved in this app are never included.");
     expect(html).not.toContain("written into it");
   });
 });
@@ -111,7 +111,7 @@ describe("what the share panel says about keys", () => {
         createElement(SharePanel, { agentSource: "---\nname: [not closed\napi_key: sk-live-1\n---\n\n# Role\nr\n" }),
       );
       expect(html).toContain("This file could not be checked for keys.");
-      expect(html).not.toContain("Your API key is never included.");
+      expect(html).not.toContain("keys saved in this app are never included");
     } finally {
       vi.unstubAllGlobals();
     }

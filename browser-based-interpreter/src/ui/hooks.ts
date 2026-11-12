@@ -158,3 +158,11 @@ export function useModalPage(): void {
     };
   }, []);
 }
+
+// Runs one task after another. A task that fails does not stop the ones behind it.
+export function createSerialQueue(): (task: () => Promise<void>) => void {
+  let tail: Promise<void> = Promise.resolve();
+  return (task) => {
+    tail = tail.then(task).catch(() => {});
+  };
+}

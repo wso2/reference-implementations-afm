@@ -47,6 +47,7 @@ export function InfoPanel({ content, metadata, saved, onApply, onClose }: Props)
   const [iconOpen, setIconOpen] = useState(false);
   const [iconText, setIconText] = useState(start.icon);
   const descriptionId = useId();
+  const versionErrorId = useId();
   const descriptionRef = useAutosize(draft.description, MAX_DESCRIPTION_HEIGHT);
   const readOnly = metadata === null;
   const edit = (field: AboutField, text: string) => setDraft({ ...draft, [field]: text });
@@ -179,10 +180,16 @@ export function InfoPanel({ content, metadata, saved, onApply, onClose }: Props)
                     value={draft[field]}
                     placeholder={empty}
                     disabled={readOnly}
+                    aria-invalid={field === "version" && versionProblem !== null ? true : undefined}
+                    aria-describedby={field === "version" && versionProblem !== null ? versionErrorId : undefined}
                     onChange={(event) => edit(field, event.target.value)}
                   />
                 </label>
-                {field === "version" && versionProblem !== null && <p className="u-info-error">{versionProblem}</p>}
+                {field === "version" && versionProblem !== null && (
+                  <p className="u-info-error" id={versionErrorId}>
+                    {versionProblem}
+                  </p>
+                )}
               </div>
             );
           })}

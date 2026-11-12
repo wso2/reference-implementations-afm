@@ -68,13 +68,12 @@ export function literalCredentialPaths(source: string): Path[] {
   return found;
 }
 
-// False when the file cannot be searched for written-in keys: its settings do not parse, or are too long to scan.
-// Such a file has not been checked, so it must not be called clean.
+// False when the file cannot be searched for written-in keys: it has no settings, its settings do not parse,
+// or they are too long to scan. Such a file has not been checked, so it must not be called clean.
 export function canScanForCredentials(source: string): boolean {
   if (settingsTooLong(source)) return false;
   try {
-    splitFrontmatter(source);
-    return true;
+    return splitFrontmatter(source).frontmatter !== null;
   } catch {
     return false;
   }

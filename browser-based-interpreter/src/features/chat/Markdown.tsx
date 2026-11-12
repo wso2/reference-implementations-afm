@@ -53,10 +53,34 @@ function BlockedImage(props: ComponentPropsWithoutRef<"img">) {
   );
 }
 
-function SafeLink(props: ComponentPropsWithoutRef<"a">) {
+// A link inside the reply, such as a footnote and its way back, moves within the reply. Following it as an address would
+// change the address of the page, which the app reads. Any other link opens in a new tab, without access to the app.
+export function jumpWithin(from: Element, id: string): void {
+  const reply = from.closest(".md");
+  const target = Array.from(reply?.querySelectorAll("[id]") ?? []).find((element) => element.id === id);
+  target?.scrollIntoView({ block: "nearest" });
+}
+
+function SafeLink(props: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+  // The footnote attributes the reply generated (an id, a label, what describes what) are kept. The renderer's own node is not.
+  const { node: _node, href, children, ...rest } = props;
+  if (href !== undefined && href.startsWith("#")) {
+    return (
+      <a
+        {...rest}
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          jumpWithin(event.currentTarget, href.slice(1));
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
   return (
-    <a href={props.href} target="_blank" rel="noopener noreferrer">
-      {props.children}
+    <a {...rest} href={href} target="_blank" rel="noopener noreferrer">
+      {children}
     </a>
   );
 }

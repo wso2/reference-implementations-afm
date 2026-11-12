@@ -18,6 +18,7 @@ import { type ReactNode, useState } from "react";
 import { type UiMessage } from "../../core/chat/chat-state";
 import { Icon } from "../../ui/Icon";
 import { useCopyFeedback } from "../../ui/hooks";
+import { sendsOnEnter } from "../../ui/inputs";
 import { Markdown } from "./Markdown";
 
 type TextMessage = Extract<UiMessage, { kind: "user" | "assistant" }>;
@@ -81,7 +82,7 @@ export function Message({ message, streaming, onRegenerate, onEdit, footnote }: 
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") setEditing(false);
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (sendsOnEnter(event)) {
                 event.preventDefault();
                 send();
               }

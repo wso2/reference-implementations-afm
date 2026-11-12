@@ -92,3 +92,34 @@ describe("a reply that is still being written", () => {
     expect(Object.keys(components).sort()).toEqual(["a", "img", "pre"]);
   });
 });
+
+describe("footnotes and links in a reply", () => {
+  const note = "A note[^1] and more.\n\n[^1]: The note.";
+
+  it("keeps the anchors of a footnote, and its way back", () => {
+    const html = shown(note);
+    expect(html).toContain('id="user-content-fnref-1"');
+    expect(html).toContain('id="user-content-fn-1"');
+    expect(html).toContain("data-footnote-ref");
+    expect(html).toContain("data-footnote-backref");
+    expect(html).toContain('href="#user-content-fn-1"');
+    expect(html).toContain('href="#user-content-fnref-1"');
+  });
+
+  it("keeps a footnote link in the page and opens no new tab for it", () => {
+    const link = /<a [^>]*data-footnote-ref[^>]*>/.exec(shown(note))![0];
+    expect(link).not.toContain("target=");
+    expect(link).not.toContain("_blank");
+  });
+
+  it("still opens an ordinary link in a new tab, without access to the app", () => {
+    const html = shown("see [docs](https://example.com/a)");
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it("does not hand the renderer's own node to the page", () => {
+    expect(shown(note)).not.toContain("[object Object]");
+    expect(shown("[a](https://example.com)")).not.toContain("node=");
+  });
+});

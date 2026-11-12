@@ -19,8 +19,8 @@ import { type ChangeEvent, type DragEvent, type KeyboardEvent, useEffect, useRef
 import { IMAGE_ACCEPT, MAX_IMAGES_PER_MESSAGE, pickImages } from "../../core/files/images";
 import { type ImageAttachment } from "../../core/runtime/protocol";
 import { Icon } from "../../ui/Icon";
-import { useAutosize } from "../../ui/hooks";
-import { HIDDEN_FILE_INPUT } from "../../ui/inputs";
+import { createSerialQueue, useAutosize } from "../../ui/hooks";
+import { HIDDEN_FILE_INPUT, sendsOnEnter } from "../../ui/inputs";
 
 const MAX_HEIGHT = 180;
 const FEEDBACK_MS = 5000;
@@ -58,6 +58,10 @@ function useImages() {
   const [feedback, setFeedback] = useState<{ text: string; problem: boolean } | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const cleared = useRef(0);
+  // Pictures are prepared one selection at a time, and counted as they are added, so two selections made close together
+  // cannot both take the free places.
+  const [enqueue] = useState(createSerialQueue);
+  const staged = useRef(0);
 
   useEffect(() => {
     if (feedback === null || feedback.problem) return;
@@ -65,18 +69,23 @@ function useImages() {
     return () => clearTimeout(timer);
   }, [feedback]);
 
-  async function addImages(files: File[]) {
+  function addImages(files: File[]) {
     if (files.length === 0) return;
     const clearedBefore = cleared.current;
-    const { attached, skipped } = await pickImages(files, images.length);
-    // The message was sent while the pictures were still being prepared. They belong to no message now.
-    if (cleared.current !== clearedBefore) return;
-    if (attached.length > 0) setImages((current) => [...current, ...attached]);
-    const text = attachFeedback(
-      attached.map((image) => image.name),
-      skipped,
-    );
-    setFeedback(text === null ? null : { text, problem: skipped.length > 0 });
+    enqueue(async () => {
+      // The message was sent before this selection began, or while its pictures were still being prepared.
+      // They belong to no message now.
+      if (cleared.current !== clearedBefore) return;
+      const { attached, skipped } = await pickImages(files, staged.current);
+      if (cleared.current !== clearedBefore) return;
+      staged.current += attached.length;
+      if (attached.length > 0) setImages((current) => [...current, ...attached]);
+      const text = attachFeedback(
+        attached.map((image) => image.name),
+        skipped,
+      );
+      setFeedback(text === null ? null : { text, problem: skipped.length > 0 });
+    });
   }
 
   function onPicked(event: ChangeEvent<HTMLInputElement>) {
@@ -105,9 +114,13 @@ function useImages() {
     onDragOver,
     onDragLeave: () => setDragOver(false),
     onDrop,
-    removeImage: (index: number) => setImages((current) => current.filter((_, at) => at !== index)),
+    removeImage: (index: number) => {
+      staged.current = Math.max(0, staged.current - 1);
+      setImages((current) => current.filter((_, at) => at !== index));
+    },
     clear: () => {
       cleared.current += 1;
+      staged.current = 0;
       setFeedback(null);
       setImages([]);
     },
@@ -173,7 +186,7 @@ export function Composer({ onSend, onStop, streaming, disabled, placeholder }: P
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (sendsOnEnter(event)) {
       event.preventDefault();
       submit();
     }

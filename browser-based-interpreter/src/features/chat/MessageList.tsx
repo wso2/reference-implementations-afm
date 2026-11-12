@@ -56,12 +56,14 @@ function askingTool(messages: UiMessage[], pending: PendingPermission | null): T
   return asking?.kind === "tool" ? asking : null;
 }
 
-function toolsBeforeAnswers(messages: UiMessage[]): Map<number, ToolMessage[]> {
+// The tool calls before an answer are shown as a note under it. The one that waits for a decision is not: it stays in the
+// thread, where its card is shown, even when words from the model come after it.
+export function toolsBeforeAnswers(messages: UiMessage[], asking: ToolMessage | null = null): Map<number, ToolMessage[]> {
   const attached = new Map<number, ToolMessage[]>();
   let pending: ToolMessage[] = [];
   for (const message of messages) {
     if (message.kind === "tool") {
-      pending.push(message);
+      if (message !== asking) pending.push(message);
       continue;
     }
     if (message.kind === "assistant" && pending.length > 0) {
@@ -173,13 +175,13 @@ export function MessageList(props: Props) {
 
   const lastIndex = messages.length - 1;
   const lastAssistant = regenerableIndex(messages);
-  const footnotes = toolsBeforeAnswers(messages);
+  const asking = askingTool(messages, pendingPermission);
+  const footnotes = toolsBeforeAnswers(messages, asking);
   const footnoted = new Set([...footnotes.values()].flat());
   const openTools = messages.filter(
     (message): message is ToolMessage =>
       message.kind === "tool" && message.status === "running" && !footnoted.has(message),
   );
-  const asking = askingTool(messages, pendingPermission);
   const card =
     pendingPermission !== null && onDecide !== undefined ? (
       <ApprovalCard key={pendingPermission.id} request={pendingPermission} onDecide={onDecide} />

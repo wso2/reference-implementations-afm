@@ -159,6 +159,10 @@ r
     expect(canScanForCredentials(file("    type: api-key\n    api_key: sk-live-1"))).toBe(true);
   });
 
+  it("is false when the file has no settings at all", () => {
+    expect(canScanForCredentials("# Role\nr\n\n# Instructions\ni\n")).toBe(false);
+  });
+
   it("is false when the settings do not parse", () => {
     expect(canScanForCredentials("---\nname: [not closed\n---\n\n# Role\nr\n")).toBe(false);
   });

@@ -55,7 +55,9 @@ export function keyNoticeKind(scanned: boolean, writtenIn: string[], hosted: boo
 }
 
 function KeyNote({ kind, fields, send }: { kind: KeyNoticeKind; fields: string[]; send: "link" | "file" }) {
-  if (kind === "clean") return <p className="u-hint">Your API key is never included.</p>;
+  if (kind === "clean") {
+    return <p className="u-hint">No key is written into the settings, and keys saved in this app are never included.</p>;
+  }
   if (kind === "hosted") {
     return (
       <p className="u-hint">
@@ -155,6 +157,7 @@ export function SharePanel({ agentSource }: Props) {
               <span className="u-label">Public URL of your .afm.md</span>
               <input
                 className="u-input mono"
+                aria-label="Public URL of your .afm.md"
                 value={fileUrl}
                 onChange={(event) => setFileUrl(event.target.value)}
                 placeholder="https://…/agent.afm.md"

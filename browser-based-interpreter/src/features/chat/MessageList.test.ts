@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { endScrollBehavior, followingAfterScroll, MessageList, regenerableIndex } from "./MessageList";
+import { endScrollBehavior, followingAfterScroll, MessageList, regenerableIndex, toolsBeforeAnswers } from "./MessageList";
 import type { UiMessage } from "../../core/chat/chat-state";
 
 const THREAD: UiMessage[] = [
@@ -200,6 +200,15 @@ describe("a thread that is waiting for permission", () => {
     expect(out).not.toContain("Using a tool");
   });
 
+  it("shows the card when words from the model come after the tool call, before the answer to it", () => {
+    const withWords: UiMessage[] = [...RUNNING, { kind: "assistant", id: 3, text: "Let me look that up." }];
+    const out = waiting(request, withWords);
+    expect(out).toContain('class="ap"');
+    expect(out).toContain("xc-used ask");
+    expect(out.indexOf("xc-used ask")).toBeLessThan(out.indexOf('class="ap"'));
+    expect(out.indexOf('class="ap"')).toBeLessThan(out.indexOf("Let me look that up."));
+  });
+
   it("shows no card when nothing is waiting", () => {
     const out = waiting(null);
     expect(out).not.toContain('class="ap"');
@@ -280,5 +289,19 @@ describe("where Try again is offered", () => {
   it("does not show Try again under an older answer when the latest question ended with only a tool result", () => {
     const html = thread([QUESTION(1), ANSWER(2), QUESTION(3), TOOL(4)]);
     expect(html).not.toContain('aria-label="Try again"');
+  });
+});
+
+describe("which tool calls become a note under an answer", () => {
+  const tool = (id: number, callId: string): UiMessage => ({ kind: "tool", id, callId, name: "docs__search", args: {}, status: "running" } as UiMessage);
+  const thread = [{ kind: "user", id: 1, text: "q" } as UiMessage, tool(2, "c1"), tool(3, "c2"), { kind: "assistant", id: 4, text: "a" } as UiMessage];
+
+  it("gathers the calls before an answer", () => {
+    expect([...toolsBeforeAnswers(thread).get(4)!].map((call) => call.id)).toEqual([2, 3]);
+  });
+
+  it("leaves out the call that waits for a decision", () => {
+    expect([...toolsBeforeAnswers(thread, thread[2] as never).get(4)!].map((call) => call.id)).toEqual([2]);
+    expect(toolsBeforeAnswers([thread[0]!, thread[1]!, thread[3]!], thread[1] as never).get(4)).toBeUndefined();
   });
 });
