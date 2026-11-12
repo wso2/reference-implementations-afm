@@ -111,6 +111,22 @@ describe("createOAuthManager", () => {
     expect(await manager.getAccessToken(provider)).toBe("at");
   });
 
+  it("asks for the scopes of the file it signs in for, not those of an earlier file for the same server", async () => {
+    const { manager, emitted } = makeManager();
+    await manager.startSignIn("id-1", { ...provider, scopes: ["read"] });
+    expect(new URL(emitted.url!.url).searchParams.get("scope")).toBe("read");
+    await manager.startSignIn("id-2", { ...provider, scopes: ["read", "write"] });
+    expect(new URL(emitted.url!.url).searchParams.get("scope")).toBe("read write");
+  });
+
+  it("keeps one session for the same scopes written in another order", async () => {
+    const { manager, emitted } = makeManager();
+    await signIn(manager, emitted, "id-a");
+    await manager.startSignIn("id-b", { ...provider, scopes: ["b", "a"] });
+    await manager.startSignIn("id-c", { ...provider, scopes: ["a", "b"] });
+    expect(await manager.getAccessToken(provider)).toBe("at");
+  });
+
   it("stores the refresh token in refreshStore after sign-in", async () => {
     const { manager, emitted, refreshStore } = makeManager();
     await signIn(manager, emitted, "id-2");
@@ -324,12 +340,12 @@ describe("a sign-in held by the real worker secret store", () => {
     return signedIn;
   }
 
-  it("keeps the newest refresh token in memory as the server rotates it, and tells the page only its name", async () => {
+  it("keeps the newest refresh token in memory as the server rotates it, and tells the page nothing about it", async () => {
     const { store, manager, posted } = await signedInTab();
     await manager.renewAccessToken(provider, await manager.getAccessToken(provider));
     await manager.renewAccessToken(provider, await manager.getAccessToken(provider));
     expect(store.refreshStore.get(authorizationCodeRefreshKey(provider))).toBe("R2");
-    expect(posted.at(-1)).toEqual({ type: "secrets-list", names: [authorizationCodeRefreshKey(provider)] });
+    expect(posted.filter((message) => message.type === "secrets-list")).toEqual([]);
   });
 
   it("drops it on sign-out, so the next call needs a sign-in again", async () => {

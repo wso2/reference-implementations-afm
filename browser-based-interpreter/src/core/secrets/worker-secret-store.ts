@@ -36,16 +36,12 @@ export function createWorkerSecretStore(emit: (message: ServerMessage) => void):
     emit({ type: "secrets-list", names: Object.keys(values) });
   }
 
+  // Sign-in refresh tokens live here, apart from the keys a person entered, so one can never stand in for the other.
+  const refreshTokens = new Map<string, string>();
   const refreshStore: KeyValueStore = {
-    get: (key) => values[key] ?? null,
-    set: (key, value) => {
-      values[key] = value;
-      postNames();
-    },
-    remove: (key) => {
-      delete values[key];
-      postNames();
-    },
+    get: (key) => refreshTokens.get(key) ?? null,
+    set: (key, value) => void refreshTokens.set(key, value),
+    remove: (key) => void refreshTokens.delete(key),
   };
 
   return {

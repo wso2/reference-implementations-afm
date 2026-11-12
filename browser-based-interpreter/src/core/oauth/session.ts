@@ -74,10 +74,10 @@ export function oauthProviderFrom(auth: Record<string, unknown>, resource: strin
   return { authorizeUrl: textOf(auth.authorize_url), tokenUrl: textOf(auth.token_url), clientId: textOf(auth.client_id), scopes, resource };
 }
 
-type ProviderIdentity = Pick<OAuthProviderRef, "authorizeUrl" | "tokenUrl" | "clientId" | "resource">;
+type ProviderIdentity = Pick<OAuthProviderRef, "authorizeUrl" | "tokenUrl" | "clientId" | "resource" | "scopes">;
 
 export function authorizationCodeProviderKey(config: ProviderIdentity): string {
-  return JSON.stringify([config.authorizeUrl, config.tokenUrl, config.clientId, config.resource]);
+  return JSON.stringify([config.authorizeUrl, config.tokenUrl, config.clientId, config.resource, [...(config.scopes ?? [])].sort()]);
 }
 
 export function authorizationCodeRefreshKey(config: ProviderIdentity): string {
