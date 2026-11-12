@@ -25,6 +25,7 @@ import { agentFileSizeError, fetchAgentFile, normalizeAgentFileUrl } from "../..
 import { agentFileFetch, McpProxyRequiredError } from "../../core/runtime/factories";
 import { type AgentModelRef } from "../../core/runtime/protocol";
 import { withCode } from "../../ui/FileCheckPanel";
+import { useRunTracker } from "../../ui/hooks";
 import { Icon } from "../../ui/Icon";
 import { HIDDEN_FILE_INPUT, SECRET_INPUT } from "../../ui/inputs";
 import { START_CARDS, START_SUBTITLES, type StartView, templatesNote } from "./start-flow";
@@ -137,9 +138,20 @@ export function useImport(onUseSource: (source: string, fromOutside?: boolean) =
   const [importError, setImportError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const imports = useRunTracker();
+
+  // A file read or a link fetch can finish after the person went back or chose something else.
+  // Only the latest one may open its source, and nothing may after this screen is left.
+  function cancel() {
+    imports.begin("import");
+    setFetching(false);
+  }
+  useEffect(() => () => void imports.begin("import"), [imports]);
 
   async function openFile(file: File | undefined) {
     if (file === undefined) return;
+    const run = imports.begin("import");
+    setFetching(false);
     const sizeError = agentFileSizeError(file.size);
     if (sizeError !== null) {
       setImportError(sizeError);
@@ -149,9 +161,10 @@ export function useImport(onUseSource: (source: string, fromOutside?: boolean) =
     try {
       text = await file.text();
     } catch {
-      setImportError("That file could not be read.");
+      if (imports.isCurrent("import", run)) setImportError("That file could not be read.");
       return;
     }
+    if (!imports.isCurrent("import", run)) return;
     setImportError(null);
     onUseSource(text, true);
   }
@@ -162,11 +175,14 @@ export function useImport(onUseSource: (source: string, fromOutside?: boolean) =
       setImportError(normalized.error);
       return;
     }
+    const run = imports.begin("import");
     setFetching(true);
     setImportError(null);
     try {
-      onUseSource(await fetchAgentFile(normalized.url, agentFileFetch()), true);
+      const source = await fetchAgentFile(normalized.url, agentFileFetch());
+      if (imports.isCurrent("import", run)) onUseSource(source, true);
     } catch (error) {
+      if (!imports.isCurrent("import", run)) return;
       if (error instanceof McpProxyRequiredError) {
         logDetails(error.message);
         setImportError("Opening links is unavailable");
@@ -174,11 +190,11 @@ export function useImport(onUseSource: (source: string, fromOutside?: boolean) =
         setImportError(brief(describeError(error)));
       }
     } finally {
-      setFetching(false);
+      if (imports.isCurrent("import", run)) setFetching(false);
     }
   }
 
-  return { link, setLink, dropping, setDropping, importError, fetching, fileInput, openFile, openLink };
+  return { link, setLink, dropping, setDropping, importError, fetching, fileInput, openFile, openLink, cancel };
 }
 
 export function ImportView({
@@ -282,19 +298,16 @@ export function useWriter(
   const [modelId, setModelId] = useState("");
   const [key, setKey] = useState("");
   const [answers, setAnswers] = useState("");
-  const [writing, setWriting] = useState(false);
+
+  // The session knows whether a request is still waiting. That stays true if this screen is closed and opened again,
+  // and it ends when the answer comes or the agent stops.
+  const writing = state.drafting;
 
   const provider = findProvider(providerId);
   const keySaved = provider !== undefined && state.savedSecrets.includes(provider.secretName);
 
-  const answered = state.generatedDraft !== null || state.clarifyQuestions.length > 0 || state.draftError !== null;
-  useEffect(() => {
-    if (answered) setWriting(false);
-  }, [answered]);
-
   function writeFile(final = false, request = prompt.trim()) {
     if (request === "" || provider === undefined || modelId === "") return;
-    setWriting(true);
     if (!keySaved && key.trim() !== "") onSaveKey(provider.secretName, key.trim(), provider.id);
     const authoringModel = {
       provider: provider.id,
@@ -443,6 +456,7 @@ export function PromptView({ writer, draftError }: { writer: Writer; draftError:
               onChange={(event) => {
                 setProviderId(event.target.value);
                 setModelId("");
+                setKey("");
               }}
             >
               <option value="" disabled>

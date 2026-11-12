@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { type ChatState } from "../../core/chat/chat-state";
 import { type AgentModelRef } from "../../core/runtime/protocol";
 import { DialogFrame } from "../../ui/DialogFrame";
@@ -70,6 +70,11 @@ export function StartHere({
   const importer = useImport(onUseSource);
   const writer = useWriter(state, { onGenerate, onSaveKey });
   const { writing } = writer;
+  const { cancel: cancelImport } = importer;
+
+  useEffect(() => {
+    if (view !== "import") cancelImport();
+  }, [view]);
 
   const stage = stageOf(view, {
     writing,
