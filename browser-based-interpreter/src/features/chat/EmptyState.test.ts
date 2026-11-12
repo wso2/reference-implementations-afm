@@ -25,6 +25,8 @@ describe("rejectedKey", () => {
     "invalid x-api-key",
     "No API key was provided for the model.",
     "The invalid_key error came back",
+    "Could not resolve variable '${env:OPENAI_API_KEY}'",
+    "Could not resolve variable '${env:ANTHROPIC_API_KEY}'",
   ])("offers to replace the key for %j", (reason) => {
     expect(rejectedKey(reason)).toBe(true);
   });
@@ -34,6 +36,8 @@ describe("rejectedKey", () => {
     "Unauthorized",
     "The server answered 403",
     "Connection timed out",
+    "Could not resolve variable '${env:MONKEY_NAME}'",
+    "Could not resolve variable '${env:MY_API_KEYS}'",
   ])("does not treat %j as a problem with the model's key", (reason) => {
     expect(rejectedKey(reason)).toBe(false);
   });
@@ -73,5 +77,19 @@ describe("NotReadyReason", () => {
 
   it("does not offer a new key for a failure that is not about one", () => {
     expect(html("Unsupported model provider gemini. Use openai or anthropic.", () => {})).not.toContain("Replace key");
+  });
+});
+
+describe("a key that was never entered", () => {
+  it("offers Replace key, because the short reason says the key was not accepted", () => {
+    const out = renderToStaticMarkup(
+      createElement(NotReadyReason, {
+        notReady: "Could not resolve variable '${env:OPENAI_API_KEY}'",
+        onRetry: () => {},
+        onReplaceKey: () => {},
+      }),
+    );
+    expect(out).toContain("Key not accepted");
+    expect(out).toContain("Replace key");
   });
 });

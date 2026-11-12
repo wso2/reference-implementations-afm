@@ -67,8 +67,10 @@ interface Props {
   onReplaceKey?: () => void;
 }
 
+// A letter or digit on either side would make it part of a longer word, but an underscore is a separator:
+// 'OPENAI_API_KEY' is a key problem, and 'monkey' is not.
 export function rejectedKey(reason: string | null): boolean {
-  return reason !== null && /\b(api[ _-]?key|invalid[ _-]?key)\b/i.test(reason);
+  return reason !== null && /(?:^|[^a-z0-9])(?:api[ _-]?key|invalid[ _-]?key)(?![a-z0-9])/i.test(reason);
 }
 
 export function NotReadyReason({
