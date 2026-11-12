@@ -16,10 +16,12 @@
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as meta_version
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from afm.authentication import BearerAuthentication
 from afm.cli import (
     cli,
     create_unified_app,
@@ -538,3 +540,51 @@ Test instructions
             or "Environment variable" in result.output
             or "variable" in result.output.lower()
         )
+
+
+class TestUnifiedAppPlainHttpWarning:
+    WARNING = (
+        "WebSub hub: authentication is sent over plain http, which does not protect "
+        "credentials or tokens on the network; use an https URL"
+    )
+
+    def warnings(self, caplog) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "afm.http_auth"
+        ]
+
+    def create_app(self, hub: str, authentication: BearerAuthentication | None):
+        webhook = WebhookInterface(
+            subscription=Subscription(
+                protocol="websub",
+                hub=hub,
+                topic="http://topic.example.com",
+                authentication=authentication,
+            )
+        )
+        return create_unified_app(_make_mock_agent(), webhook_interface=webhook)
+
+    def test_authentication_over_plain_http_to_a_remote_hub_is_warned_about(
+        self, caplog
+    ):
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            self.create_app("http://hub.example.com", BearerAuthentication(token="t"))
+
+        assert self.warnings(caplog) == [self.WARNING]
+
+    @pytest.mark.parametrize(
+        "hub", ["https://hub.example.com", "http://localhost:8080"]
+    )
+    def test_an_https_or_loopback_hub_is_not_warned_about(self, hub, caplog):
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            self.create_app(hub, BearerAuthentication(token="t"))
+
+        assert self.warnings(caplog) == []
+
+    def test_a_plain_http_hub_without_authentication_is_not_warned_about(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="afm.http_auth"):
+            self.create_app("http://hub.example.com", None)
+
+        assert self.warnings(caplog) == []

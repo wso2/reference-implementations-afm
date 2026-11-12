@@ -655,6 +655,40 @@ class TestOAuth2TokenLifecycle:
         with pytest.raises(AuthenticationError, match="access_token"):
             await send(oauth2(endpoint), echo_headers([]))
 
+    @staticmethod
+    def surrogate_token_response() -> httpx.Response:
+        return httpx.Response(
+            200, content=b'{"access_token": "abc\\ud800", "token_type": "Bearer"}'
+        )
+
+    async def test_a_token_that_cannot_be_encoded_in_a_header_is_rejected(self):
+        endpoint = TokenEndpoint(self.surrogate_token_response())
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            await send(oauth2(endpoint), echo_headers([]))
+
+        assert str(exc_info.value) == "token response has no valid access_token"
+
+    async def test_such_a_token_is_also_rejected_when_it_replaces_a_rejected_one(self):
+        endpoint = TokenEndpoint(token_json("old"), self.surrogate_token_response())
+
+        def resource_server(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401)
+
+        with pytest.raises(AuthenticationError, match="no valid access_token"):
+            await send(oauth2(endpoint), resource_server)
+
+        assert len(endpoint.requests) == 2
+
+    async def test_a_non_ascii_access_token_is_sent(self):
+        captured: list[httpx.Request] = []
+
+        await send(
+            oauth2(TokenEndpoint(token_json("t\u00e9\u20acn"))), echo_headers(captured)
+        )
+
+        assert captured[0].headers["Authorization"] == "Bearer t\u00e9\u20acn"
+
     @pytest.mark.parametrize(
         "response",
         [httpx.Response(200, text="not json"), httpx.Response(200, json=["a"])],

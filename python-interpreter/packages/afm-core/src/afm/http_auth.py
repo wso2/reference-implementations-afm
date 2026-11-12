@@ -327,10 +327,24 @@ def _read_token_response(response: httpx.Response) -> tuple[str, float]:
         raise AuthenticationError("token response token_type is not Bearer")
 
     token = data.get("access_token")
-    if not isinstance(token, str) or not token or has_control_chars(token):
+    if (
+        not isinstance(token, str)
+        or not token
+        or has_control_chars(token)
+        or not _is_utf8_encodable(token)
+    ):
         raise AuthenticationError("token response has no valid access_token")
 
     return token, _lifetime_seconds(data)
+
+
+def _is_utf8_encodable(value: str) -> bool:
+    """httpx encodes a header value as UTF-8, which fails for a lone surrogate."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _error_code(response: httpx.Response) -> str:

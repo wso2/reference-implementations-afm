@@ -29,7 +29,7 @@ from fastapi import FastAPI
 
 from .constants import DEFAULT_HTTP_PORT
 from .exceptions import AFMError
-from .http_auth import build_httpx_auth
+from .http_auth import build_httpx_auth, warn_if_plain_http
 from .interfaces.base import get_http_path, get_interfaces
 from .interfaces.console_chat import async_run_console_chat
 from .interfaces.web_chat import create_webchat_router
@@ -93,14 +93,18 @@ def create_unified_app(
                     "For production use, set subscription.callback explicitly in the AFM file."
                 )
 
+            auth = build_httpx_auth(
+                subscription.authentication, base_dir=agent.afm.source_dir
+            )
+            warn_if_plain_http(
+                subscription.hub, subscription.authentication, "WebSub hub"
+            )
             websub_subscriber = WebSubSubscriber(
                 hub=subscription.hub,
                 topic=subscription.topic,
                 callback=callback_url,
                 secret=secret,
-                auth=build_httpx_auth(
-                    subscription.authentication, base_dir=agent.afm.source_dir
-                ),
+                auth=auth,
             )
 
     # Create lifespan for MCP connection management and WebSub
