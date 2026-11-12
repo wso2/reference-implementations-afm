@@ -32,6 +32,7 @@ import {
   signInNeed,
   signInQuestion,
   toolsProbedFor,
+  toolsShown,
   waitingNote,
 } from "./server-panel-state";
 
@@ -275,5 +276,49 @@ describe("a tool list belongs to the address and sign-in method it was listed fo
 
   it("is not shown when nothing was listed yet", () => {
     expect(toolsProbedFor(null, probeKey("none", "https://a.example/mcp"))).toBeNull();
+  });
+});
+
+describe("a tool list also belongs to the settings of its sign-in", () => {
+  const oauth = (clientId: string, secret = "s") => ({
+    type: "oauth2",
+    fields: { authorize_url: "https://a.example/a", token_url: "https://a.example/t", client_id: clientId, client_secret: secret },
+    scopes: ["read"],
+  });
+
+  it("is the same for the same settings", () => {
+    expect(probeKey("oauth2", "https://a.example/mcp", oauth("c1"))).toBe(probeKey("oauth2", " https://a.example/mcp ", oauth("c1")));
+  });
+
+  it("changes with a client id, an address of the sign-in or the scopes", () => {
+    const base = probeKey("oauth2", "https://a.example/mcp", oauth("c1"));
+    expect(probeKey("oauth2", "https://a.example/mcp", oauth("c2"))).not.toBe(base);
+    expect(probeKey("oauth2", "https://a.example/mcp", { ...oauth("c1"), scopes: ["write"] })).not.toBe(base);
+    const moved = oauth("c1");
+    moved.fields.token_url = "https://other.example/t";
+    expect(probeKey("oauth2", "https://a.example/mcp", moved)).not.toBe(base);
+  });
+
+  it("never holds a secret, and does not change when a secret is typed", () => {
+    const key = probeKey("oauth2", "https://a.example/mcp", oauth("c1", "s3cret-value"));
+    expect(key).not.toContain("s3cret-value");
+    expect(probeKey("oauth2", "https://a.example/mcp", oauth("c1", "another"))).toBe(key);
+    const bearer = probeKey("bearer", "https://a.example/mcp", { type: "bearer", fields: { token: "tok-12345" } });
+    expect(bearer).not.toContain("tok-12345");
+  });
+});
+
+describe("the tools shown for a server", () => {
+  it("are a found list, over anything the file lists", () => {
+    expect(toolsShown(false, [{ name: "new" }], ["old"])).toEqual([{ name: "new" }]);
+    expect(toolsShown(true, [{ name: "new" }], ["old"])).toEqual([{ name: "new" }]);
+  });
+
+  it("are the tools the file lists for a server that is already listed, until it is checked", () => {
+    expect(toolsShown(false, null, ["a", "b"])).toEqual([{ name: "a" }, { name: "b" }]);
+  });
+
+  it("are nothing yet for a server that was not listed or has a new address", () => {
+    expect(toolsShown(true, null, ["a"])).toBeNull();
   });
 });

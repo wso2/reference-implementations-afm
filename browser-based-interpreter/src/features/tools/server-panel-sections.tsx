@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useRef } from "react";
+import { useId, useRef } from "react";
 import { brief } from "../../core/chat/failure";
 import { AUTH_METHODS, type AuthField, isSecretAuthField } from "../../core/mcp/mcp-servers";
 import { type ToolInfo } from "../../core/runtime/protocol";
@@ -23,6 +23,8 @@ import { withCode } from "../../ui/FileCheckPanel";
 import { Icon } from "../../ui/Icon";
 import { SECRET_INPUT } from "../../ui/inputs";
 import { type useSignIn } from "./server-panel-state";
+
+export const SIGN_IN_FAILED = "Sign-in failed. Try again.";
 
 interface AuthFieldsProps {
   fields: readonly AuthField[];
@@ -141,6 +143,7 @@ export function ServerTools({
   showTip,
   hideTip,
 }: ServerToolsProps) {
+  const descriptionIds = useId();
   return (
     <div className="u-group grow">
       <div className="u-label-row">
@@ -182,22 +185,38 @@ export function ServerTools({
         <p className="u-hint">{withCode(waiting)}</p>
       ) : (
         <div className="u-rows scroll is-found">
-          {found.map((tool) => (
-            <label
-              className="u-row"
-              key={tool.name}
-              onMouseEnter={(event) => showTip(tool, event.currentTarget)}
-              onMouseLeave={hideTip}
-            >
-              <input type="checkbox" checked={allowed.includes(tool.name)} onChange={() => onToggle(tool.name)} />
-              <span className="u-row-name">{tool.name}</span>
-              {tool.description !== undefined && tool.description.trim() !== "" && (
-                <span className="u-row-meta" aria-hidden="true">
-                  ?
-                </span>
-              )}
-            </label>
-          ))}
+          {found.map((tool, index) => {
+            const described = tool.description !== undefined && tool.description.trim() !== "";
+            const describedBy = `${descriptionIds}-${index}`;
+            return (
+              <label
+                className="u-row"
+                key={tool.name}
+                onMouseEnter={(event) => showTip(tool, event.currentTarget)}
+                onMouseLeave={hideTip}
+                onFocus={(event) => showTip(tool, event.currentTarget)}
+                onBlur={hideTip}
+              >
+                <input
+                  type="checkbox"
+                  checked={allowed.includes(tool.name)}
+                  aria-describedby={described ? describedBy : undefined}
+                  onChange={() => onToggle(tool.name)}
+                />
+                <span className="u-row-name">{tool.name}</span>
+                {described && (
+                  <>
+                    <span className="u-row-meta" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="visually-hidden" id={describedBy}>
+                      {tool.description}
+                    </span>
+                  </>
+                )}
+              </label>
+            );
+          })}
         </div>
       )}
     </div>
@@ -232,6 +251,7 @@ export function SignInSection({
           <button
             key={option.id}
             className={`u-pill-btn ${method === option.id ? "on" : ""}`}
+            aria-pressed={method === option.id}
             onClick={() => onMethod(option.id)}
           >
             {option.label}
@@ -285,9 +305,9 @@ export function SignInSection({
                 )}
               </div>
             )}
-            {note?.status === "failed" && note.reason !== undefined && (
+            {note?.status === "failed" && (
               <div className="repair" ref={signIn.noteRef}>
-                <p className="repair-what">{brief(note.reason)}</p>
+                <p className="repair-what">{note.reason === undefined ? SIGN_IN_FAILED : brief(note.reason)}</p>
               </div>
             )}
           </div>

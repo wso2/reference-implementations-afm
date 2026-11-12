@@ -43,6 +43,7 @@ import {
   savedServer,
   seedValues,
   signInNeed,
+  toolsShown,
   useDirectoryClient,
   useServerProbe,
   useSignIn,
@@ -144,7 +145,7 @@ export function ServerPanel({
     method,
     signedIn,
   );
-  const tools: ToolInfo[] | null = live ? probe.found : [...savedTools, ...denied].map((tool) => ({ name: tool }));
+  const tools = toolsShown(live, probe.found, [...savedTools, ...denied]);
 
   useEffect(() => {
     if (!pendingDirectoryProbe) return;
@@ -237,7 +238,10 @@ export function ServerPanel({
                 className="u-input mono"
                 value={url}
                 placeholder="https://example.com/mcp"
-                onChange={(event) => setUrl(event.target.value)}
+                onChange={(event) => {
+                  setUrl(event.target.value);
+                  directoryClient.cancel();
+                }}
                 onBlur={() => void probe.probe()}
                 readOnly={isStdio}
               />
@@ -245,7 +249,10 @@ export function ServerPanel({
 
             <SignInSection
               method={method}
-              onMethod={setMethod}
+              onMethod={(id) => {
+                setMethod(id);
+                directoryClient.cancel();
+              }}
               signedIn={signedIn}
               incomplete={incomplete}
               signIn={signIn}
@@ -276,7 +283,7 @@ export function ServerPanel({
                 if (tools) setAllowed(allowed.length === tools.length ? [] : tools.map((tool) => tool.name));
               }}
               onCheckAgain={() => void probe.probe(true)}
-              checkable={live}
+              checkable
               showTip={showTip}
               hideTip={hideTip}
             />

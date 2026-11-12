@@ -15,7 +15,7 @@
 // under the License.
 
 import { type AgentMetadata, describeError } from "@afm/engine";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type NewMcpServer } from "../../core/agent/agent-source-edit";
 import { hostOf } from "../../core/agent/addresses";
 import { brief, logDetails } from "../../core/chat/failure";
@@ -136,9 +136,21 @@ interface ProbeOptions {
   onDiscovered: (discovered: DiscoveredMcpAuth) => void;
 }
 
-// A probe answers for one address and one way of signing in. The same list is not an answer for another.
-export function probeKey(method: string, url: string): string {
-  return `${method}\n${url.trim()}`;
+// A probe answers for one address and one way of signing in, with the settings of that sign-in. The same list is not
+// an answer for another. A secret is never part of the key: it is left out, and is checked when it is typed.
+export function probeKey(method: string, url: string, auth?: NewMcpServer["auth"]): string {
+  const settings = Object.entries(auth?.fields ?? {})
+    .filter(([field]) => !isSecretAuthField(field) && !/secret|password/i.test(field))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([field, value]) => `${field}=${value}`);
+  return [method, url.trim(), ...settings, (auth?.scopes ?? []).join(" ")].join("\n");
+}
+
+// The tools to show. A list found by checking wins. Without one, a server that is already listed in the file shows
+// the tools it lists, and any other server shows nothing yet.
+export function toolsShown(live: boolean, found: ToolInfo[] | null, listed: string[]): ToolInfo[] | null {
+  if (found !== null) return found;
+  return live ? null : listed.map((name) => ({ name }));
 }
 
 export function toolsProbedFor(probed: { key: string; tools: ToolInfo[] } | null, key: string): ToolInfo[] | null {
@@ -152,9 +164,12 @@ export function useServerProbe(options: ProbeOptions) {
   const [error, setError] = useState<string | null>(issue?.text ?? null);
   const [rejected, setRejected] = useState(issue?.kind === "rejected");
   const probes = useRunTracker();
-  const urlRef = useRef(url);
-  urlRef.current = url;
-  const key = probeKey(method, url);
+  // Kept after each commit, not while rendering: a render that React drops must not change what a waiting check compares with.
+  const latest = useRef({ url, method });
+  useLayoutEffect(() => {
+    latest.current = { url, method };
+  });
+  const key = probeKey(method, url, auth);
   const found = toolsProbedFor(probed, key);
 
   async function signInFoundOrRefused(superseded: () => boolean): Promise<boolean> {
@@ -179,7 +194,8 @@ export function useServerProbe(options: ProbeOptions) {
     if (!writesMethod || url.trim() === "" || name === "") return;
     if (!force && (!live || found !== null)) return;
     const run = probes.begin("probe");
-    const superseded = () => !probes.isCurrent("probe", run) || url.trim() !== urlRef.current.trim();
+    const superseded = () =>
+      !probes.isCurrent("probe", run) || url.trim() !== latest.current.url.trim() || method !== latest.current.method;
     setProbing(true);
     setError(null);
 

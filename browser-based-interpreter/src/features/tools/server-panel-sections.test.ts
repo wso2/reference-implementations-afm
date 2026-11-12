@@ -16,9 +16,9 @@
 import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AuthFields, ServerTools } from "./server-panel-sections";
+import { AuthFields, ServerTools, SIGN_IN_FAILED, SignInSection } from "./server-panel-sections";
 
-const tools = (found: { name: string }[] | null) =>
+const tools = (found: { name: string; description?: string }[] | null) =>
   renderToStaticMarkup(
     createElement(ServerTools, {
       url: "https://mcp.example.com/mcp",
@@ -91,5 +91,76 @@ describe("the box for a server's secret", () => {
     expect(html).toContain('autoComplete="new-password"');
     expect(html).toContain('data-1p-ignore="true"');
     expect(html).toContain('data-form-type="other"');
+  });
+});
+
+describe("a tool's description", () => {
+  const html = tools([{ name: "search", description: "Finds pages" }, { name: "delete" }]);
+
+  it("is read out with its tick box, not only shown with the mouse", () => {
+    const described = html.match(/aria-describedby="([^"]+)"/g) ?? [];
+    expect(described).toHaveLength(1);
+    const id = /aria-describedby="([^"]+)"/.exec(html)![1]!;
+    expect(html).toContain(`id="${id}"`);
+    expect(html).toContain(">Finds pages<");
+  });
+
+  it("is not promised for a tool that has none", () => {
+    expect(html.match(/aria-describedby/g)).toHaveLength(1);
+  });
+});
+
+describe("how a server signs in", () => {
+  const section = (note: unknown, method = "oauth2") =>
+    renderToStaticMarkup(
+      createElement(SignInSection, {
+        method,
+        onMethod: () => {},
+        signedIn: false,
+        incomplete: false,
+        signIn: {
+          formOpen: false,
+          openForm: () => {},
+          asking: false,
+          waiting: false,
+          ask: () => {},
+          cancelAsk: () => {},
+          question: { title: "Open the sign-in window?", text: "" },
+          note,
+          clearNote: () => {},
+          noteRef: { current: null },
+          signIn: () => {},
+        } as never,
+        onSignOut: () => {},
+        fields: [],
+        values: {},
+        secretEdits: {},
+        saved: () => false,
+        rejected: false,
+        onValue: () => {},
+        onSecretEdit: () => {},
+        onSecretBlur: () => {},
+      }),
+    );
+
+  it("says which method is chosen to a screen reader", () => {
+    const html = section(null, "oauth2");
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Provider sign-in</);
+    expect(html).toMatch(/aria-pressed="false"[^>]*>None</);
+  });
+
+  it("shows a failure that came without a reason", () => {
+    expect(section({ status: "failed" })).toContain(SIGN_IN_FAILED);
+  });
+
+  it("shows the reason when there is one, in a few words", () => {
+    const html = section({ status: "failed", reason: "Failed to fetch" });
+    expect(html).toContain("Can&#x27;t be reached");
+    expect(html).not.toContain(SIGN_IN_FAILED);
+  });
+
+  it("shows no failure when none happened", () => {
+    expect(section(null)).not.toContain(SIGN_IN_FAILED);
   });
 });
