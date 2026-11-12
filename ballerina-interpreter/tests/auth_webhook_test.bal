@@ -61,6 +61,28 @@ Summarize the event.
 `;
 }
 
+function manualWebhookAfm(string authentication) returns string =>
+    string `---
+interfaces:
+  - type: webhook
+    subscription:
+      protocol: "websub"
+      authentication:
+${authentication}
+model:
+  provider: "wso2"
+  url: "http://localhost:9192/ballerina-copilot/v2.0/webhook"
+  authentication:
+    type: "bearer"
+    token: "mock-token"
+---
+# Role
+You handle webhook events.
+
+# Instructions
+Summarize the event.
+`;
+
 function subscribeWith(string authentication, int port) returns CapturedSubscription|error {
     subscriptions_requests = [];
     AFMRecord afm = check parseAfm(webhookAfm(authentication));
@@ -153,5 +175,19 @@ function testAnUnusableSigningKeyStopsTheStartWithoutASubscription() returns err
 
     test:assertTrue(result is error);
     test:assertEquals((<error>result).message(), "signing_key RSA key must be at least 2048 bits");
+    test:assertEquals(subscriptions_requests.length(), 0);
+}
+
+@test:Config
+function testAManuallyRegisteredWebhookNeverRequestsCredentials() returns error? {
+    subscriptions_requests = [];
+    useTokenReplies({body: {access_token: "t", token_type: "mac"}});
+    AFMRecord afm = check parseAfm(manualWebhookAfm(
+        string `        type: oauth2${"\n"}        grant_type: client_credentials${"\n"}        token_url: "${TOKEN_URL}"${"\n"}        client_id: client${"\n"}        client_secret: secret`));
+    future<error?> started = start runAgentFromAFM(afm, 29650, check resourcesDirectory());
+    error? result = wait started;
+
+    test:assertTrue(result is (), result is error ? result.message() : "");
+    test:assertEquals(tokenRequests.length(), 0);
     test:assertEquals(subscriptions_requests.length(), 0);
 }

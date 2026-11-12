@@ -33,10 +33,7 @@ function attachWebhookService(websub:Listener websubListener, ai:Agent agent, We
     // Doesn't work due to a bug.
     // Subscription {hub, topic, callback, secret, authentication} = subscription;
 
-    warnIfPlainHttpHub(subscription);
-    HeaderProvider? headerProvider = check createHeaderProvider(subscription.authentication, afmFileDir,
-        "interfaces.webhook.subscription.authentication");
-    map<string> customHeaders = headerProvider is () ? {} : check headerProvider.getHeaders();
+    map<string> customHeaders = check subscriptionHeaders(subscription, afmFileDir);
 
     // Only set target when hub and topic are provided (automatic subscription)
     // When not provided, this is a manually registered webhook
@@ -62,12 +59,17 @@ function attachWebhookService(websub:Listener websubListener, ai:Agent agent, We
     return websubListener.attach(webhookService, httpExposure.path);
 }
 
-// The authentication is sent to the hub only when the hub is subscribed to automatically (hub and topic are set).
-function warnIfPlainHttpHub(Subscription subscription) {
+// The headers for the hub, which receives the authentication only when it is subscribed to automatically (hub and
+// topic are set). A manually registered webhook needs no credentials, so none are requested for it.
+function subscriptionHeaders(Subscription subscription, string afmFileDir) returns map<string>|error {
     string? hub = subscription.hub;
-    if hub is string && subscription.topic is string {
-        warnIfPlainHttp(hub, subscription.authentication, "interfaces.webhook.subscription.hub");
+    if hub is () || subscription.topic is () {
+        return {};
     }
+    warnIfPlainHttp(hub, subscription.authentication, "interfaces.webhook.subscription.hub");
+    HeaderProvider? headerProvider = check createHeaderProvider(subscription.authentication, afmFileDir,
+        "interfaces.webhook.subscription.authentication");
+    return headerProvider is () ? {} : headerProvider.getHeaders();
 }
 
 function webhookStartError(error cause) returns error =>
