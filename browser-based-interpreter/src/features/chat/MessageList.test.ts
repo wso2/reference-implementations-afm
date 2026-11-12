@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { endScrollBehavior, followingAfterScroll, MessageList } from "./MessageList";
+import { endScrollBehavior, followingAfterScroll, MessageList, regenerableIndex } from "./MessageList";
 import type { UiMessage } from "../../core/chat/chat-state";
 
 const THREAD: UiMessage[] = [
@@ -236,5 +236,49 @@ describe("following a reply while it is written", () => {
   it("jumps straight to the end while words arrive, and glides only when it is finished", () => {
     expect(endScrollBehavior(true)).toBe("auto");
     expect(endScrollBehavior(false)).toBe("smooth");
+  });
+});
+
+describe("where Try again is offered", () => {
+  const QUESTION = (id: number): UiMessage => ({ kind: "user", id, text: `question ${id}` });
+  const ANSWER = (id: number): UiMessage => ({ kind: "assistant", id, text: `answer ${id}` });
+  const TOOL = (id: number): UiMessage => ({ kind: "tool", id, callId: `c${id}`, name: "docs__search", args: {}, status: "ok" } as UiMessage);
+
+  it("is under the answer to the latest question", () => {
+    expect(regenerableIndex([QUESTION(1), ANSWER(2)])).toBe(1);
+    expect(regenerableIndex([QUESTION(1), ANSWER(2), QUESTION(3), TOOL(4), ANSWER(5)])).toBe(4);
+  });
+
+  it("is under no answer when the latest question has none yet", () => {
+    expect(regenerableIndex([QUESTION(1), ANSWER(2), QUESTION(3)])).toBe(-1);
+    expect(regenerableIndex([QUESTION(1), ANSWER(2), QUESTION(3), TOOL(4)])).toBe(-1);
+  });
+
+  it("is nowhere in an empty thread", () => {
+    expect(regenerableIndex([])).toBe(-1);
+  });
+
+  const thread = (messages: UiMessage[]) =>
+    renderToStaticMarkup(
+      createElement(MessageList, {
+        messages,
+        streaming: false,
+        status: "ready",
+        agentName: "Demo",
+        loadSteps: [],
+        notReady: null,
+        onRetry: () => {},
+        onRegenerate: () => {},
+      }),
+    );
+
+  it("shows Try again once for the latest answer", () => {
+    const html = thread([QUESTION(1), ANSWER(2), QUESTION(3), ANSWER(4)]);
+    expect(html.match(/aria-label="Try again"/g)).toHaveLength(1);
+  });
+
+  it("does not show Try again under an older answer when the latest question ended with only a tool result", () => {
+    const html = thread([QUESTION(1), ANSWER(2), QUESTION(3), TOOL(4)]);
+    expect(html).not.toContain('aria-label="Try again"');
   });
 });

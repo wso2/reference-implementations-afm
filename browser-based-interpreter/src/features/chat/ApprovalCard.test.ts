@@ -49,6 +49,11 @@ describe("the card that asks before a tool runs", () => {
     expect(html).not.toContain("in this tab");
   });
 
+  it("is announced to a screen reader when it appears, and does not take the focus", () => {
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("autofocus");
+  });
+
   it("has no pop-up frame around it", () => {
     expect(html).not.toContain("overlay");
     expect(html).not.toContain("modal");

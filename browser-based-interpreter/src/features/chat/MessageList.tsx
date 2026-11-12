@@ -81,6 +81,13 @@ export function endScrollBehavior(streaming: boolean): ScrollBehavior {
   return streaming ? "auto" : "smooth";
 }
 
+// "Try again" regenerates the latest question, so it belongs only under an answer to that question.
+// When the latest turn has no answer yet (for example it ended after a tool result), no older answer may offer it.
+export function regenerableIndex(messages: UiMessage[]): number {
+  const answer = messages.findLastIndex((message) => message.kind === "assistant");
+  return answer > messages.findLastIndex((message) => message.kind === "user") ? answer : -1;
+}
+
 export function followingAfterScroll(following: boolean, away: number, movedUp: boolean): boolean {
   if (away < NEAR_BOTTOM) return true;
   return movedUp ? false : following;
@@ -165,7 +172,7 @@ export function MessageList(props: Props) {
   }
 
   const lastIndex = messages.length - 1;
-  const lastAssistant = messages.findLastIndex((message) => message.kind === "assistant");
+  const lastAssistant = regenerableIndex(messages);
   const footnotes = toolsBeforeAnswers(messages);
   const footnoted = new Set([...footnotes.values()].flat());
   const openTools = messages.filter(

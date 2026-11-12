@@ -45,7 +45,7 @@ export function ApprovalCard({ request, onDecide }: Props) {
   const tool = displayToolName(request.name);
   const args = argsText(request.args);
   return (
-    <div className="ap" role="group" aria-label={`Allow ${tool}?`}>
+    <div className="ap" role="alert" aria-label={`Allow ${tool}?`}>
       <div className="ap-h">
         <Icon path={SHIELD} size={14} />
         <b>
