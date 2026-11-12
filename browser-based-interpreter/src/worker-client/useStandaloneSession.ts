@@ -74,6 +74,7 @@ export function useStandaloneSession(hooks: SessionHooks = {}) {
   }
 
   function send(text: string, images?: ImageAttachment[]): void {
+    if (!canChangeConversation(state)) return;
     dispatch({ type: "user-message", text, images });
     post({ type: "send", text, images });
   }

@@ -16,16 +16,17 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessage, ServerMessage } from "../core/runtime/protocol";
-const h = vi.hoisted(() => ({ effects: [] as (() => void | (() => void))[], start: vi.fn(), dispatch: vi.fn() }));
+const h = vi.hoisted(() => ({ effects: [] as (() => void | (() => void))[], start: vi.fn(), dispatch: vi.fn(), state: undefined as unknown }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useRef: (current: unknown) => ({ current }),
-  useReducer: (_reducer: unknown, state: unknown) => [state, h.dispatch],
+  useReducer: (_reducer: unknown, state: unknown) => [h.state ?? state, h.dispatch],
   useEffect: (effect: () => void | (() => void)) => {
     h.effects.push(effect);
   },
 }));
 vi.mock("../core/files/blob-worker", () => ({ startBlobWorker: h.start }));
+import { type ChatState, initialChatState } from "../core/chat/chat-state";
 import { useStandaloneSession } from "./useStandaloneSession";
 class FakeWorker {
   posted: ClientMessage[] = [];
@@ -58,6 +59,7 @@ beforeEach(() => {
   h.effects.length = 0;
   h.start.mockReset();
   h.dispatch.mockReset();
+  h.state = undefined;
   vi.stubGlobal("window", { setTimeout, clearTimeout });
 });
 afterEach(() => {
@@ -183,6 +185,7 @@ it("tells the chat when the worker fails, and starts a new worker for the next c
 it("tells the chat again that the agent stopped when a message is sent to a worker that has already stopped", async () => {
   const worker = new FakeWorker();
   h.start.mockResolvedValue(worker);
+  h.state = { ...initialChatState, status: "ready" } satisfies ChatState;
   const session = useStandaloneSession();
   const cleanup = h.effects[0]!() as () => void;
   await tick();
@@ -193,4 +196,38 @@ it("tells the chat again that the agent stopped when a message is sent to a work
   expect(h.dispatch).toHaveBeenCalledWith({ type: "server", message: { type: "worker-stopped" } });
   expect(worker.posted.some((message) => message.type === "send")).toBe(false);
   cleanup();
+});
+
+describe("changing the conversation", () => {
+  async function started(status: ChatState["status"]) {
+    const worker = new FakeWorker();
+    h.start.mockResolvedValue(worker);
+    h.state = { ...initialChatState, status, messages: [{ kind: "user", id: 1, text: "hi" }] } satisfies ChatState;
+    const session = useStandaloneSession();
+    const cleanup = h.effects[0]!() as () => void;
+    await tick();
+    worker.emit({ type: "worker-ready" });
+    worker.posted.length = 0;
+    h.dispatch.mockClear();
+    return { session, worker, cleanup };
+  }
+
+  it.each(["no-agent", "connecting", "not-ready", "streaming"] as const)("sends, edits, retries and regenerates nothing while the agent is %s", async (status) => {
+    const { session, worker, cleanup } = await started(status);
+    session.send("hello");
+    session.regenerate();
+    session.retryReply();
+    session.editMessage(1, "changed");
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(worker.posted).toEqual([]);
+    cleanup();
+  });
+
+  it("sends a message to a ready agent, and shows it", async () => {
+    const { session, worker, cleanup } = await started("ready");
+    session.send("hello");
+    expect(h.dispatch).toHaveBeenCalledWith({ type: "user-message", text: "hello", images: undefined });
+    expect(worker.posted).toEqual([{ type: "send", text: "hello", images: undefined }]);
+    cleanup();
+  });
 });
